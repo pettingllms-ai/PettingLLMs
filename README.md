@@ -9,22 +9,22 @@ This project is dedicated to exploring the training of Large Language Models (LL
 Here is an overview of the current supported features and components of our framework.
 
 * **Symmetry Strategy**
-    * [x] **Agent Symmetry:** Using self-play to train a single policy for symmetric games.
+    * [] **Agent Symmetry:** Using self-play to train a single policy for symmetric games.
 
 * **Training Environments**
-    * [x] Tic-Tac
-    * [x] Hanabi
+    * [] Tic-Tac
+    * [] Hanabi
 
 * **Supported Models**
-    * [x] LLM-QWen-7b
-    * [x] LLM-QWen-0.5b
+    * [] LLM-QWen-7b
+    * [] LLM-QWen-0.5b
 
 * **Data Modalities**
-    * [x] VLM (Vision Language Model)
-    * [x] LLM (Large Language Model)
+    * [] VLM (Vision Language Model)
+    * [] LLM (Large Language Model)
 
 * **Reinforcement Learning Algorithms**
-    * [x] PPO (Proximal Policy Optimization)
+    * [] PPO (Proximal Policy Optimization)
 
 ## 🗺️ Roadmap
 
