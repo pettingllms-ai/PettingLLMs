@@ -1,3 +1,6 @@
+[submodule "sglang"]
+	path = sglang
+	url = https://github.com/sgl-project/sglang.git
 [submodule "verl"]
 	path = verl
 	url = https://github.com/volcengine/verl.git
