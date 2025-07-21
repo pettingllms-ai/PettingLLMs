@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple, Any, Union, TYPE_CHECKING
 
 from datasets import load_dataset  # type: ignore
 from tqdm import tqdm
-from rllm.environments.base.multi_turn_env import MultiTurnEnvironment
+from pettingllms.environments.base.multi_turn_env import MultiTurnEnvironment
 from sweet_rl.sweet_rl.utils.webpage_utils import render_full_html, get_driver, replace_urls
 
 if TYPE_CHECKING:

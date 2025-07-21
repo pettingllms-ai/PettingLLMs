@@ -7,14 +7,14 @@
 ### 方法1: 使用完整测试脚本 (推荐)
 
 ```bash
-cd rllm/agentgpraphs/design_human_interact
+cd pettingllms/agentgpraphs/design_human_interact
 ./test_multi_agent_graph.sh
 ```
 
 ### 方法2: 使用快速测试脚本
 
 ```bash
-cd rllm/agentgpraphs/design_human_interact
+cd pettingllms/agentgpraphs/design_human_interact
 ./quick_test.sh
 ```
 

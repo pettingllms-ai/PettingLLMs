@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict, Optional
 import base64
 
-from rllm.agents.agent import Action, BaseAgent, Step, Trajectory
+from pettingllms.agents.agent import Action, BaseAgent, Step, Trajectory
 
 logger = logging.getLogger(__name__)
 

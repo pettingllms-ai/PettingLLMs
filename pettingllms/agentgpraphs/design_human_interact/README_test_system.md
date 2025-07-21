@@ -82,7 +82,7 @@ python -m sglang.launch_server \
 ### Command Line Interface
 
 ```bash
-cd rllm/agentgpraphs/design_human_interact/
+cd pettingllms/agentgpraphs/design_human_interact/
 
 python agent_collaboration_graph.py \
     --hostname localhost \
