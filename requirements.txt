@@ -20,6 +20,8 @@ tqdm>=4.66.3
 huggingface-hub>=0.24.0
 tokenizers>=0.15,<1
 tiktoken>=0.7.0
+sentencepiece
+sentence-transformers
 openai>=1.68.2,<1.76.0
 together>=0.21.0
 anthropic
@@ -40,6 +42,7 @@ flash-attn==2.7.4.post1
 torchdata
 tensordict>=0.8.0,<0.9.0
 pybind11
+einops
 
 ######## Config / logging / misc tools
 hydra-core>=1.3.2,<1.4
@@ -63,12 +66,15 @@ scikit-learn
 dm-tree
 latex2sympy2
 nltk
+sympy
 
 ######## Web / automation
 gradio
 selenium
 browsergym
 firecrawl
+psutil
+ujson
 
 ######## Cloud / infrastructure
 google-cloud-aiplatform
@@ -90,6 +96,7 @@ e2b_code_interpreter
 llama-index-core>=0.12.0,<0.13.0
 typer>=0.12.3
 llama-index-llms-openai>=0.3.0,<0.4.0
+faiss-cpu
 
 ######## Grammar runtime pin
 antlr4-python3-runtime==4.9.3

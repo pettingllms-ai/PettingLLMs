@@ -30,13 +30,13 @@ pettingllms is an open-source framework for post-training multi-LLM agent system
 ### Installation
 
 ```bash
-# Setup environment for RAGEN
+# Setup environment for Pettingllms
 bash scripts/set_up.sh
 ```
 ### Training Models
 
 ```bash
-# Setup environment for RAGEN
+# Setup environment for Pettingllms
 bash scripts/code_grpo.sh
 ```
 
