@@ -5,7 +5,10 @@ import time
 import json
 import traceback
 import uuid
-from verl import DataProto
+try:
+    from verl.protocol import DataProto
+except Exception:  # fallback when verl is a src tree: verl/verl/protocol.py
+    from verl.verl.protocol import DataProto
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
@@ -106,10 +109,10 @@ class MultiAgentsExecutionEngine:
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
         # rollout_engine_dict is not maintained in this class to avoid referencing a non-existent attribute
         self.server_addresses_dict = {}
-        self.router_dict = router_dict
+        self.router_dict = router_dict or {}
         self.chat_parser_dict={}
-        for key,value in self.router_dict.items():
-            self.chat_parser_dict[key]=ChatTemplateParser.get_parser(self.tokenizer_dict[key], disable_thinking=False)
+        #for key,value in self.router_dict.items():
+        #    self.chat_parser_dict[key]=ChatTemplateParser.get_parser(self.tokenizer_dict[key], disable_thinking=False)
         
 
     def _init_agents_and_envs(self):
@@ -182,8 +185,8 @@ class MultiAgentsExecutionEngine:
                 # Convert to DataProto format
                 dpr_prompt = convert_prompt_to_dpr(
                     self.tokenizer_dict[policy_name], 
-                    self.chat_parser_dict[policy_name], 
-                    self.processor_dict[policy_name],
+                    self.chat_parser_dict.get(policy_name), 
+                    self.processor_dict.get(policy_name) if isinstance(self.processor_dict, dict) else None,
                     prompt, 
                     self.max_prompt_length,
                     multi_modal=False
@@ -198,7 +201,7 @@ class MultiAgentsExecutionEngine:
                 # Convert response format
                 response = convert_dpr_to_response(
                     self.tokenizer_dict[policy_name], 
-                    self.chat_parser_dict[policy_name], 
+                    self.chat_parser_dict.get(policy_name), 
                     output_dpr, 
                     self.max_prompt_length
                 )
@@ -214,7 +217,7 @@ class MultiAgentsExecutionEngine:
                 trajectory_per_task_dict[policy_name] = trajectory_per_task_dict[policy_name].union(output_dpr)
         return trajectory_per_task_dict
         
-   
+       
     
 class AsyncMultiAgentsExecutionEngine(MultiAgentsExecutionEngine):
     def __init__(self, *args, **kwargs):

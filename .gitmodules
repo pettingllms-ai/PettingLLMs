@@ -3,5 +3,4 @@
 	url = https://github.com/facebookresearch/sweet_rl.git
 [submodule "verl"]
 	path = verl
-	url = https://github.com/agentica-project/verl.git
-	branch = main
+	url = https://github.com/volcengine/verl.git

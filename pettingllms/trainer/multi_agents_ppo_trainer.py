@@ -123,7 +123,7 @@ class MultiAgentsPPOTrainer:
             tokenizer_dict[model_name] = trainer.tokenizer
             server_addresses = getattr(trainer.actor_rollout_wg, "server_addresses", [])
             # Construct an independent Router for each model
-            router_dict[model_name] = Router(config=self.config, tokenizer=trainer.tokenizer, addresses=server_addresses)
+            router_dict[model_name] = Router(config=trainer.config, tokenizer=trainer.tokenizer, addresses=server_addresses)
         
         self.agent_execution_engine = MultiAgentsExecutionEngine(
             config=self.config,

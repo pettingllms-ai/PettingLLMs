@@ -111,7 +111,7 @@ class Router:
         return self._application_id_to_address[application_id]
 
     async def release_address(self, addr: str, application_id: str) -> None:
-        """当前 application 的请求完成后，释放一次占用计数。"""
+        """ Decrement the usage count for a server address when done."""
         async with self._lock:
             if addr in self._usage:
                 self._usage[addr] = max(0, self._usage.get(addr, 0) - 1)
@@ -246,3 +246,17 @@ class Router:
             batch_size=batch_size,
         )
         return DataProto(batch=output, meta_info=batch.meta_info)
+
+
+def test_router():
+
+    router = Router(config=None, tokenizer=None, addresses=["127.0.0.1:8000"])
+    batch = DataProto(batch=None, meta_info=None)
+    response_ids = [[1, 2, 3], [4, 5, 6]]
+    n = 1
+    output = router.postprocess_batch(batch, response_ids, n)
+    print(output)
+
+
+if __name__ == "__main__":
+    test_router()

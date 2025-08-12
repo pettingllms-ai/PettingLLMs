@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 800 600" width="800" height="600">
+
+  <defs>
+    <style>
+      .robot-text { font-family: Arial, sans-serif; font-size: 14px; fill: #333; }
+    </style>
+  </defs>
+  
+  <!-- Robot 2: Dipsy (Green) -->
+  <g id="dipsy-robot" transform="translate(360, -5)">
+    <!-- Robot Legs -->
+    <g id="robot-legs-green">
+      <rect x="70" y="245" width="40" height="30" rx="12" fill="#6b9e2f"/>
+      <rect x="140" y="245" width="40" height="30" rx="12" fill="#6b9e2f"/>
+      <rect x="70" y="270" width="40" height="10" rx="5" fill="#b9e851"/>
+      <rect x="140" y="270" width="40" height="10" rx="5" fill="#b9e851"/>
+    </g>
+    <!-- Main body (rounder, bigger tummy screen) -->
+    <g id="robot-body-green">
+      <path d="M 60 150 C 36 172, 36 208, 60 230 Z" fill="#b9e851"/>
+      <path d="M 190 150 C 214 172, 214 208, 190 230 Z" fill="#b9e851"/>
+      <circle cx="60" cy="155" r="15" fill="#6b9e2f"/>
+      <circle cx="190" cy="155" r="15" fill="#6b9e2f"/>
+      <circle cx="35" cy="180" r="25" fill="#ffd3b6"/>
+      <circle cx="215" cy="180" r="25" fill="#ffd3b6"/>
+      <rect x="50" y="140" width="150" height="110" rx="38" fill="#93d400"/>
+      <!-- bigger tummy screen -->
+      <rect x="78" y="158" width="94" height="72" rx="18" fill="#6b9e2f" stroke="#fef9e7" stroke-width="3" opacity="0.95"/>
+      <line x1="92" y1="178" x2="158" y2="178" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+      <line x1="92" y1="188" x2="158" y2="188" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+      <line x1="92" y1="198" x2="158" y2="198" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+    </g>
+    <!-- Head (rounder cap) -->
+    <g id="robot-head-green">
+      <path d="M 50 80 C 28 80, 28 50, 55 50 C 72 50, 72 80, 50 80" fill="#93d400" />
+      <path d="M 45 75 C 35 75, 35 55, 55 55 C 65 55, 65 75, 45 75" fill="#fef9e7" />
+      <path d="M 200 80 C 222 80, 222 50, 195 50 C 178 50, 178 80, 200 80" fill="#93d400" />
+      <path d="M 205 75 C 215 75, 215 55, 195 55 C 185 55, 185 75, 205 75" fill="#fef9e7" />
+      <path d="M 40,150 Q 30,120 50,100 Q 60,70 90,75 Q 125,65 160,75 Q 190,70 200,100 Q 220,120 210,150 Z" fill="#6b9e2f"/>
+      <rect x="50" y="80" width="150" height="100" rx="35" fill="#93d400"/>
+      <!-- Antenna: Stick -->
+      <rect x="122" y="40" width="6" height="40" rx="3" fill="#ffd54f"/>
+      <rect x="70" y="100" width="110" height="65" rx="22" fill="#fef9e7"/>
+      <g id="face-features-green" stroke-linecap="round" stroke-linejoin="round">
+        <g id="left-eye-green"><circle cx="100" cy="128" r="10" fill="#424242"/><circle cx="104" cy="124" r="4" fill="white"/></g>
+        <g id="right-eye-green"><circle cx="150" cy="128" r="10" fill="#424242"/><circle cx="154" cy="124" r="4" fill="white"/></g>
+        <path d="M 105 145 Q 125 160, 145 145" stroke="#424242" stroke-width="3" fill="none"/>
+      </g>
+      <g id="blush-green" fill="#f4a7b9"><circle cx="85" cy="142" r="7" opacity="0.8"/><circle cx="165" cy="142" r="7" opacity="0.8"/></g>
+    </g>
+  </g>
+
+</svg>

@@ -37,4 +37,5 @@ AGENT_CLASSES = {
 
 # Filter out None values for unavailable imports
 ENV_CLASS_MAPPING = {k: v for k, v in ENV_CLASSES.items() if v is not None}
+ENV_BATCH_CLASS_MAPPING = {k: v for k, v in ENV_BATCH_CLASSES.items() if v is not None}
 AGENT_CLASS_MAPPING = {k: v for k, v in AGENT_CLASSES.items() if v is not None}

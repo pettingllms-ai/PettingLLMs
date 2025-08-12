@@ -10,13 +10,12 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export HYDRA_FULL_ERROR=1
 
-# 确保能找到 CUDA 运行时库（libcudart）
+
 export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
 export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
-# 一些系统使用 lib64 目录
+
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 
-# 修复配置路径，确保正确引用 code 命名空间下的配置
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_1_config_path="models.model_1.ppo_trainer_config"
 train_data_size=256
