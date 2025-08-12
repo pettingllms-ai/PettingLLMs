@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
-from pettingllms.multiagentsys.base.env import Env
+from pettingllms.multi_agent_env.base.env import Env
 
 @dataclass
 class AgentData:

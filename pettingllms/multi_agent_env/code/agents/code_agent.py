@@ -1,8 +1,8 @@
 import copy
 import logging
 from typing import Any
-from pettingllms.multiagentsys.base.agent import Agent, AgentData
-from pettingllms.multiagentsys.base.env import Env
+from pettingllms.multi_agent_env.base.agent import Agent, AgentData
+from pettingllms.multi_agent_env.base.env import Env
 
 logger = logging.getLogger(__name__)
 

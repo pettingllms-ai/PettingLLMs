@@ -6,10 +6,10 @@ import typing
 import multiprocessing as mp
 from typing import Any, Dict, Optional, Tuple, List
 
-from pettingllms.multiagentsys.code.agents.code_agent import CodeGenerationAgent
-from pettingllms.multiagentsys.code.agents.unit_test_agent import UnitTestGenerationAgent
-from pettingllms.multiagentsys.base.env import MultiAgentsEnvironment
-from pettingllms.multiagentsys.code.code_utils import (
+from pettingllms.multi_agent_env.code.agents.code_agent import CodeGenerationAgent
+from pettingllms.multi_agent_env.code.agents.unit_test_agent import UnitTestGenerationAgent
+from pettingllms.multi_agent_env.base.env import MultiAgentsEnvironment
+from pettingllms.multi_agent_env.code.code_utils import (
         load_problem_batch,
         extract_code_from_response,
         parse_test_cases_from_response,

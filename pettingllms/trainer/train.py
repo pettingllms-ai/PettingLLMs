@@ -100,16 +100,20 @@ def train_multi_agents(config, agent_args=None, env_args=None):
     n_gpus_per_node = getattr(config.resource, 'n_gpus_per_node', 1) if hasattr(config, 'resource') else 1
     nnodes = getattr(config.resource, 'nnodes', 1) if hasattr(config, 'resource') else 1
     
-    resource_pool_spec = {
-        global_pool_id: [n_gpus_per_node] * nnodes,
-    }
-    mapping = {
-        Role.ActorRollout: global_pool_id,
-        Role.Critic: global_pool_id,
-        Role.RefPolicy: global_pool_id,
-    }
+    managers = []
+    for id in range(2):
+        global_pool_id = f"global_pool_{id}"
+        resource_pool_spec = {
+           global_pool_id: [n_gpus_per_node] * nnodes,
+        }
+        mapping = {
+            Role.ActorRollout: global_pool_id,
+            Role.Critic: global_pool_id,
+            Role.RefPolicy: global_pool_id,
+        }
 
-    resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
+        resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
+        managers.append(resource_pool_manager)
 
 
     trainer = MultiAgentsPPOTrainer(
@@ -117,7 +121,7 @@ def train_multi_agents(config, agent_args=None, env_args=None):
         tokenizer_dict=tokenizer_dict,
         processor_dict=processor_dict,
         role_worker_mapping=role_worker_mapping,
-        resource_pool_manager=resource_pool_manager,
+        resource_pool_manager=managers,
         ray_worker_group_cls=ray_worker_group_cls,
     )
 

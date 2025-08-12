@@ -76,7 +76,7 @@ class MultiAgentsPPOTrainer:
         
         
         if hasattr(config, 'models'):
-            for model_key, model_config in config.models.items():
+            for i, (model_key, model_config) in enumerate(config.models.items()):
                 model_name = model_config.name
                 print(f"model_config: {model_config}")
                 if hasattr(model_config, 'ppo_trainer_config'):
@@ -99,7 +99,7 @@ class MultiAgentsPPOTrainer:
                         config=ppo_config,
                         tokenizer=model_tokenizer,
                         role_worker_mapping=role_worker_mapping,
-                        resource_pool_manager=resource_pool_manager,
+                        resource_pool_manager=resource_pool_manager[i],
                         ray_worker_group_cls=ray_worker_group_cls,
                         
                     )

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     # For type checking only to avoid runtime circular imports
-    from pettingllms.multiagentsys.base.agent import AgentData
+    from pettingllms.multi_agent_env.base.agent import AgentData
 
 
 
@@ -88,7 +88,7 @@ class MultiAgentsEnvironment(Env):
                 # Re-initialize AgentData for each agent
                 for agent_name in agent_names:
                     # Lazy import to avoid circular import with Agent -> Env
-                    from pettingllms.multiagentsys.base.agent import AgentData  # noqa: WPS433
+                    from pettingllms.multi_agent_env.base.agent import AgentData  # noqa: WPS433
                     agent_data_dict[agent_name] = AgentData()
         
         # Update agentdata
