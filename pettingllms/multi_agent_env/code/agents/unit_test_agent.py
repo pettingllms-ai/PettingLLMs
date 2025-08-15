@@ -4,6 +4,7 @@ from typing import Any
 
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
+from pettingllms.utils.logger_config import get_multi_logger
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ class UnitTestGenerationAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
+        
+        # 初始化多日志系统
+        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, env_data: Env):
         """
@@ -108,6 +112,25 @@ class UnitTestGenerationAgent(Agent):
 
         self.current_prompt = {"text": formatted_prompt, "image": None}
         
+        # 记录prompt生成
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=-1,
+            agent_name="test_generator",
+            message="Generated prompt for test generation",
+            extra_data={
+                "need_generate": need_generate,
+                "mode": "generation" if need_generate else "refinement",
+                "prompt_length": len(formatted_prompt),
+                "env_state_summary": {
+                    "has_current_code": current_code not in (None, ""),
+                    "has_current_test_input": current_test_input not in (None, ""),
+                    "question_length": len(question),
+                    "has_mismatch_testcases": mismatch_testcases not in (None, "")
+                }
+            }
+        )
+        
         
         
     def update_from_model(self, response: str):
@@ -146,6 +169,22 @@ class UnitTestGenerationAgent(Agent):
             test_cases = [{"input": "", "output": "", "explanation": response.strip()}]
 
         self.current_action = test_cases
+        
+        # 记录模型响应解析
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=-1,
+            agent_name="test_generator",
+            message="Parsed model response",
+            extra_data={
+                "response_length": len(response),
+                "test_cases_parsed": len(test_cases),
+                "inputs_found": len(inputs) if 'inputs' in locals() else 0,
+                "outputs_found": len(outputs) if 'outputs' in locals() else 0,
+                "pair_count": pair_count if 'pair_count' in locals() else 0
+            }
+        )
+        
         return self.current_action
     
     def calculate_reward(self, env_data: Env, mode: str = "sum") -> float:
@@ -192,6 +231,21 @@ class UnitTestGenerationAgent(Agent):
             "golden_pass_ratio": golden_pass_ratio,
             "reward_mode": m,
         })
+        
+        # 记录奖励计算
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=-1,
+            agent_name="test_generator",
+            message="Calculated reward",
+            extra_data={
+                "reward": reward,
+                "generated_pass_ratio": generated_pass_ratio,
+                "golden_pass_ratio": golden_pass_ratio,
+                "reward_mode": m
+            }
+        )
+        
         return reward
 
     def reset(self):

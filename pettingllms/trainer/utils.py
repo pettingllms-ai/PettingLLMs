@@ -26,43 +26,59 @@ from verl.utils.fs import copy_to_local
 from verl.utils.model import compute_position_id_with_mask
 from verl.utils.rollout_trace import RolloutTraceConfig, rollout_trace_attr, rollout_trace_op
 from verl.workers.rollout.async_server import async_server_class
+from pettingllms.utils.logger_config import get_multi_logger
 
 
 def initialize_llm_servers(worker_group,server_class,server_config):
 
+    if worker_group is None:
+        world_size=1
+        name_prefix="actor_rollout"
+    else:
+        world_size=worker_group.world_size
+        name_prefix=worker_group.name_prefix
     rollout_tp_size = server_config.actor_rollout_ref.rollout.tensor_model_parallel_size
-    rollout_dp_size = worker_group.world_size // rollout_tp_size
+    rollout_dp_size = world_size // rollout_tp_size
 
-    register_center = ray.get_actor(f"{worker_group.name_prefix}_register_center")
-    workers_info = ray.get(register_center.get_worker_info.remote())
-    assert len(workers_info) == worker_group.world_size
+   
 
     async_llm_servers = [None] * rollout_dp_size
     server_addresses = [None] * rollout_dp_size
 
-    if server_config.actor_rollout_ref.rollout.agent.custom_async_server:
-        server_class = server_class(
-            rollout_backend=server_config.actor_rollout_ref.rollout.name,
-            rollout_backend_module=server_config.actor_rollout_ref.rollout.agent.custom_async_server.path,
-            rollout_backend_class=server_config.actor_rollout_ref.rollout.agent.custom_async_server.name,
-        )
-    else:
-        server_class = server_class(rollout_backend=server_config.actor_rollout_ref.rollout.name)
-
     # Start all server instances, restart if address already in use.
     unready_dp_ranks = set(range(rollout_dp_size))
     while len(unready_dp_ranks) > 0:
-        servers = {
-            rollout_dp_rank: server_class.options(
-                # make sure AsyncvLLMServer colocates with its corresponding workers
-                scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
-                    node_id=workers_info[rollout_dp_rank * rollout_tp_size],
-                    soft=False,
-                ),
-                name=f"async_llm_server_{rollout_dp_rank}",
-            ).remote(server_config, rollout_dp_size, rollout_dp_rank, worker_group.name_prefix)
-            for rollout_dp_rank in unready_dp_ranks
-        }
+        if worker_group is None:
+            options_kwargs = dict(
+            scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                        node_id=__import__("ray._raylet")._raylet.NodeID.from_hex(ray.nodes()[0]["NodeID"]),
+                        soft=False,
+                    ),
+            name=f"async_llm_server",
+        )
+            
+        # Allocate a GPU to the server actor if available, otherwise vLLM will see CUDA but cannot set device
+            if torch.cuda.is_available():
+                options_kwargs["num_gpus"] = 1
+            server = server_class.options(**options_kwargs).remote(server_config, 1, 0, "actor_rollout")
+            servers={0:server}
+        else:
+            register_center = ray.get_actor(f"{name_prefix}_register_center")
+            workers_info = ray.get(register_center.get_worker_info.remote())
+            assert len(workers_info) == world_size
+            servers = {
+                rollout_dp_rank: server_class.options(
+                    # make sure AsyncvLLMServer colocates with its corresponding workers
+                    scheduling_strategy=ray.util.scheduling_strategies.NodeAffinitySchedulingStrategy(
+                        node_id=workers_info[rollout_dp_rank * rollout_tp_size],
+                        soft=False,
+                    ),
+                    name=f"async_llm_server_{rollout_dp_rank}",
+                ).remote(server_config, rollout_dp_size, rollout_dp_rank, name_prefix)
+                for rollout_dp_rank in unready_dp_ranks
+            }
+
+        
     
 
         for rollout_dp_rank, server in servers.items():
@@ -71,6 +87,9 @@ def initialize_llm_servers(worker_group,server_class,server_config):
             server_addresses[rollout_dp_rank] = address
             async_llm_servers[rollout_dp_rank] = server
             unready_dp_ranks.remove(rollout_dp_rank)
+        
+        ray.get([server.init_engine.remote() for server in async_llm_servers])
+
           
     
     return async_llm_servers, server_addresses
@@ -105,6 +124,9 @@ class AsyncLLMServerManager:
 
         # LRU cache to map request_id to server
         self.request_id_to_server = LRUCache(maxsize=max_cache_size)
+        
+        # 初始化多日志系统
+        self.multi_logger = get_multi_logger()
 
     def _choose_server(self, request_id: str) -> ray.actor.ActorHandle:
         # TODO: implement server pressure awareness load balancing
@@ -125,6 +147,8 @@ class AsyncLLMServerManager:
         tokenizer: Optional[AutoTokenizer] = None,
         image_data: Optional[list[Any]] = None,
         application_id: Optional[str] = None,
+        rollout_idx: Optional[int] = None,
+        policy_name: Optional[str] = None,
     ) -> DataProto:
         """Generate tokens from prompt ids or DataProto.
 
@@ -141,19 +165,27 @@ class AsyncLLMServerManager:
         Returns:
             DataProto: DataProto format output consistent with Router's generate_sequences.
         """
-        print(f"=== DEBUG: AsyncLLMServerManager.generate call ===")
-      
-        print(f"dpr_prompt: {dpr_prompt.batch['input_ids']}")
-        print(f"sampling_params: {sampling_params}")
-        print(f"application_id: {application_id}")
- 
-        application_id=uuid.uuid4()
+        # 生成唯一的application_id用于追踪
+        if application_id is None:
+            application_id = str(uuid.uuid4())
+        else:
+            application_id = str(application_id)
         
-       
-     
+        # 记录模型生成开始
+        self.multi_logger.log_model_interaction(
+            rollout_idx=rollout_idx if rollout_idx is not None else -1,
+            policy_name=policy_name if policy_name is not None else "unknown",
+            prompt="",  # 这里先留空，后面会记录详细的prompt
+            response="",  # 这里先留空，后面会记录response
+            extra_data={
+                "event": "generate_start",
+                "dpr_prompt_shape": str(dpr_prompt.batch['input_ids'].shape) if hasattr(dpr_prompt, 'batch') else None,
+                "sampling_params": sampling_params,
+                "application_id": application_id
+            }
+        )
         
         server = self._choose_server(application_id)
-        print(f"Selected server: {server}")
         
         # Ensure sampling_params is a dictionary (vLLM requires mapping, not None)
         if sampling_params is None:
@@ -162,27 +194,57 @@ class AsyncLLMServerManager:
         # Extract prompt_ids from DataProto and convert to list
         prompt_ids = dpr_prompt.batch['input_ids'][0].tolist() 
         
-        
+        # Remove padding tokens
+        original_length = len(prompt_ids)
         while prompt_ids and prompt_ids[0] == 151643:
             prompt_ids.pop(0)
             
-        colorful_print(f"DEBUG: Removed padding, final prompt_ids length: {len(prompt_ids)}","yellow")
-        colorful_print(f"DEBUG: First 10 tokens: {prompt_ids[:10]}","yellow")
+        self.multi_logger.log_model_interaction(
+            rollout_idx=rollout_idx if rollout_idx is not None else -1,
+            policy_name=policy_name if policy_name is not None else "unknown",
+            prompt="",
+            response="",
+            extra_data={
+                "event": "prompt_preprocessing",
+                "original_length": original_length,
+                "final_length": len(prompt_ids),
+                "first_10_tokens": prompt_ids[:10] if prompt_ids else [],
+                "server_selected": str(server)
+            }
+        )
         
         # Ensure we have valid tokens
         if not prompt_ids:
-            raise ValueError("No valid tokens found after removing padding") 
-        
-        # Get max_model_len from config to avoid negative max_tokens
-        rollout_cfg = getattr(self.config, "actor_rollout_ref", None)
-        rollout_cfg = getattr(rollout_cfg, "rollout", None)
-        
-        
+            error_msg = "No valid tokens found after removing padding"
+            self.multi_logger.log_model_interaction(
+                rollout_idx=rollout_idx if rollout_idx is not None else -1,
+                policy_name=policy_name if policy_name is not None else "unknown",
+                prompt="",
+                response="",
+                extra_data={
+                    "event": "generate_error",
+                    "error": error_msg
+                }
+            )
+            raise ValueError(error_msg) 
         
         # Use direct await on Ray remote call - this is the correct async pattern!
         import asyncio
         
         try:
+            # 记录开始生成
+            self.multi_logger.log_model_interaction(
+                rollout_idx=rollout_idx if rollout_idx is not None else -1,
+                policy_name=policy_name if policy_name is not None else "unknown",
+                prompt=str(prompt_ids[:20]) + "..." if len(prompt_ids) > 20 else str(prompt_ids),
+                response="",
+                extra_data={
+                    "event": "server_generate_start",
+                    "prompt_ids_length": len(prompt_ids),
+                    "timeout": 20.0
+                }
+            )
+            
             # Directly await the Ray remote call with timeout
             output = await asyncio.wait_for(
                 server.generate.remote(
@@ -193,13 +255,48 @@ class AsyncLLMServerManager:
                 timeout=20.0
             )
         except asyncio.TimeoutError:
-            raise TimeoutError(f"Generate request timed out after 20 seconds for request {application_id}")
+            error_msg = f"Generate request timed out after 20 seconds for request {application_id}"
+            self.multi_logger.log_model_interaction(
+                rollout_idx=rollout_idx if rollout_idx is not None else -1,
+                policy_name=policy_name if policy_name is not None else "unknown",
+                prompt="",
+                response="",
+                extra_data={
+                    "event": "generate_timeout",
+                    "timeout": 20.0,
+                    "application_id": application_id
+                }
+            )
+            raise TimeoutError(error_msg)
         except Exception as e:
-            print(f"ERROR in async ray call: {e}")
+            self.multi_logger.log_model_interaction(
+                rollout_idx=rollout_idx if rollout_idx is not None else -1,
+                policy_name=policy_name if policy_name is not None else "unknown",
+                prompt="",
+                response="",
+                extra_data={
+                    "event": "generate_error",
+                    "error": str(e),
+                    "application_id": application_id
+                }
+            )
             raise
-        colorful_print(f"====begin to decode output====","green")
+        
+        # 开始解码输出
         response_str = tokenizer.decode(output, skip_special_tokens=True)
-        colorful_print(f"server output string: {response_str}","green")
+        
+        # 记录生成完成和响应
+        self.multi_logger.log_model_interaction(
+            rollout_idx=rollout_idx if rollout_idx is not None else -1,
+            policy_name=policy_name if policy_name is not None else "unknown",
+            prompt=str(prompt_ids[:20]) + "..." if len(prompt_ids) > 20 else str(prompt_ids),
+            response=response_str,
+            extra_data={
+                "event": "generate_complete",
+                "output_length": len(output) if output else 0,
+                "response_length": len(response_str)
+            }
+        )
 
         # Transform vLLM output to DataProto
         # Response ids from vLLM (output is list[int])
@@ -258,14 +355,27 @@ class AsyncLLMServerManager:
             "position_ids": position_ids_full,
         }
        
-        colorful_print(f"shape of batch_dict_prompts: {batch_dict['prompts'].shape}","cyan")
-        colorful_print(f"shape of batch_dict_responses: {batch_dict['responses'].shape}","cyan")
-        colorful_print(f"shape of batch_dict_response_mask: {batch_dict['response_mask'].shape}","cyan")
-        colorful_print(f"shape of batch_dict_input_ids: {batch_dict['input_ids'].shape}","cyan")
-        colorful_print(f"shape of batch_dict_attention_mask: {batch_dict['attention_mask'].shape}","cyan")
-        colorful_print(f"shape of batch_dict_position_ids: {batch_dict['position_ids'].shape}","cyan")
+        # 记录最终的DataProto构建结果
+        self.multi_logger.log_model_interaction(
+            rollout_idx=rollout_idx if rollout_idx is not None else -1,
+            policy_name=policy_name if policy_name is not None else "unknown",
+            prompt="",
+            response="",
+            extra_data={
+                "event": "dataproto_build_complete",
+                "batch_dict_shapes": {
+                    "prompts": str(batch_dict['prompts'].shape),
+                    "responses": str(batch_dict['responses'].shape),
+                    "response_mask": str(batch_dict['response_mask'].shape),
+                    "input_ids": str(batch_dict['input_ids'].shape),
+                    "attention_mask": str(batch_dict['attention_mask'].shape),
+                    "position_ids": str(batch_dict['position_ids'].shape)
+                },
+                "output_dpr_type": str(type(output_dpr)) if 'output_dpr' in locals() else None
+            }
+        )
+        
         output_dpr = DataProto.from_dict(batch_dict)
-        print(f"output_dpr_keys: {output_dpr}")
 
         return output_dpr,response_str
             

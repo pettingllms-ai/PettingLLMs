@@ -3,6 +3,7 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
+from pettingllms.utils.logger_config import get_multi_logger
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ class CodeGenerationAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
+        
+        # 初始化多日志系统
+        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, env_data: Env):
         # Save environment data
@@ -95,6 +99,24 @@ class CodeGenerationAgent(Agent):
 
         self.current_prompt = {"text": formatted_prompt, "image": None}
         
+        # 记录prompt生成
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=None,  # 这里需要从外部传递
+            agent_name="code_generator",
+            message="Generated prompt for code generation",
+            extra_data={
+                "need_generate": need_generate,
+                "mode": "generation" if need_generate else "refinement",
+                "prompt_length": len(formatted_prompt),
+                "env_state_summary": {
+                    "has_current_code": current_code not in (None, ""),
+                    "has_current_test_input": current_test_input not in (None, ""),
+                    "question_length": len(question)
+                }
+            }
+        )
+        
     def update_from_model(self, response: str):
         # Parse the response and update agent_data
         import re
@@ -122,6 +144,21 @@ class CodeGenerationAgent(Agent):
 
         # Update the agent's current action (environment expects a raw code string)
         self.current_action = code
+        
+        # 记录模型响应解析
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=None,
+            agent_name="code_generator",
+            message="Parsed model response",
+            extra_data={
+                "response_length": len(response),
+                "code_extracted": len(code) > 0,
+                "code_length": len(code),
+                "code_matches_found": len(code_matches) if 'code_matches' in locals() else 0
+            }
+        )
+        
         return self.current_action
 
     def calculate_reward(self, env_data: Env, mode: str = "sum") -> float:
@@ -168,6 +205,21 @@ class CodeGenerationAgent(Agent):
             "golden_pass_ratio": golden_pass_ratio,
             "reward_mode": m,
         })
+        
+        # 记录奖励计算
+        self.multi_logger.log_env_agent_info(
+            rollout_idx=self.rollout_idx if self.rollout_idx is not None else -1,
+            turn_idx=None,
+            agent_name="code_generator",
+            message="Calculated reward",
+            extra_data={
+                "reward": reward,
+                "generated_pass_ratio": generated_pass_ratio,
+                "golden_pass_ratio": golden_pass_ratio,
+                "reward_mode": m
+            }
+        )
+        
         return reward
 
     

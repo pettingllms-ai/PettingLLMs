@@ -8,7 +8,6 @@ from pettingllms.globals import OAI_RM_MODEL, THOUGHT_DELIMITER_END
 from pettingllms.rewards.math_utils.utils import extract_answer, grade_answer_mathd, grade_answer_sympy
 from pettingllms.rewards.reward_types import RewardConfig, RewardOutput, RewardType
 from pettingllms.system_prompts import ORM_PROMPT
-from pettingllms.utils import call_gemini_llm, call_oai_rm_llm
 
 ORM_USER_TEMPLATE = """
 Problem: {problem}
