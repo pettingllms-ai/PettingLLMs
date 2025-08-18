@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, Union
 from tqdm import tqdm
 import numpy as np
+import itertools
 from dataclasses import dataclass
 from huggingface_hub import hf_hub_download
 
@@ -66,7 +67,8 @@ except ImportError:
 def load_problem_batch(
     dataset_name: str,
     batch_size: int,
-    split: str = "train"
+    split: str = "train",
+    mode: str = "train"
 ) -> List[Dict[str, Any]]:
     """
     Load a batch of programming problems.
@@ -83,17 +85,20 @@ def load_problem_batch(
         print("❌ datasets library unavailable")
         return []
     
-    # 根据数据集名称确定默认的split，但允许用户覆盖
+    
     if dataset_name == "CodeContests_train":
         default_split = "train"
     else:
         default_split = "test"
     
-    # 如果用户没有指定split，使用默认值
+  
     if split == "train":
         split = default_split
     
-    print(f"🔄 Loading {batch_size} problems from dataset {dataset_name}...")
+    if mode == "validation":
+        print(f"🔄 Loading all problems from dataset {dataset_name} (split={split})...")
+    else:
+        print(f"🔄 Loading {batch_size} problems from dataset {dataset_name}...")
     
     # 首先尝试从本地 datasets 文件夹加载
     local_dataset_path = None
@@ -141,16 +146,27 @@ def load_problem_batch(
                 return []
     
     batch_results = []
-    iterator = ds.take(batch_size * 2)  # Take more to ensure enough valid problems
+    
+    if mode == "validation":
+        iterator = ds
+       
+    else:
+        try:
+          
+            iterator = ds.take(batch_size * 2)
+        except AttributeError:
+          
+            iterator = itertools.islice(ds, batch_size * 2)
     
     for i, example in enumerate(iterator):
-        if len(batch_results) >= batch_size:
-            break
+        if mode != "validation":
+            if len(batch_results) >= batch_size:
+                break
             
         problem_dict = _format_competition_problem(example, i)
         if problem_dict:
             batch_results.append(problem_dict)
-            print(f"✅ Loaded problem {len(batch_results)}/{batch_size} (index={i})")
+            print(f"✅ Loaded problem {len(batch_results)} (index={i})")
     
     if not batch_results:
         raise Exception("No valid problems found in streaming mode")
@@ -335,7 +351,7 @@ async def evaluate_code_against_tests(
     failed_cases = []
     
     for i, (test_input, expected_output, actual_output) in enumerate(zip(test_inputs, test_outputs, actual_outputs)):
-        test_case_info = {"test_case": i, "input": test_input}
+        test_case_info = {"input": test_input,"generated_test_case_output":actual_output,"generated_code_execution_output":expected_output}
         
         if actual_output is None: # Check for timeout
             if_passed = False

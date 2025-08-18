@@ -59,61 +59,46 @@ class UnitTestGenerationAgent(Agent):
                 return "\n".join([str(v) for v in value])
             return str(value)
 
-        if state is not None:
-            question = as_text(getattr(state, "problem", ""))
-            current_code = getattr(state, "current_code", None)
-            current_test_input = getattr(state, "current_test_input", None)
-            current_code_output = getattr(state, "current_code_output", None)
-            current_test_output = getattr(state, "current_test_output", None)
-            mismatch_testcases = getattr(state, "mismatch_testcases", None)
-        elif agent_obs is not None:
-            question = as_text(agent_obs.get("question", ""))
-            current_code = agent_obs.get("current_code", None)
-            current_test_input = agent_obs.get("current_test_input", None)
-            current_code_output = agent_obs.get("current_code_output", None)
-            current_test_output = agent_obs.get("current_test_output", None)
-            mismatch_testcases = agent_obs.get("mismatch_testcases", None)
-        else:
-            question = ""
-            current_code = None
-            current_test_input = None
-            current_code_output = None
-            current_test_output = None
-            mismatch_testcases = None
 
-        need_generate = current_code in (None, "") or current_test_input in (None, "")
+        question = getattr(state, "problem", None)
+        current_code = getattr(state, "generated_code", None)
+        current_test_input = getattr(state, "generated_test_input", None)
+        current_test_output = getattr(state, "generated_test_output", None)
+        current_code_output = getattr(state, "exe_code_generated_test_output", None)
+        need_generate = current_code in (None, "") or current_test_input in (None, "") or current_test_output in (None, "") or current_code_output in (None, "")
+
 
         if need_generate:
             # Test-case generation mode
             formatted_prompt = (
-                f"<|im_start|>You are a helpful assistant that generates test examples for coding tasks.<|im_end|>\n"
-                f"<|im_start|>User: Given a coding task, instead of providing the final script, your task is to generate a new test example (both input, output and explanation).\n"
+                f" You are a helpful assistant that generates test examples for coding tasks.  \n"
+                f" User: Given a coding task, instead of providing the final script, your task is to generate a new test example (both input, output and explanation).\n"
                 f"This is the problem:\n{question}\n\n"
                 f"You need to provide a new test example. A good test example should be completely accurate and conform to the problem's format requirements, while also possessing enough discriminative power to distinguish correct code from incorrect code.\n"
                 f"Before providing a test example, you must think carefully and reason step by step to derive an input and output you are very confident are correct. For example, start by designing an input you can reliably handle, then compute the output step by step. If you're unsure about the output, revise or re-design the input to ensure accuracy. Directly providing input/output pairs without this process is discouraged, as it often results in low accuracy.\n"
                 f"Finally, after completing these previous thinking and derivation steps (you should not write the final test example unless you have gone through these steps very thoroughly), you MUST put your final test example in the following format:\n\n"
                 f"**Test Input:**\n```\ninput here\n```\n\n"
                 f"**Test Output:**\n```\noutput here\n```\n\n"
-                f"**Explanation:**\nexplanation here.<|im_end|>\n"
-                f"<|im_start|>Assistant:"
+                f"**Explanation:**\nexplanation here.  \n"
+                f" Assistant:"
             )
         else:
             # Test-case refinement mode
             formatted_prompt = (
-                f"<|im_start|>You are a helpful assistant that refines or corrects test examples for coding tasks.<|im_end|>\n"
-                f"<|im_start|>User: Given a coding task, instead of providing the final script, your task is to refine or correct test examples.\n"
+                f" You are a helpful assistant that refines or corrects test examples for coding tasks.  \n"
+                f" User: Given a coding task, instead of providing the final script, your task is to refine or correct test examples.\n"
                 f"This is the problem:\n{question}\n\n"
-                f"Current code output:\n{as_text(current_code_output)}\n\n"
-                f"Current tests (inputs):\n{as_text(current_test_input)}\n\n"
-                f"Current tests (expected outputs):\n{as_text(current_test_output)}\n\n"
-                f"Mismatch summary (if any):\n{as_text(mismatch_testcases)}\n\n"
-                f"You need to provide corrected or more discriminative tests while keeping format consistent. A good test example should be completely accurate and conform to the problem's format requirements, while also possessing enough discriminative power to distinguish correct code from incorrect code.\n"
-                f"Before providing a test example, you must think carefully and reason step by step to derive an input and output you are very confident are correct. For example, start by designing an input you can reliably handle, then compute the output step by step. If you're unsure about the output, revise or re-design the input to ensure accuracy. Directly providing input/output pairs without this process is discouraged, as it often results in low accuracy.\n"
-                f"Finally, after completing these previous thinking and derivation steps (you should not write the final test example unless you have gone through these steps very thoroughly), you MUST put your final test example in the following format:\n\n"
+                f"Problem:\n{question}\n\n"
+                f"Current code:\n{as_text(current_code)}\n\n"
+                f"but the execution result is not aligned with the test case outputs generated by another test case generator.\n"
+                f"Current generated test cases (inputs):\n{as_text(current_test_input)}\n\n"
+                f"Current generated test cases (outputs):\n{as_text(current_test_output)}\n\n"
+                f"Current code execution result:\n{as_text(current_code_output)}\n\n"
+                f"First, you need to judge the mismatch between the current generated test cases and the current code execution result, if the mismatch is caused by the current generated test cases, please refine the test cases to pass all tests.\n"
+                f"Then, you need to refine the code to pass all tests.\n"
+                f"Finally, you MUST put your final test example in the following format:\n\n"
                 f"**Test Input:**\n```\ninput here\n```\n\n"
                 f"**Test Output:**\n```\noutput here\n```\n\n"
-                f"**Explanation:**\nexplanation here.<|im_end|>\n"
-                f"<|im_start|>Assistant:"
             )
 
         self.current_prompt = {"text": formatted_prompt, "image": None}

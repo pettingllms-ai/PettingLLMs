@@ -42,11 +42,11 @@ class MultiAgentsExecutionEngine:
         
         # Data configuration - direct access with fallbacks
         if hasattr(self.config, 'data') and self.config.data is not None:
-            self.max_prompt_length = getattr(self.config.data, 'max_prompt_length', 10240)
-            self.max_response_length = getattr(self.config.data, 'max_response_length', 2048)
+            self.max_prompt_length = getattr(self.config.data, 'max_prompt_length', 1024)
+            self.max_response_length = getattr(self.config.data, 'max_response_length', 1024)
         else:
-            self.max_prompt_length = 10240
-            self.max_response_length = 2048
+            self.max_prompt_length = 1024
+            self.max_response_length = 1024
         # Multi-agent interaction configuration - direct access with fallbacks
         if hasattr(self.config, 'multi_agent_interaction') and self.config.multi_agent_interaction is not None:
             self.turn_order = getattr(self.config.multi_agent_interaction, 'turn_order', ['code_generator', 'test_generator'])
@@ -72,8 +72,8 @@ class MultiAgentsExecutionEngine:
             self.generate_timeout = getattr(self.config.timeout, 'generate_timeout', 60.0)
             self.step_timeout = getattr(self.config.timeout, 'step_timeout', 30.0)
         else:
-            self.generate_timeout = 30.0  # 60 seconds for generation
-            self.step_timeout = 10.0      # 30 seconds for environment step
+            self.generate_timeout = 120.0  # 60 seconds for generation
+            self.step_timeout = 20.0      # 30 seconds for environment step
     def __init__(
         self,
         config,
@@ -116,10 +116,12 @@ class MultiAgentsExecutionEngine:
         self.env_name = env_name
         self.env_class = ENV_CLASS_MAPPING[env_name]
         self.agent_class_list = [AGENT_CLASS_MAPPING[agent_name] for agent_name in self.turn_order]
+        self.mode=self.config.mode
         self._init_agents_and_envs()
+        
         #self._init_agents()
 
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
+        #self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers)
         # rollout_engine_dict is not maintained in this class to avoid referencing a non-existent attribute
         self.server_manager_dict = server_manager_dict or {}
         self.chat_parser_dict={}
@@ -138,19 +140,19 @@ class MultiAgentsExecutionEngine:
             with multiprocessing.Pool(self.n_cpu // 4) as pool: # Only use 1/4 of the cores to avoid conflicts
                 func=partial(self.__init_one_env_instance, env_args=self.env_args)
                 self.envs = pool.map(func, range(self.gen_batch_size*self.gen_n_samples))
-            self.env_list = self.envs
+           
             
         else:
             self.env_batch_class=ENV_BATCH_CLASSES[self.env_name]
             self.rollout_idx_list=range(self.gen_batch_size*self.gen_n_samples)
-            self.envs_batch=self.env_batch_class(env_idx_list=range(self.gen_batch_size), rollout_idx_list=range(self.gen_batch_size*self.gen_n_samples), samples=self.gen_n_samples, max_turns=self.max_turns, config=self.config)
+            self.envs_batch=self.env_batch_class(env_idx_list=range(self.gen_batch_size), rollout_idx_list=range(self.gen_batch_size*self.gen_n_samples), samples=self.gen_n_samples, max_turns=self.max_turns, config=self.config, mode=self.mode)
             self.envs=self.envs_batch.env_list
-            self.env_list = self.envs
+           
 
         # Initialize the agent group for each rollout
         self.agent_groups = [
             [agent_cls(rollout_idx=rollout_idx) for agent_cls in self.agent_class_list]
-            for rollout_idx in range(len(self.env_list))
+            for rollout_idx in range(len(self.envs))
         ]
         
         
@@ -184,9 +186,9 @@ class MultiAgentsExecutionEngine:
         env = self.env_list[rollout_idx] if hasattr(self, "env_list") else self.envs[rollout_idx]
         agent_group = self.agent_groups[rollout_idx]
         
+        
 
         
-        # 记录rollout开始
         self.multi_logger.log_async_event(
             rollout_idx, "rollout_start", 
             f"Starting multi-turn conversation, max turns: {self.max_turns}",
@@ -196,9 +198,8 @@ class MultiAgentsExecutionEngine:
                 "available_server_managers": list(self.server_manager_dict.keys())
             }
         )
-        
+        reward_history_dict={}
         for turn_idx in range(self.max_turns):
-            # 记录turn开始
             self.multi_logger.log_async_event(
                 rollout_idx, "turn_start",
                 f"Starting turn {turn_idx + 1}",
@@ -218,7 +219,6 @@ class MultiAgentsExecutionEngine:
 
                 # Convert to DataProto format
                 dpr_prompt = convert_prompt_to_dpr(self.tokenizer_dict[policy_name], 
-                        self.chat_parser_dict.get(policy_name), 
                         self.processor_dict.get(policy_name) if isinstance(self.processor_dict, dict) else None,
                         prompt, 
                         self.max_prompt_length,
@@ -230,16 +230,15 @@ class MultiAgentsExecutionEngine:
                 output_dpr = None
                 response_str = None
                 try:
-                    output_dpr,response_str = await asyncio.wait_for(
-                        self.server_manager_dict[policy_name].generate(
+                    output_dpr,response_str = await self.server_manager_dict[policy_name].generate(
                             dpr_prompt, 
                             application_id=rollout_id,
                             tokenizer=self.tokenizer_dict[policy_name],
                             rollout_idx=rollout_idx,
-                            policy_name=policy_name
-                        ),
-                        timeout=self.generate_timeout
-                    )
+                            policy_name=policy_name,
+                            timeout=self.generate_timeout
+                        )
+                      
                     
                 except asyncio.TimeoutError:
                     self.multi_logger.log_env_agent_info(
@@ -275,12 +274,21 @@ class MultiAgentsExecutionEngine:
                         {"error": "timeout", "timeout_seconds": self.step_timeout}
                     )
                     step_success = False
+                except Exception as e:
+                    self.multi_logger.log_env_agent_info(
+                        rollout_idx, turn_idx + 1, agent_name,
+                        f"Failed to execute environment step: {e}",
+                        {"error": str(e), "traceback": traceback.format_exc()}
+                    )
+                    step_success = False
                 
                 # Skip processing if step failed
                 if not step_success:
                     continue
                 
                 current_agent.calculate_reward(env,mode="sum")
+
+                reward_history_dict[agent_name] = current_agent.agent_reward if agent_name not in reward_history_dict else reward_history_dict[agent_name].append(current_agent.agent_reward)
 
                 # Only process trajectory if both generation and step succeeded
                 if output_dpr is not None:
@@ -297,17 +305,17 @@ class MultiAgentsExecutionEngine:
                             output_dpr
                         ])
                 
-         
+
                 self.multi_logger.log_env_agent_info(
                     rollout_idx, turn_idx + 1, agent_name,
                     "Trajectory information updated",
                     {
                         "agent_name": agent_name,
-                        "agent_prompt": prompt,
+                        #"agent_prompt": prompt,
                         "agent_response": response_str,
                         "agent_reward": current_agent.agent_reward,
                         "agent_action": str(current_agent.current_action),
-                        
+                        "reward_history_dict": reward_history_dict
                        
                     }
                 )
@@ -319,14 +327,59 @@ class MultiAgentsExecutionEngine:
                             "env_state": env.state,
                         }
                     )
+                
+                # Check if environment is done (e.g., all tests passed)
+                if hasattr(env, 'done') and env.done:
+                    termination_reason = getattr(env, 'termination_reason', 'environment_done')
+                    self.multi_logger.log_async_event(
+                        rollout_idx, "early_termination",
+                        f"Environment completed early due to: {termination_reason}",
+                        {"termination_reason": termination_reason, "completed_turn": turn_idx + 1, "completed_agent": agent_name}
+                    )
+                    
+              
+                    agent_rewards = {}
+                    for agent_idx, agent_name_summary in enumerate(self.turn_order):
+                        agent_rewards[agent_name_summary] = agent_group[agent_idx].agent_reward
+                    
+                    self.multi_logger.log_rollout_summary(
+                        rollout_idx=rollout_idx,
+                        agent_rewards=agent_rewards,
+                        termination_reason=termination_reason,
+                        extra_data={
+                            "completed_turn": turn_idx + 1,
+                            "completed_agent": agent_name,
+                            "env_state": env.state,
+                            "reward_history_dict": reward_history_dict
+                        }
+                    )
+                    
+                    # Break out of both agent loop and turn loop
+                    return trajectory_per_task_dict
         
         extra_data={}
+        agent_rewards = {}
         for agent_idx, agent_name in enumerate(self.turn_order):
             extra_data[f"{agent_name}_final_result"]={
                 "agent_action": str(agent_group[agent_idx].current_action),
                 "agent_reward": agent_group[agent_idx].agent_reward,
             }
+            agent_rewards[agent_name] = agent_group[agent_idx].agent_reward
         extra_data["env_state"]=env.state
+        
+
+        self.multi_logger.log_rollout_summary(
+            rollout_idx=rollout_idx,
+            agent_rewards=agent_rewards,
+            termination_reason="max_turns_reached",
+            extra_data={
+                "max_turns": self.max_turns,
+                "env_state": env.state,
+                "final_actions": {agent_name: str(agent_group[agent_idx].current_action) 
+                                for agent_idx, agent_name in enumerate(self.turn_order)}
+            }
+        )
+        
         self.multi_logger.log_async_event(
             rollout_idx, "rollout_complete",
             f"Rollout {rollout_idx} completed successfully",
@@ -360,7 +413,7 @@ class MultiAgentsExecutionEngine:
                         f"Rollout {rollout_idx} failed",
                         {"error": str(e), "traceback": traceback.format_exc()}
                     )
-                    # 重新抛出异常，但确保包含rollout_idx信息
+                    
                     raise Exception(f"Rollout {rollout_idx} failed: {e}") from e
         
         tasks = [
@@ -385,23 +438,22 @@ class MultiAgentsExecutionEngine:
         completed_count = 0
         failed_count = 0
         
-        # 添加异步任务的进度条
+  
         task_pbar = tqdm(total=len(tasks), desc="Rollouts", position=1, leave=False)
         
         try:
-            # 使用as_completed来处理完成的任务
+        
             for completed_task in asyncio.as_completed(tasks):
                 try:
-                    rollout_idx, rollout_result = await asyncio.wait_for(completed_task, timeout=self.generate_timeout)
                     
-                    # 聚合每个policy的数据
+                    rollout_idx, rollout_result = await completed_task
+                    
+        
                     for policy_name, policy_data in rollout_result.items():
-                        if policy_data.batch is not None:  # 只处理有数据的policy
+                        if policy_data.batch is not None:  
                             if aggregated_results[policy_name].batch is None:
-                                # 如果是空的，直接赋值
                                 aggregated_results[policy_name] = policy_data
                             else:
-                                # 使用concat合并数据
                                 aggregated_results[policy_name] = DataProto.concat([
                                     aggregated_results[policy_name], 
                                     policy_data
@@ -409,7 +461,6 @@ class MultiAgentsExecutionEngine:
                     
                     completed_count += 1
                     
-                    # 更新进度条
                     task_pbar.update(1)
                     task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)})")
                     
@@ -422,22 +473,6 @@ class MultiAgentsExecutionEngine:
                             "progress": f"{completed_count}/{len(tasks)}"
                         }
                     )
-                except asyncio.TimeoutError:
-                    failed_count += 1
-                    # 更新进度条（失败的任务）
-                    task_pbar.update(1)
-                    task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)}, {failed_count} failed)")
-                    
-                    # 由于超时，我们无法获取rollout_idx，所以使用-1作为标识
-                    self.multi_logger.log_async_event(
-                        -1, "task_timeout",
-                        f"Task timed out after {self.generate_timeout}s",
-                        {
-                            "failed_count": failed_count,
-                            "timeout_seconds": self.generate_timeout
-                        }
-                    )
-                    continue
                 except Exception as e:
                     failed_count += 1
                     # 更新进度条（失败的任务）
@@ -550,7 +585,7 @@ def test_server_manager_simple(trainer_config,config):
 
     prompt_text = "Hello"
     prompt={"text":prompt_text, "image":None}
-    prompt_dpr = convert_prompt_to_dpr(tokenizer_local, None, None, prompt, trainer_config.actor_rollout_ref.rollout.prompt_length, multi_modal=False)
+    prompt_dpr = convert_prompt_to_dpr(tokenizer_local, processor=None, prompts=prompt, max_prompt_length=trainer_config.actor_rollout_ref.rollout.prompt_length, multi_modal=False)
     output_server_manager = asyncio.run(server_manager.generate(prompt_dpr, tokenizer=tokenizer_local, application_id="test", sampling_params={}))
     test_multi_logger.log_async_event(
         -1, "server_manager_test_complete", 
@@ -577,7 +612,7 @@ def test_server_manager_simple(trainer_config,config):
         server_manager_dict=server_manager_dict
     )
     
-    test_rollout_indices = range(config.data.gen_batch_size*config.data.gen_n_samples)   
+    test_rollout_indices = range(len(multi_agent_execution_engine.envs))   
     test_multi_logger.log_async_event(
         -1, "concurrent_test_start",
         "Testing concurrent rollout execution with class method",
@@ -608,8 +643,8 @@ def test_server_manager_simple(trainer_config,config):
 
 def test_rollout_engine_simple():
     from omegaconf import OmegaConf
-    trainer_config = OmegaConf.load("pettingllms/config/code/ppo_trainer/base.yaml")
-    config=OmegaConf.load("pettingllms/config/code/code_test.yaml")
+    trainer_config = OmegaConf.load("pettingllms/config/code/ppo_trainer/eval.yaml")
+    config=OmegaConf.load("pettingllms/config/code/code_eval.yaml")
     _ = test_server_manager_simple(trainer_config,config)
 
 if __name__ == "__main__":

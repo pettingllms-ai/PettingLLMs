@@ -123,6 +123,15 @@ class CodeTestEnv(MultiAgentsEnvironment):
                 self.state.generated_test_vs_generated_code_match_cases = passed_cases
                 self.state.generated_test_vs_generated_code_mismatch_cases = failed_cases
                 self.state.generated_test_vs_generated_code_match_ratio = passed_ratio
+                
+                # 3) Check if all generated tests pass with generated code
+                # If match ratio is 1.0 (100%), set environment to done state
+                if passed_ratio >= 1.0 and len(gen_inputs) > 0:
+                    self.done = True
+                    self.is_pass = True
+                    self.termination_reason = "all_tests_passed"
+                    logger.info(f"All {len(gen_inputs)} generated test cases passed! Setting environment to done state.")
+                
             except Exception as e:
                 print(f"Warning: Failed to evaluate generated test against code: {e}")
                 self.state.generated_test_vs_generated_code_match_cases = []
@@ -132,18 +141,21 @@ class CodeTestEnv(MultiAgentsEnvironment):
 
 
 class CodeTestEnvBatch:
-    def __init__(self, env_idx_list: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict):
-        self.env_list=[]
-        self.problem_list=load_problem_batch(config.env.benchmark, len(env_idx_list))
+    def __init__(self, env_idx_list: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict, mode="train"):
         
-        # 检查是否成功加载了问题
+        self.problem_list=load_problem_batch(config.env.benchmark, len(env_idx_list),mode=mode)
+        self.env_list=[]
+        if mode=="validation":
+            rollout_idx_list=range(len(self.problem_list)*samples)
+   
         if not self.problem_list:
             raise ValueError(f"Failed to load problems from benchmark: {config.env.benchmark}. Please check if the dataset is available and accessible.")
+    
         
         for i,problem in enumerate(self.problem_list):
             state=CodeTestEnvState(problem=problem["question"],ground_truth_test_input=problem["example_input"],ground_truth_test_output=problem["example_output"])
             for s in range(samples):
-                env=CodeTestEnv(env_idx=env_idx_list[i], rollout_idx=rollout_idx_list[i*samples+s], max_turns=max_turns, config=None)
+                env=CodeTestEnv(env_idx=i, rollout_idx=rollout_idx_list[i*samples+s], max_turns=max_turns, config=None)
                 env.state=copy.deepcopy(state)
                 self.env_list.append(env)
         if len(self.env_list)!=len(rollout_idx_list):

@@ -1,0 +1,121 @@
+# Configuration for Code multi-agent training with TWO different policies
+# code_generator uses Qwen/Qwen2.5-Coder-3B, test_generator uses DeepSeek-R1-Distill
+mode: "validation"
+# Inherit from base configuration
+defaults:
+  # Inject a separate ppo_trainer/base subtree for each model; can be overridden independently
+  - ppo_trainer@models.model_0.ppo_trainer_config: base
+  - _self_
+
+# dataset config (shared by all agents)
+data:
+  #rollout config
+  gen_batch_size: 32
+  gen_n_samples: 1
+  sample_temperature: 0
+
+  # Batch sizes
+  train_batch_size: 16
+  val_batch_size: 8
+  
+  # Sequence lengths
+  max_prompt_length: 512
+  max_response_length: 512
+
+resource:
+  nnodes: 1
+  n_gpus_per_node: 1
+  trust_remote_code: true
+
+# Environment configuration (shared by all agents)
+env:
+  name: code_env
+  benchmark: "CodeContests"
+  max_turns: 4
+  resolve: false
+  multi_modal: false
+  batched_init: true
+
+# Multi-agent interaction configuration
+multi_agent_interaction:
+  
+  # Turn order for agents (list of agent names)
+  turn_order: ["code_generator", "test_generator"]
+  
+  # Number of agents that interact per episode
+  num_interacting_agents: 2
+  
+  # Whether agents can see other agents' actions
+  shared_observation: true
+
+# Shared model configurations
+models:
+  model_0:
+    path: Qwen/Qwen3-4B
+    name: "code_generator_model"
+    ppo_trainer_config:
+      data: 
+        max_prompt_length: ${data.max_prompt_length}
+        max_response_length: ${data.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${models.model_0.path}
+        rollout:
+          n: ${data.gen_n_samples}
+          temperature: ${data.sample_temperature}
+          prompt_length: ${data.max_prompt_length}
+          response_length: ${data.max_response_length}
+          tensor_model_parallel_size: 1
+          
+    # ppo_trainer_config is injected via defaults; the above settings override the defaults in base
+    
+
+# Multi-agent configuration for two policies
+agent_policy_configs:
+  # Number of agents to train
+  num_agents: 2
+  policy_list: ["code_generator", "test_generator"]
+  agent_configs:
+    agent_0:
+      name: "code_generator"
+      policy_name: "code_generator_model"
+      
+    agent_1:
+      name: "test_generator"
+      policy_name: "code_generator_model"
+
+# Logger configuration
+project_name: pettingllms
+experiment_name: code_test
+logger: [ 'console', 'wandb' ]
+
+trainer:
+  device: cuda
+  n_gpus_per_node: 1
+  nnodes: 1
+  balance_batch: True
+  total_epochs: 30
+  total_training_steps: null
+  project_name: pettingllms
+  experiment_name: code_eval
+  logger: [ 'console', 'wandb' ]
+  log_val_generations: 0
+  rollout_data_dir: null
+  validation_data_dir: null
+  save_freq: -1
+  resume_mode: auto
+  resume_from_path: null
+  val_before_train: True
+  test_freq: -1
+  critic_warmup: 0
+  default_hdfs_dir: null
+  del_local_ckpt_after_load: False
+  default_local_dir: checkpoints/pettingllms/code_eval
+  max_actor_ckpt_to_keep: null
+  max_critic_ckpt_to_keep: null
+  ray_wait_register_center_timeout: 300
+  npu_profile:
+    options: {}
+  rejection_sample: False
+  rejection_sample_multiplier: 2
+  n_training_gpus_per_node: 4

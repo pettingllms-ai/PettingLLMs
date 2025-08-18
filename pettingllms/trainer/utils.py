@@ -158,6 +158,7 @@ class AsyncLLMServerManager:
         application_id: Optional[str] = None,
         rollout_idx: Optional[int] = None,
         policy_name: Optional[str] = None,
+        timeout: Optional[float] = 60.0
     ) -> DataProto:
         """Generate tokens from prompt ids or DataProto.
 
@@ -174,18 +175,20 @@ class AsyncLLMServerManager:
         Returns:
             DataProto: DataProto format output consistent with Router's generate_sequences.
         """
-        # 生成唯一的application_id用于追踪
+
         if application_id is None:
             application_id = str(uuid.uuid4())
         else:
             application_id = str(application_id)
+
+        unique_request_id = f"{application_id}_{uuid.uuid4().hex[:8]}"
         
-        # 记录模型生成开始
+ 
         self.multi_logger.log_model_interaction(
             rollout_idx=rollout_idx if rollout_idx is not None else -1,
             policy_name=policy_name if policy_name is not None else "unknown",
-            prompt="",  # 这里先留空，后面会记录详细的prompt
-            response="",  # 这里先留空，后面会记录response
+            prompt="",  
+            response="",  
             extra_data={
                 "event": "generate_start",
                 "dpr_prompt_shape": str(dpr_prompt.batch['input_ids'].shape) if hasattr(dpr_prompt, 'batch') else None,
@@ -194,7 +197,7 @@ class AsyncLLMServerManager:
             }
         )
         
-        server = self._choose_server(application_id)
+        server = self._choose_server(unique_request_id)
         
         # Ensure sampling_params is a dictionary (vLLM requires mapping, not None)
         if sampling_params is None:
@@ -241,7 +244,7 @@ class AsyncLLMServerManager:
         import asyncio
         
         try:
-            # 记录开始生成
+
             self.multi_logger.log_model_interaction(
                 rollout_idx=rollout_idx if rollout_idx is not None else -1,
                 policy_name=policy_name if policy_name is not None else "unknown",
@@ -250,21 +253,27 @@ class AsyncLLMServerManager:
                 extra_data={
                     "event": "server_generate_start",
                     "prompt_ids_length": len(prompt_ids),
-                    "timeout": 20.0
+                    "timeout": timeout
                 }
             )
             
             # Directly await the Ray remote call with timeout
-            output = await asyncio.wait_for(
-                server.generate.remote(
-                    prompt_ids=prompt_ids,
-                    sampling_params=sampling_params,
-                    request_id=str(application_id),  # Convert UUID to string
-                ),
-                timeout=20.0
+            #output = await asyncio.wait_for(
+             #   server.generate.remote(
+              #      prompt_ids=prompt_ids,
+              #      sampling_params=sampling_params,
+              #      request_id=unique_request_id,  # Use unique request ID
+               # ),
+                #timeout=timeout
+            #)
+            output = await server.generate.remote(
+                prompt_ids=prompt_ids,
+                sampling_params=sampling_params,
+                request_id=unique_request_id,  # Use unique request ID
             )
+
         except asyncio.TimeoutError:
-            error_msg = f"Generate request timed out after 20 seconds for request {application_id}"
+            error_msg = f"Generate request timed out after 20 seconds for request {unique_request_id} (app_id: {application_id})"
             self.multi_logger.log_model_interaction(
                 rollout_idx=rollout_idx if rollout_idx is not None else -1,
                 policy_name=policy_name if policy_name is not None else "unknown",
@@ -272,7 +281,7 @@ class AsyncLLMServerManager:
                 response="",
                 extra_data={
                     "event": "generate_timeout",
-                    "timeout": 20.0,
+                    "timeout": timeout,
                     "application_id": application_id
                 }
             )
@@ -291,10 +300,10 @@ class AsyncLLMServerManager:
             )
             raise
         
-        # 开始解码输出
+    
         response_str = tokenizer.decode(output, skip_special_tokens=True)
         
-        # 记录生成完成和响应
+      
         self.multi_logger.log_model_interaction(
             rollout_idx=rollout_idx if rollout_idx is not None else -1,
             policy_name=policy_name if policy_name is not None else "unknown",
@@ -302,8 +311,8 @@ class AsyncLLMServerManager:
             response=response_str,
             extra_data={
                 "event": "generate_complete",
-                "output_length": len(output) if output else 0,
-                "response_length": len(response_str)
+                "output_token_length": len(output) if output else 0,
+                
             }
         )
 
@@ -326,7 +335,7 @@ class AsyncLLMServerManager:
         response_ids_tail = response_ids_generated[:response_max_len]
 
         # Build tensors: prompts left-pad, responses right-pad
-        device = torch.device("cpu")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         batch_size = 1
         pad_token_id = 0
 
@@ -364,7 +373,7 @@ class AsyncLLMServerManager:
             "position_ids": position_ids_full,
         }
        
-        # 记录最终的DataProto构建结果
+  
         self.multi_logger.log_model_interaction(
             rollout_idx=rollout_idx if rollout_idx is not None else -1,
             policy_name=policy_name if policy_name is not None else "unknown",
@@ -389,7 +398,7 @@ class AsyncLLMServerManager:
         return output_dpr,response_str
             
 
-def convert_prompt_to_dpr(tokenizer, chat_parser, processor, prompts, max_prompt_length, multi_modal=False, **kwargs):
+def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, multi_modal=False, **kwargs):
     """
     Convert prompt dict to veRL's DataProto.
     
@@ -421,11 +430,14 @@ def convert_prompt_to_dpr(tokenizer, chat_parser, processor, prompts, max_prompt
         chat = np.array([
             {"content": text, "role": "user"}
         ])
+
         prompt_with_chat_template = tokenizer.apply_chat_template(
             chat,
             add_generation_prompt=True,
             tokenize=False,
+            enable_thinking=True
         )
+        
 
         inputs = tokenizer(
             prompt_with_chat_template,

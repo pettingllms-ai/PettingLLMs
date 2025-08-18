@@ -71,10 +71,11 @@ class MultiLoggerConfig:
         # Logger dictionary
         self.loggers: Dict[str, logging.Logger] = {}
         
-        # Create three main loggers
+        # Create four main loggers
         self._setup_env_agent_logger()
         self._setup_model_logger()
         self._setup_async_logger()
+        self._setup_summary_logger()
     
     def _setup_env_agent_logger(self):
         """Setup env_agent.log logger"""
@@ -142,6 +143,33 @@ class MultiLoggerConfig:
         # Create file handler
         file_handler = logging.FileHandler(
             self.log_dir / "async.log", 
+            mode='a', 
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.INFO)
+        
+        # Set format
+        formatter = logging.Formatter(
+            '[%(asctime)s] [ROLLOUT:%(rollout_idx)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        
+        logger.addHandler(file_handler)
+        self.loggers[logger_name] = logger
+    
+    def _setup_summary_logger(self):
+        """Setup summary.log logger"""
+        logger_name = "summary"
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.INFO)
+        
+        # Clear existing handlers
+        logger.handlers.clear()
+        
+        # Create file handler
+        file_handler = logging.FileHandler(
+            self.log_dir / "summary.log", 
             mode='a', 
             encoding='utf-8'
         )
@@ -235,6 +263,33 @@ class MultiLoggerConfig:
         log_content = {
             "event_type": event_type,
             "message": message,
+            "timestamp": datetime.now().isoformat(),
+            "extra_data": safe_serialize(extra_data or {})
+        }
+        
+        extra = {
+            "rollout_idx": rollout_idx
+        }
+        
+        logger.info(json.dumps(log_content, ensure_ascii=False, indent=2), extra=extra)
+    
+    def log_rollout_summary(self, rollout_idx: int, agent_rewards: Dict[str, float], 
+                           termination_reason: str, extra_data: Optional[Dict[str, Any]] = None):
+        """
+        Log rollout summary information
+        
+        Args:
+            rollout_idx: Rollout index
+            agent_rewards: Dictionary mapping agent names to their final rewards
+            termination_reason: Reason for rollout termination
+            extra_data: Additional data
+        """
+        logger = self.loggers["summary"]
+        
+        log_content = {
+            "rollout_idx": rollout_idx,
+            "agent_rewards": agent_rewards,
+            "termination_reason": termination_reason,
             "timestamp": datetime.now().isoformat(),
             "extra_data": safe_serialize(extra_data or {})
         }
