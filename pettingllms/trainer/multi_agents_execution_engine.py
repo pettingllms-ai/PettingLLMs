@@ -288,7 +288,10 @@ class MultiAgentsExecutionEngine:
                 
                 current_agent.calculate_reward(env,mode="sum")
 
-                reward_history_dict[agent_name] = current_agent.agent_reward if agent_name not in reward_history_dict else reward_history_dict[agent_name].append(current_agent.agent_reward)
+                if agent_name not in reward_history_dict:
+                    reward_history_dict[agent_name] = [current_agent.agent_reward]
+                else:
+                    reward_history_dict[agent_name].append(current_agent.agent_reward)
 
                 # Only process trajectory if both generation and step succeeded
                 if output_dpr is not None:
@@ -376,7 +379,8 @@ class MultiAgentsExecutionEngine:
                 "max_turns": self.max_turns,
                 "env_state": env.state,
                 "final_actions": {agent_name: str(agent_group[agent_idx].current_action) 
-                                for agent_idx, agent_name in enumerate(self.turn_order)}
+                                for agent_idx, agent_name in enumerate(self.turn_order)},
+                "reward_history_dict": reward_history_dict
             }
         )
         
