@@ -172,6 +172,7 @@ class CodeGenerationAgent(Agent):
         else:
             self.agent_reward = passed_ratio
         self.reward_history.append(passed_ratio)
+        self.value=passed_ratio
 
 
 

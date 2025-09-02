@@ -92,7 +92,7 @@ except ImportError:
 
 
 def load_problem_batch( 
-    batch_size: int=10,
+    indices: List[int],
     dataset_name: str="train",
     split: str = "train",
     mode: str = "train"
@@ -116,14 +116,13 @@ def load_problem_batch(
     if mode == "validate":
         print(f"🔄 Loading all problems from dataset {dataset_name} (split={split})...")
     else:
-        print(f"🔄 Loading {batch_size} problems from dataset {dataset_name}...")
+        print(f"🔄 Loading {len(indices)} problems from dataset {dataset_name}...")
     
     # 获取本地数据集路径
     current_dir = Path(__file__).parent.parent.parent.parent  # 回到 pettingllms 根目录
-    local_datasets_dir = current_dir / "datasets" / dataset_name.lower().replace("/", "_")
-    parquet_file = local_datasets_dir / f"{split}.parquet"
-    
-    # train mode: 必须从本地加载，没有则报错
+    local_datasets_dir = current_dir / "datasets" / "code" / dataset_name.lower().replace("/", "_")
+    split_name = "train" if mode == "train" else "test"
+    parquet_file = local_datasets_dir / f"{split_name}.parquet"
     if mode == "train":
         if not parquet_file.exists():
             raise FileNotFoundError(f"❌ Train mode requires local dataset at {parquet_file}, but file not found!")
@@ -134,13 +133,6 @@ def load_problem_batch(
             print(f"✅ Successfully loaded local dataset with {len(ds)} samples")
         except Exception as e:
             raise Exception(f"❌ Failed to load local dataset: {e}")
-        
-        # 随机选择batch_size个样本
-        if len(ds) < batch_size:
-            raise Exception(f"❌ Local dataset only has {len(ds)} samples, but batch_size is {batch_size}")
-        
-        # 随机选择索引
-        indices = random.sample(range(len(ds)), batch_size)
         batch_results = []
         
         for i, idx in enumerate(indices):
@@ -148,35 +140,22 @@ def load_problem_batch(
             problem_dict = _format_competition_problem(example, idx, mode="train")
             if problem_dict:
                 batch_results.append(problem_dict)
-                print(f"✅ Loaded train problem {i+1}/{batch_size} (index={idx})")
-        
-        print(f"✅ Successfully loaded {len(batch_results)} train problems")
+                
         return batch_results
     
     # validation mode: 先尝试本地，没有则下载
     else:
-        if parquet_file.exists():
-            print(f"📁 Found local dataset at: {local_datasets_dir}")
-            try:
-                ds = hf_load_dataset("parquet", data_files=str(parquet_file), split=split)
-                print(f"✅ Successfully loaded local dataset with {len(ds)} samples")
-            except Exception as e:
-                print(f"❌ Error loading local dataset: {e}")
-                ds = None
-        else:
-            print(f"📁 Local dataset not found at: {local_datasets_dir}")
-            ds = None
-        
-        # 如果本地没有，则从Hugging Face下载
-        if ds is None:
-            hf_dataset_name = f"Gen-Verse/{dataset_name}"
-            print(f"🌐 Loading from Hugging Face: {hf_dataset_name}")
-            
-            try:
-                ds = hf_load_dataset(hf_dataset_name, split=split)
-                print(f"✅ Successfully downloaded dataset with {len(ds)} samples")
-            except Exception as e:
-                raise Exception(f"❌ Failed to load dataset: {e}")
+        if not parquet_file.exists():
+            raise FileNotFoundError(
+                f"❌ 验证模式需要本地测试集 {parquet_file}，未找到！请先运行 scripts/dataprocess/load_train_code.py 生成数据。"
+            )
+        print(f"📁 从本地加载测试集: {local_datasets_dir}")
+        try:
+            # parquet 单文件默认 split 名称为 "train"
+            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
+            print(f"✅ 测试集加载成功，共 {len(ds)} 条")
+        except Exception as e:
+            raise Exception(f"❌ Failed to load local dataset: {e}")
         
         # 加载所有验证数据
         batch_results = []
@@ -187,8 +166,9 @@ def load_problem_batch(
                 if i % 100 == 0:  # 每100个打印一次进度
                     print(f"🔄 Loaded validation problem {i+1}/{len(ds)}")
         
-        print(f"✅ Successfully loaded {len(batch_results)} validation problems")
+        print(f"✅ 成功返回 {len(batch_results)} 条验证样本")
         return batch_results
+
 
 
 
@@ -1098,18 +1078,16 @@ def print_evaluation_summary(metrics: Dict[str, Any]) -> None:
 # =================== Main Evaluation Functions ===================
 
 
-def test_load_problem(batch_size: int):
+def test_load_problem(batch_size: int,mode: str = "train"):
     # Get problems
     results= load_problem_batch(
         batch_size=batch_size,
-
+        mode=mode
     )
-    for result in results:
-        print("--------------------------------Here is the solution--------------------------------")
-        print(result["solution"])
+   
        
 
 if __name__ == "__main__":
     for benchmark in ["CodeContests"]:
         print(f"test load {benchmark}")
-        test_load_problem(5)
+        test_load_problem(5,mode="validate")

@@ -91,9 +91,11 @@ except ImportError:
     PANDAS_AVAILABLE = False
 
 
+
 def load_problem_batch( 
-    batch_size: int=10,
+    indices: List[int],
     dataset_name: str="train",
+    split: str = "train",
     mode: str = "train"
 ) -> List[Dict[str, Any]]:
     """
@@ -112,31 +114,26 @@ def load_problem_batch(
         print("❌ datasets library unavailable")
         return []
     
-    # 期望的目录结构：datasets/code/train/{train.parquet,test.parquet}
+    if mode == "validate":
+        print(f"🔄 Loading all problems from dataset {dataset_name} (split={split})...")
+    else:
+        print(f"🔄 Loading {len(indices)} problems from dataset {dataset_name}...")
+    
+    # 获取本地数据集路径
     current_dir = Path(__file__).parent.parent.parent.parent  # 回到 pettingllms 根目录
     local_datasets_dir = current_dir / "datasets" / "code" / dataset_name.lower().replace("/", "_")
     split_name = "train" if mode == "train" else "test"
     parquet_file = local_datasets_dir / f"{split_name}.parquet"
-    print(f"📄 目标文件: {parquet_file}")
-    
     if mode == "train":
         if not parquet_file.exists():
             raise FileNotFoundError(f"❌ Train mode requires local dataset at {parquet_file}, but file not found!")
         
-        print(f"📁 从本地加载训练集: {local_datasets_dir}")
+        print(f"📁 Loading from local dataset: {local_datasets_dir}")
         try:
-            # parquet 单文件默认 split 名称为 "train"
-            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
-            print(f"✅ 训练集加载成功，共 {len(ds)} 条")
+            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split=split)
+            print(f"✅ Successfully loaded local dataset with {len(ds)} samples")
         except Exception as e:
             raise Exception(f"❌ Failed to load local dataset: {e}")
-        
-        # 随机选择batch_size个样本
-        if len(ds) < batch_size:
-            raise Exception(f"❌ Local dataset only has {len(ds)} samples, but batch_size is {batch_size}")
-        
-        
-        indices = random.sample(range(len(ds)), batch_size)
         batch_results = []
         
         for i, idx in enumerate(indices):
@@ -144,9 +141,7 @@ def load_problem_batch(
             problem_dict = _format_competition_problem(example, idx, mode="train")
             if problem_dict:
                 batch_results.append(problem_dict)
-                print(f"✅ Loaded train problem {i+1}/{batch_size} (index={idx})")
-        
-        print(f"✅ 成功返回 {len(batch_results)} 条训练样本")
+                
         return batch_results
     
     # validation mode: 先尝试本地，没有则下载
@@ -177,6 +172,7 @@ def load_problem_batch(
 
 
 
+
 def _format_competition_problem(example: Dict, index: int, mode: str = "train") -> Optional[Dict]:
     """
     Format a competition problem example into a standardized dictionary.
@@ -184,12 +180,11 @@ def _format_competition_problem(example: Dict, index: int, mode: str = "train") 
     Args:
         example: Raw example from dataset
         index: Index of the example
-        mode: "train" or "validation"
+        mode: "train" or "validate"
         
     Returns:
         Formatted problem dictionary or None if invalid
     """
-    print(example)
     try:
         # 提取基本字段
         question = example.get("question", "")
@@ -199,9 +194,14 @@ def _format_competition_problem(example: Dict, index: int, mode: str = "train") 
         test_output = example.get("test_output", "")
         if len(test_output)>4:
             test_output=test_output[:4]
-
-        solution = example.get("solution", "")
         
+        # 根据mode处理solution字段
+        if mode == "train":
+            solution = example.get("solution", "")
+        else:  # validation mode
+            solution = ""  # validation数据集没有solution，设为空
+        
+        # 验证必要字段
         if not question or not test_input or not test_output:
             print(f"⚠️ Skipping example {index}: missing required fields")
             return None
@@ -393,7 +393,10 @@ async def _worker_docker(
                 except Exception:
                     pass
                 rc = proc.returncode
+            
+            # 若不是超时，读取重定向的输出文件
             if printed_output is None and rc is None:
+                # 已在超时分支设置
                 pass
             elif rc is not None:
                 try:
@@ -445,7 +448,6 @@ async def _worker_docker(
         "passed": if_passed,
     }
     return result
-
 
 
 _RAY_TASK_HANDLE = None  # 缓存 Ray 远程函数句柄
@@ -576,8 +578,7 @@ async def evaluate_code_against_tests(
                     ) for i in range(total_tests)
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
-                
-          
+             
                 processed_results = []
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
@@ -595,6 +596,7 @@ async def evaluate_code_against_tests(
                 
             except Exception as fallback_error:
                 print(f"Fallback to docker also failed: {fallback_error}")
+                # 最后的fallback：返回错误结果
                 results = [{
                     "test_input": test_inputs[i] if i < len(test_inputs) else "",
                     "code_execution_output": f"error: fallback failed - {fallback_error}",
@@ -1081,7 +1083,6 @@ def test_load_problem(batch_size: int):
     # Get problems
     results= load_problem_batch(
         batch_size=batch_size,
-        mode="validate"
 
     )
     for result in results:

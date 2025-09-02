@@ -348,7 +348,7 @@ def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, mult
 
         input_ids = inputs["input_ids"]
         attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
-        if len(input_ids) >= 2048:
+        if len(input_ids) >= max_prompt_length:
             return None
 
         # Multimodal (optional): depends on externally provided processor

@@ -1,7 +1,7 @@
 # Configuration for Code multi-agent training with TWO different policies
 # code_generator uses Qwen/Qwen2.5-Coder-3B, test_generator uses DeepSeek-R1-Distill
 mode: "validate"
-sample_mode: "env"
+sample_mode: "tree"
 # Inherit from base configuration
 defaults:
   # Inject a separate ppo_trainer/base subtree for each model; can be overridden independently
@@ -11,18 +11,19 @@ defaults:
 # dataset config (shared by all agents)
 data:
   filter_ratio: 0.5
-  gen_batch_size: 32
-  gen_n_samples: 4
+  gen_batch_size: 64
+  gen_n_samples: 8
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 10
+  resample_freq: 1
+  epoch_size: 30
 
   # Batch sizes
-  train_batch_size: 128
-  val_batch_size: 32
+  train_batch_size: 256
+  val_batch_size: 256
   
   # Sequence lengths
-  max_prompt_length: 2048
+  max_prompt_length: 8192
   max_response_length: 2048
 
 resource:
@@ -34,7 +35,7 @@ resource:
 env:
   name: code_env_single_agent
   benchmark: "CodeForces"
-  max_turns: 4
+  max_turns: 3
   resolve: false
   multi_modal: false
   batched_init: true
@@ -55,8 +56,8 @@ multi_agent_interaction:
 models:
   model_0:
     # TODO: make configurable
-    #path: "/home/lah003/models/Qwen3-4B"
-    path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
+    path: "/home/lah003/models/Qwen3-4B"
+    #path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
     name: "code_generator_model"
     ppo_trainer_config:
       data: 

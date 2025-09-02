@@ -15,7 +15,8 @@ data:
   gen_n_samples: 4
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 10
+  resample_freq: 3
+  epoch_size: 20
 
   # Batch sizes
   train_batch_size: 64

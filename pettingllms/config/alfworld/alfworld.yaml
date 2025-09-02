@@ -1,0 +1,72 @@
+defaults:
+  # Inject a separate ppo_trainer/base subtree for each model; can be overridden independently
+  - ppo_trainer@models.model_0.ppo_trainer_config: base
+  - _self_
+
+# dataset config (shared by all agents)
+data:
+  #rollout config
+  gen_batch_size: 16
+  gen_n_samples: 8
+  sample_temperature: 1
+
+  # Batch sizes
+  train_batch_size: 16
+  val_batch_size: 8
+  
+  # Sequence lengths
+  max_prompt_length: 2048
+  max_response_length: 2048
+
+resource:
+  nnodes: 1
+  n_gpus_per_node: 4
+  trust_remote_code: true
+
+# Environment configuration (shared by all agents)
+env:
+  name: code_env
+  benchmark: "CodeForces"
+  max_turns: 20
+  resolve: false
+  multi_modal: false
+  batched_init: true
+
+# Multi-agent interaction configuration
+multi_agent_interaction:
+  
+  # Turn order for agents (list of agent names)
+  turn_order: ["alfworld_agent"]
+  
+  # Number of agents that interact per episode
+  num_interacting_agents: 1
+  
+  # Whether agents can see other agents' actions
+  shared_observation: true
+
+    # ppo_trainer_config is injected via defaults; the above settings override the defaults in base
+    
+
+# Multi-agent configuration for two policies
+agent_policy_configs:
+  # Number of agents to train
+  num_agents: 2
+  policy_list: ["alfworld_agent"]
+  agent_configs:
+    agent_0:
+      name: "alfworld_agent"
+      policy_name: "code_generator_model"
+      sample_num: 8
+      
+    agent_1:
+      name: "test_generator"
+      policy_name: "code_generator_model"
+      sample_num: 8
+
+project_name: pettingllms
+experiment_name: alfworld_agent
+logger: [ 'console', 'wandb' ]
+
+trainer:
+  ${models.model_0.ppo_trainer_config.trainer}
+ 

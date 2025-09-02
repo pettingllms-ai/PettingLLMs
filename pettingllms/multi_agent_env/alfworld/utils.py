@@ -48,39 +48,28 @@ def build_prompt_from_obs(obs: dict) -> str:
     return prompt
 
 
-# 2) 从 LLM 文本中抽取动作候选
 _ACTION_TAG = re.compile(r"<action>\s*(.*?)\s*</action>", re.IGNORECASE | re.DOTALL)
 
 def extract_action_from_text(text: str) -> str:
-    """
-    优先从 <action>...</action> 里取；若没有，则退化为：
-      - 取第一行、去代码围栏；再剥离“Action:”等引导词
-    """
-    if not isinstance(text, str):
-        text = str(text)
 
     m = _ACTION_TAG.search(text)
     if m:
         return cleanup_action(m.group(1))
 
-    # 无标签：尝试常见格式
-    # 去掉代码围栏
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     lines = [l.strip() for l in text.splitlines() if l.strip()]
     if not lines:
         return ""
 
     raw = lines[0]
-    raw = re.sub(r"^(Action|动作)\s*[:：]\s*", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"^(Action)\s*[:：]\s*", "", raw, flags=re.IGNORECASE)
     return cleanup_action(raw)
 
 
 def cleanup_action(s: str) -> str:
     s = s.strip()
-    # 去掉两侧引号
     if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
         s = s[1:-1].strip()
-    # 把多余空白压缩为单空格
     s = re.sub(r"\s+", " ", s)
     return s
 

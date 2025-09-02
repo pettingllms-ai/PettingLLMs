@@ -37,7 +37,8 @@ class CodeGenerationAgent(Agent):
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
         
-        # 初始化多日志系统
+        self.code_history = []
+        self.mismatch_cases_history = []
         self.multi_logger = get_multi_logger()
 
     def reset(self):
@@ -63,18 +64,23 @@ class CodeGenerationAgent(Agent):
         current_code = getattr(state, "generated_code", None)
         mismatch_cases = getattr(state, "ground_truth_test_vs_generated_code_mismatch_cases", None)
         match_cases = getattr(state, "ground_truth_test_vs_generated_code_match_cases", None)
-        formatted_prompt_for_mismatch_cases = "However, your previous code is not able to pass all the test cases. Here are the mismatch cases:\n"
+        
         formatted_prompt_for_match_cases = "Here are the match cases your previous code can pass:\n"
         if match_cases is not None:
             for match_case in match_cases:
                 formatted_prompt_for_match_cases += f"Input: {match_case['test_input']}\n"
                 formatted_prompt_for_match_cases += f"output: {match_case['generated_test_output']}\n"
               
-        if mismatch_cases is not None:
-            for mismatch_case in mismatch_cases:
-                formatted_prompt_for_mismatch_cases += f"Input: {mismatch_case['test_input']}\n"
-                formatted_prompt_for_mismatch_cases += f"Expected output: {mismatch_case['generated_test_output']}\n"
-                formatted_prompt_for_mismatch_cases += f"Actual mismatch output: {mismatch_case['code_execution_output']}\n"
+        formatted_prompt_for_mismatch_cases = "However, your previous code is not able to pass all the test cases. Here are the mismatch cases:\n"
+        for idx, code in enumerate(self.code_history):
+            
+            if self.mismatch_cases_history[idx] is not None:
+                formatted_prompt_for_mismatch_cases += f"Code {idx+1}:\n{code}\n"
+                formatted_prompt_for_mismatch_cases += f"Mismatch cases: {self.mismatch_cases_history[idx]}\n"
+                for mismatch_case in mismatch_cases:
+                    formatted_prompt_for_mismatch_cases += f"Input: {mismatch_case['test_input']}\n"
+                    formatted_prompt_for_mismatch_cases += f"Expected output: {mismatch_case['generated_test_output']}\n"
+                    formatted_prompt_for_mismatch_cases += f"Actual mismatch output: {mismatch_case['code_execution_output']}\n"
 
         
 
@@ -99,9 +105,7 @@ class CodeGenerationAgent(Agent):
             formatted_prompt+= (
                 f"You are a helpful assistant that refines code to pass tests. You need to think first then refine and generate new python script to pass all tests.\n\n"
                 f"You need to think first then write python script."
-                f"Problem:\n{question}\n\n"
-                f"Current code:\n{as_text(current_code)}\n\n"
-                f"but the execution result is not aligned with the golden test cases.\n")
+                f"Problem:\n{question}\n\n")
             formatted_prompt += formatted_prompt_for_mismatch_cases + (
 
                 f"Refine the code to pass all tests.\n\n"
@@ -138,7 +142,7 @@ class CodeGenerationAgent(Agent):
         # 1) Parse and update generated code
         gen_code = self.current_action
         env_data.state.generated_code = gen_code
-
+        self.code_history.append(gen_code)
         # 2) Evaluate generated test vs generated code (if exists)
         #    Allow reading from state.current_test_input/current_test_output
         ground_truth_test_input = env_data.state.ground_truth_test_input or []
@@ -168,7 +172,9 @@ class CodeGenerationAgent(Agent):
             self.agent_reward = passed_ratio-self.reward_history[-1]
         else:
             self.agent_reward = passed_ratio
+        self.mismatch_cases_history.append(failed_cases)
         self.reward_history.append(passed_ratio)
+        self.value=passed_ratio
 
 
 

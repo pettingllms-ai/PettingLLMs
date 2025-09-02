@@ -207,6 +207,7 @@ class UnitTestGenerationAgent(Agent):
         else:
             self.agent_reward = passed_ratio
         self.reward_history.append(passed_ratio)
+        self.value=passed_ratio
                 
 
     
@@ -228,7 +229,6 @@ class UnitTestGenerationAgent(Agent):
 
         
     def select_env(self, env_data: List[Env]) -> List[int]:
-        # 如果所有env都done，则返回-1
         if all(env.done for env in env_data):
             return -1
         

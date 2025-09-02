@@ -119,13 +119,12 @@ class CodeTestEnv(MultiAgentsEnvironment):
         self.state.generated_test_vs_golden_code_match_ratio=None
 
 
-
 class CodeTestEnvBatch:
-    def __init__(self, env_idx_list: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict, mode="train", *, env_workers: List=None):
+    def __init__(self, env_idx_list: List[int], env_indices: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict, mode="train", *, env_workers: List=None):
         if mode=="train":
-            self.problem_list=load_problem_batch(len(env_idx_list))
+            self.problem_list=load_problem_batch(env_indices)
         else:
-            self.problem_list=load_problem_batch(len(env_idx_list),mode=mode)
+            self.problem_list=load_problem_batch(env_indices,mode=mode)
             samples=1
         self.env_list=[]
         if mode=="validate":
