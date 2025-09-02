@@ -56,7 +56,8 @@ multi_agent_interaction:
 models:
   model_0:
     # TODO: make configurable
-    path: "/home/lah003/models/Qwen3-4B"
+    #path: "/home/lah003/models/Qwen3-4B"
+    path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
     name: "code_generator_model"
     ppo_trainer_config:
       data: 
