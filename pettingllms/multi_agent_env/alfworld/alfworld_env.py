@@ -30,8 +30,8 @@ class AlfworldEnv:
         self.env = base_env.init_env(batch_size=1)  # Each worker holds only one sub-environment
         self.env.seed(seed)
         obs, infos=self.env.reset()
-        self.task_description=extract_task(obs)
-        self.observation=obs
+        self.task_description=extract_task(obs[0])
+        self.observation=obs[0]
         self.admissible_actions=infos['admissible_commands']
         self.action_history=[]
     
@@ -51,6 +51,22 @@ class AlfworldEnv:
         infos['observation_text'] = obs
         return obs, infos
     
+    def get_task_description(self):
+        """Get the current task description"""
+        return self.task_description
+    
+    def get_observation(self):
+        """Get the current observation"""
+        return self.observation
+    
+    def get_admissible_actions(self):
+        """Get the current admissible actions"""
+        return self.admissible_actions
+    
+    def get_action_history(self):
+        """Get the action history"""
+        return self.action_history
+    
 
 
 from typing import List
@@ -63,6 +79,7 @@ class AlfWorldEnvBatch:
         self,
         env_idx_list: List[int],
         rollout_idx_list: List[int],
+        env_indices: List[int],
         samples: int,
         max_turns: int,
         config: dict,
@@ -72,11 +89,10 @@ class AlfWorldEnvBatch:
     ):
         self.mode = mode
         self.env_list=[]
-        valid_env_list_num=150
-        alf_config_path = "pettingllms/multi_agent_env/alfworld/configs/config_tw.yaml"
-        config = load_config_file(alf_config_path)
+        config = load_config_file()
+        valid_env_list_num=100
         #env_type = config['env']['type']
-        base_env = AlfredTWEnv(config, train_eval='train' if mode == 'train' else 'valid')
+        base_env = AlfredTWEnv(config, train_eval='train')
         if mode == "train":
             for rollout_idx in rollout_idx_list:
                 env_worker=AlfworldEnv.remote(config, 0+rollout_idx//samples, base_env)
@@ -84,5 +100,5 @@ class AlfWorldEnvBatch:
 
         else:
             for rollout_idx in range(valid_env_list_num):
-                env_worker=AlfworldEnv.remote(config, 0+rollout_idx, base_env)
+                env_worker=AlfworldEnv.remote(config, 1000+rollout_idx, base_env)
                 self.env_list.append(env_worker)

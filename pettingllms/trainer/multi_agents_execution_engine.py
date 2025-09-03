@@ -663,13 +663,16 @@ class MultiAgentsExecutionEngine:
         
         concurrent_timer.checkpoint("Starting UID assignment and filtering")
         # Assign uid and filter the rollouts
-        if self.mode == "train":    
-            aggregated_results = self._assign_consistent_uids(aggregated_results,filter_ratio=self.filter_ratio,mode=self.filter_method)
+        if self.mode == "train":   
+            for policy_name, data_proto in aggregated_results.items(): 
+                if data_proto.batch is None:
+                    continue
+                aggregated_results[policy_name] = self._assign_consistent_uids(aggregated_results[policy_name],filter_ratio=self.filter_ratio,mode=self.filter_method)
         
         concurrent_timer.end("Concurrent rollouts completed successfully")
         return aggregated_results
     
-    def _assign_consistent_uids(self, aggregated_results,filter_ratio=0.0, mode="mean"):
+    def _assign_consistent_uids(self, data_proto,filter_ratio=0.0, mode="mean"):
         import uuid
         import numpy as np
         from collections import defaultdict
@@ -677,44 +680,44 @@ class MultiAgentsExecutionEngine:
         uid_mapping = {}
         all_rewards = []
         uid_reward_groups = defaultdict(list)  
-        for policy_name, data_proto in aggregated_results.items():
-            if data_proto.batch is None or len(data_proto) == 0:
-                continue
 
-            non_tensor_batch = data_proto.non_tensor_batch
+        non_tensor_batch = data_proto.non_tensor_batch
+        
+        if not all(key in non_tensor_batch for key in ["rollout_idx", "turn_idx", "agent_idx"]):
+            # If required keys are missing, just assign random UIDs and return
+            data_proto.non_tensor_batch["uid"] = np.array(
+                [str(uuid.uuid4()) for _ in range(len(data_proto))], dtype=object
+            )
+            return data_proto
+        
+        rollout_indices = non_tensor_batch["rollout_idx"]
+        turn_indices = non_tensor_batch["turn_idx"] 
+        agent_indices = non_tensor_batch["agent_idx"]
+        rewards = non_tensor_batch.get("reward", [])
+        
+        uids = []
+        for i in range(len(data_proto)):
+            key = (rollout_indices[i]//self.sample_num, turn_indices[i], agent_indices[i])
+            if key not in uid_mapping:
+                uid_mapping[key] = str(uuid.uuid4())
+            uid = uid_mapping[key]
+            uids.append(uid)
             
-            if not all(key in non_tensor_batch for key in ["rollout_idx", "turn_idx", "agent_idx"]):
-                data_proto.non_tensor_batch["uid"] = np.array(
-                    [str(uuid.uuid4()) for _ in range(len(data_proto))], dtype=object
-                )
-                continue
+            if len(rewards) > 0 and filter_ratio > 0:
+                reward_val = float(rewards[i]) if rewards[i] is not None else 0.0
+                uid_reward_groups[uid].append((i, reward_val))
             
-            rollout_indices = non_tensor_batch["rollout_idx"]
-            turn_indices = non_tensor_batch["turn_idx"] 
-            agent_indices = non_tensor_batch["agent_idx"]
-            rewards = non_tensor_batch.get("reward", [])
-            
-            uids = []
-            for i in range(len(data_proto)):
-                key = (rollout_indices[i]//self.sample_num, turn_indices[i], agent_indices[i])
-                if key not in uid_mapping:
-                    uid_mapping[key] = str(uuid.uuid4())
-                uid = uid_mapping[key]
-                uids.append(uid)
-                
-                if len(rewards) > 0 and filter_ratio > 0:
-                    reward_val = float(rewards[i]) if rewards[i] is not None else 0.0
-                    uid_reward_groups[uid].append((i, policy_name, reward_val))
-                
-                if len(rewards) > 0:
-                    reward_val = float(rewards[i]) if rewards[i] is not None else 0.0
-                    all_rewards.append(reward_val)
-            
-            data_proto.non_tensor_batch["uid"] = np.array(uids, dtype=object)
+            if len(rewards) > 0:
+                reward_val = float(rewards[i]) if rewards[i] is not None else 0.0
+                all_rewards.append(reward_val)
+        
+        data_proto.non_tensor_batch["uid"] = np.array(uids, dtype=object)
+    
+        
         def range_normalized_variance(rewards_in_group):
             rewards_in_group = np.asarray(rewards_in_group, dtype=float)
             rng = np.max(rewards_in_group) - np.min(rewards_in_group)
-            if rng == 0:   # 避免除零
+            if rng == 0:   
                 return 0.0
             return np.var(rewards_in_group, ddof=0) / (rng ** 2)
         
@@ -724,20 +727,20 @@ class MultiAgentsExecutionEngine:
             if mode == "dapo":
                 uids_to_remove = []
                 for uid, samples in uid_reward_groups.items():
-                    rewards_in_group = [s[2] for s in samples]
+                    rewards_in_group = [s[1] for s in samples]
                     variance = range_normalized_variance(rewards_in_group)
                     if variance==0:
                         uids_to_remove.append(uid)
                 for uid in uids_to_remove:
                     if uid in uid_reward_groups:
-                        for sample_idx, policy_name, reward_val in uid_reward_groups[uid]:
-                            sample_to_remove.add((policy_name, sample_idx))
+                        for sample_idx, reward_val in uid_reward_groups[uid]:
+                            sample_to_remove.add(sample_idx)
 
-            if mode == "std":
+            elif mode == "std":
                 uid_variances = {}
                 for uid, samples in uid_reward_groups.items():
                     if len(samples) > 1:
-                        rewards_in_group = [s[2] for s in samples]
+                        rewards_in_group = [s[1] for s in samples]
                         variance = range_normalized_variance(rewards_in_group)
                         uid_variances[uid] = variance
                     else:
@@ -753,13 +756,13 @@ class MultiAgentsExecutionEngine:
                         
                         for uid in uids_to_remove:
                             if uid in uid_reward_groups:
-                                for sample_idx, policy_name, reward_val in uid_reward_groups[uid]:
-                                    sample_to_remove.add((policy_name, sample_idx))
+                                for sample_idx, reward_val in uid_reward_groups[uid]:
+                                    sample_to_remove.add(sample_idx)
             elif mode == "mean":
                 uid_means = {}
                 for uid, samples in uid_reward_groups.items():
                     if len(samples) > 1:
-                        rewards_in_group = [s[2] for s in samples]
+                        rewards_in_group = [s[1] for s in samples]
                         mean = np.mean(rewards_in_group)
                         uid_means[uid] = mean
                     else:
@@ -775,41 +778,28 @@ class MultiAgentsExecutionEngine:
                         
                         for uid in uids_to_remove:
                             if uid in uid_reward_groups:
-                                for sample_idx, policy_name, reward_val in uid_reward_groups[uid]:
-                                    sample_to_remove.add((policy_name, sample_idx))
+                                for sample_idx, reward_val in uid_reward_groups[uid]:
+                                    sample_to_remove.add(sample_idx)
             elif mode=="uid":
-                sample_to_remove = set()
                 if filter_ratio > 0:
                     for uid, samples in uid_reward_groups.items():
                         if len(samples) > 1:
-                            rewards_in_group = [s[2] for s in samples]
+                            rewards_in_group = [s[1] for s in samples]
                             group_mean = np.mean(rewards_in_group)
-                            samples_with_deviation = [(s[0], s[1], abs(s[2] - group_mean)) for s in samples]
-                            samples_with_deviation.sort(key=lambda x: x[2], reverse=True)
+                            samples_with_deviation = [(s[0], abs(s[1] - group_mean)) for s in samples]
+                            samples_with_deviation.sort(key=lambda x: x[1], reverse=True)
                             num_to_remove = int(len(samples_with_deviation) * filter_ratio)
                             for i in range(num_to_remove):
-                                sample_idx, policy_name, _ = samples_with_deviation[i]
-                                sample_to_remove.add((policy_name, sample_idx))
+                                sample_idx, _ = samples_with_deviation[i]
+                                sample_to_remove.add(sample_idx)
         
-        if sample_to_remove:
-            for policy_name, data_proto in aggregated_results.items():
-                if data_proto.batch is None:
-                    continue
-                
-                keep_indices = [i for i in range(len(data_proto)) 
-                               if (policy_name, i) not in sample_to_remove]
-                
-                if len(keep_indices) < len(data_proto):
-                    if data_proto.batch is not None:
-                        index_tensor = torch.as_tensor(keep_indices, dtype=torch.long)
-                        data_proto.batch = data_proto.batch[index_tensor]
-                    
-                    if data_proto.non_tensor_batch is not None:
-                        for key, value in data_proto.non_tensor_batch.items():
-                            if isinstance(value, np.ndarray):
-                                data_proto.non_tensor_batch[key] = value[keep_indices]
-                            elif hasattr(value, '__getitem__'):
-                                data_proto.non_tensor_batch[key] = np.array([value[i] for i in keep_indices], dtype=object)
+        if sample_to_remove and len(sample_to_remove) > 0:
+            keep_indices = [i for i in range(len(data_proto)) 
+                           if i not in sample_to_remove]
+            
+            if len(keep_indices) < len(data_proto):
+                # Use DataProto's built-in select_idxs method for more robust filtering
+                data_proto = data_proto.select_idxs(keep_indices)
         
         if all_rewards:
             summary = {
@@ -817,7 +807,7 @@ class MultiAgentsExecutionEngine:
                 "mean_reward": float(np.mean(all_rewards)),
                 "std_reward": float(np.std(all_rewards)),
                 "filtered_samples": len(sample_to_remove) if filter_ratio > 0 else 0,
-                "remain_samples": len(aggregated_results)
+                "remain_samples": len(data_proto)
             }
             
             self.multi_logger.log_async_event(
@@ -826,7 +816,7 @@ class MultiAgentsExecutionEngine:
                 summary
             )
         
-        return aggregated_results
+        return data_proto
         
        
     

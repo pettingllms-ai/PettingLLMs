@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Dict, Optional
-
+import ray
 from pettingllms.multi_agent_env.base.agent import Agent
 from pettingllms.multi_agent_env.base.env import Env
 from pettingllms.utils.logger_config import get_multi_logger
@@ -27,19 +27,19 @@ class AlfWorldAgent(Agent):
         self.current_action = None
 
     def update_from_env(self, env):
-        task_description = env.task_description
-        current_observation = env.observation
-        admissible_actions = ", ".join(env.admissible_actions)
-        action_history = ", ".join(env.action_history)
+        self.task_description = ray.get(env.get_task_description.remote())
+        self.current_observation = ray.get(env.get_observation.remote())
+        self.admissible_actions = ", ".join(ray.get(env.get_admissible_actions.remote())[0])
+        self.action_history = ", ".join(ray.get(env.get_action_history.remote()))
         
 
         format_prompt = f"""
-    You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description}
+    You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {self.task_description}
     Below are the corresponding actions you took:
-    {action_history}
+    {self.action_history}
     Your current observation is:
-    {current_observation}
-    Your admissible actions for the current situation are: [{admissible_actions}].
+    {self.current_observation}
+    Your admissible actions for the current situation are: [{self.admissible_actions}].
     Now it's your turn to take an action.
     You should first reason step-by-step about the current situation. 
     Once you've finished your reasoning, you should choose an admissible action for the current step and present it within <action> </action> tags.
