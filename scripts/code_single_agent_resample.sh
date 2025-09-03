@@ -35,4 +35,4 @@ python3 -m pettingllms.trainer.train --config-path ../config/code --config-name 
     $model_0_USE_GRPO $model_0_resource $model_0_data data.epoch_size=60 data.resample_freq=3\
     sample_mode=tree\
     experiment_name=4B_base_max_tree_epoch\
-    data.filter_ratio=0\
+    data.filter_ratio=0.5\
