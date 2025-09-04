@@ -1,6 +1,6 @@
 set -x
 export RAY_TMPDIR="/home/lah003/workspace/PettingLLMs/tmp"
-export CUDA_VISIBLE_DEVICES=6,7
+export CUDA_VISIBLE_DEVICES=2,3
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -33,8 +33,8 @@ python3 -m pettingllms.trainer.train --config-path ../config/code --config-name 
     experiment_name=code_eval_single_poliy \
     data.epoch_size=60\
     data.resample_freq=3\
-    $model_0_USE_GRPO $model_0_resource $model_0_data
-    data.filter_method=std\
+    $model_0_USE_GRPO $model_0_resource $model_0_data\
+    data.filter_method=mean\
     data.filter_ratio=0.5\
     sample_mode=tree\
     env.max_turns=5\

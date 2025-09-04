@@ -64,6 +64,7 @@ trainer:
   rejection_sample: False
   rejection_sample_multiplier: 2
   n_training_gpus_per_node: ${resource.n_gpus_per_node}
+
 # Environment configuration (shared by all agents)
 env:
   name: code_env
@@ -127,41 +128,3 @@ agent_policy_configs:
       name: "test_generator"
       policy_name: "code_generator_model"
       sample_num: 4
-
-# Logger configuration
-project_name: pettingllms
-experiment_name: code_test
-logger: [ 'console', 'wandb' ]
-
-
-
-trainer:
-  device: cuda
-  n_gpus_per_node: ${resource.n_gpus_per_node}
-  nnodes: 1
-  balance_batch: True
-  total_epochs: 1
-  total_training_steps: 200
-  project_name: pettingllms
-  experiment_name: code_eval
-  logger: [ 'console', 'wandb' ]
-  log_val_generations: 0
-  rollout_data_dir: null
-  validation_data_dir: null
-  save_freq: 20
-  max_actor_ckpt_to_keep: 3
-  resume_mode: auto
-  resume_from_path: null
-  val_before_train: True
-  test_freq: -1
-  critic_warmup: 0
-  default_hdfs_dir: null
-  del_local_ckpt_after_load: False
-  default_local_dir: checkpoints/pettingllms/code_eval_single_agent
-  max_critic_ckpt_to_keep: null
-  ray_wait_register_center_timeout: 300
-  npu_profile:
-    options: {}
-  rejection_sample: False
-  rejection_sample_multiplier: 2
-  n_training_gpus_per_node: ${resource.n_gpus_per_node}
