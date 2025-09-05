@@ -37,7 +37,7 @@ resource:
 env:
   name: math_env
   benchmark: "CodeForces"
-  max_turns: 5
+  max_turns: 3
   resolve: false
   multi_modal: false
   batched_init: true

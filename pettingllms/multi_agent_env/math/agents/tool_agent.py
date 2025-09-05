@@ -112,11 +112,13 @@ class ToolAgent(Agent):
                 timeout=10.0,
                 ray_actor=env_worker,
             )
+            env_data.state.code_extracted_answer = code_execution_output
         except Exception as e:
             code_execution_output = f"error: {e}"
+            env_data.state.code_extracted_answer = code_execution_output
         # record the execution output
         try:
-            env_data.state.code_execution_output = code_execution_output
+            env_data.state.code_extracted_answer = code_execution_output
         except Exception:
             pass
         
@@ -129,6 +131,9 @@ class ToolAgent(Agent):
                 if is_correct:
                     
                     self.is_pass = True
+                    self.agent_reward = 1.0
+                else:
+                    self.agent_reward = 0.0
            
             except Exception as e:
                 print(f"Warning: Failed to evaluate code solution: {e}")

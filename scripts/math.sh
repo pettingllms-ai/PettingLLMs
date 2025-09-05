@@ -32,3 +32,4 @@ model_0_data="+$model_0_config_path.data.train_files=$model_0_data_dir/text/trai
 
 python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_single_policy \
     $model_0_USE_GRPO $model_0_resource $model_0_data
+    

@@ -122,7 +122,11 @@ class ReasoningAgent(Agent):
                 if is_correct:
                     self.done = True
                     self.is_pass = True
+                    self.agent_reward = 1.0
                     self.value = 1.0
+                else:
+                    self.agent_reward = 0.0
+                    
 
                     
             except Exception as e:
