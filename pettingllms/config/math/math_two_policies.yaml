@@ -34,7 +34,7 @@ resource:
 
 # Environment configuration (shared by all agents)
 env:
-  name: code_env
+  name: math_env
   benchmark: "CodeForces"
   max_turns: 5
   resolve: false
@@ -45,7 +45,7 @@ env:
 multi_agent_interaction:
   
   # Turn order for agents (list of agent names)
-  turn_order: ["code_generator", "test_generator"]
+  turn_order: ["reasoning_agent", "tool_agent"]
   
   # Number of agents that interact per episode
   num_interacting_agents: 2
@@ -60,7 +60,7 @@ models:
     path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
     #path: "/home/lah003/models/Qwen2.5-7B-Instruct"
     #path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
-    name: "code_generator_model"
+    name: "reasoning_agent_model"
     ppo_trainer_config:
       data: 
         max_prompt_length: ${data.max_prompt_length}
@@ -81,7 +81,7 @@ models:
     # TODO: make configurable
     path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
     #path: "/home/lah003/models/Qwen2.5-7B-Instruct"
-    name: "test_generator_model"
+    name: "tool_agent_model"
     ppo_trainer_config:
       data: 
         max_prompt_length: ${data.max_prompt_length}
@@ -105,16 +105,16 @@ models:
 agent_policy_configs:
   # Number of agents to train
   num_agents: 2
-  policy_list: ["code_generator", "test_generator"]
+  policy_list: ["reasoning_agent", "tool_agent"]
   agent_configs:
     agent_0:
-      name: "code_generator"
-      policy_name: "code_generator_model"
+      name: "reasoning_agent"
+      policy_name: "reasoning_agent_model"
       sample_num: 4
       
     agent_1:
-      name: "test_generator"
-      policy_name: "test_generator_model"
+      name: "tool_agent"
+      policy_name: "tool_agent_model"
       sample_num: 4
 
 # Logger configuration

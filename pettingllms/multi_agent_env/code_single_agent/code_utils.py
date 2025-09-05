@@ -285,71 +285,50 @@ async def _worker_docker(
     timeout: float = 40.0,
     image: str = "python:3.11-slim"
 ):
-    tmpdir = tempfile.mkdtemp(prefix="pllm_exec_",dir="tmp")
+    tmpdir = tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp")
     script_path = os.path.join(tmpdir, "script.py")
-    def cleanup_tmpdir():
-        if not os.path.exists(tmpdir):
-            return
-        
-        for attempt in range(3):
-            try:
-                shutil.rmtree(tmpdir, ignore_errors=False)
-                print(f"成功删除临时目录: {tmpdir}")
-                return
-            except OSError as e:
-                print(f"删除临时目录失败 (尝试 {attempt + 1}/3): {e}")
-                if attempt < 2:
-                    # 如果删除失败，尝试强制删除所有文件
-                    try:
-                        for root, dirs, files in os.walk(tmpdir):
-                            for file in files:
-                                file_path = os.path.join(root, file)
-                                try:
-                                    os.chmod(file_path, 0o777)
-                                    os.remove(file_path)
-                                except Exception:
-                                    pass
-                            for dir_name in dirs:
-                                dir_path = os.path.join(root, dir_name)
-                                try:
-                                    os.chmod(dir_path, 0o777)
-                                except Exception:
-                                    pass
-                        # 再次尝试删除目录
-                        os.rmdir(tmpdir)
-                        print(f"强制删除临时目录成功: {tmpdir}")
-                        return
-                    except Exception as force_e:
-                        print(f"强制删除也失败: {force_e}")
-                        time.sleep(0.1)  # 短暂等待后重试
-                else:
-                    # 最后一次尝试，使用 ignore_errors=True
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-                    print(f"使用 ignore_errors 删除临时目录: {tmpdir}")
     
-    stdin_file = None
-    stdout_file = None
-    stderr_file = None
+    def cleanup_tmpdir():
+        
+        if os.path.exists(tmpdir):
+            try:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+            except Exception as e:
+                print(f"{e}")
+    
+    def kill_process(proc):
+        """统一的进程终止函数"""
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    
     printed_output = None
     
     try:
+        # 创建脚本文件
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script)
 
+        # 准备输入输出文件路径
         stdin_text = _stdin_from_input_val_like_inproc(input_val)
         stdin_path = os.path.join(tmpdir, "stdin.txt")
         stdout_path = os.path.join(tmpdir, "stdout.txt")
         stderr_path = os.path.join(tmpdir, "stderr.txt")
 
-        # 预写入 stdin 内容，并将 stdout/stderr 重定向到临时文件，避免通过管道通信
+        # 写入stdin内容
         with open(stdin_path, "w", encoding="utf-8") as f_in:
             f_in.write(stdin_text)
 
-        stdin_file = open(stdin_path, "rb")
-        stdout_file = open(stdout_path, "wb")
-        stderr_file = open(stderr_path, "wb")
-
-        try:
+        # 使用上下文管理器管理文件句柄
+        with open(stdin_path, "rb") as stdin_file, \
+             open(stdout_path, "wb") as stdout_file, \
+             open(stderr_path, "wb") as stderr_file:
+            
+            # 启动子进程
             proc = await asyncio.create_subprocess_exec(
                 "python", script_path,
                 stdin=stdin_file,
@@ -360,84 +339,55 @@ async def _worker_docker(
             )
 
             try:
+                # 等待进程完成
                 await asyncio.wait_for(proc.wait(), timeout=timeout-10)
                 rc = proc.returncode
-            except asyncio.TimeoutError:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                try:
-                    await proc.wait()
-                except Exception:
-                    pass
-                rc = None
-                printed_output = None
-                print("printed_output: None (timeout)")
-            except Exception:
-                # 其他等待异常：尽力清理
-                try:
-                    if proc.returncode is None:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                try:
-                    await proc.wait()
-                except Exception:
-                    pass
-                rc = proc.returncode
-            
-            # 若不是超时，读取重定向的输出文件
-            if printed_output is None and rc is None:
-                # 已在超时分支设置
-                pass
-            elif rc is not None:
+                
+                # 读取输出
                 try:
                     with open(stdout_path, "rb") as f_out:
                         out_bytes = f_out.read()
-                except Exception:
-                    out_bytes = b""
-                try:
                     with open(stderr_path, "rb") as f_err:
                         err_bytes = f_err.read()
                 except Exception:
-                    err_bytes = b""
+                    out_bytes = err_bytes = b""
 
                 if rc == 0:
                     printed_output = out_bytes.decode(errors="replace")
                 else:
-                    err_text = (err_bytes or b"").decode(errors="replace").strip()
-                    out_text = (out_bytes or b"").decode(errors="replace").strip()
-                    combined = err_text or out_text
-                    if "Traceback (most recent call last):" in combined:
-                        last_line = combined.strip().splitlines()[-1]
-                        combined = last_line
-                    printed_output = f"error: exit {rc}: {combined}"
-        finally:
-            # 确保所有文件句柄都被关闭
-            for file_handle, file_name in [(stdin_file, "stdin"), (stdout_file, "stdout"), (stderr_file, "stderr")]:
-                if file_handle is not None:
-                    try:
-                        if not file_handle.closed:
-                            file_handle.close()
-                    except Exception as e:
-                        print(f"关闭 {file_name} 文件句柄失败: {e}")
+                    # 保留完整的错误信息，包括详细堆栈
+                    err_text = err_bytes.decode(errors="replace").strip()
+                    out_text = out_bytes.decode(errors="replace").strip()
+                    error_info = err_text or out_text or "未知错误"
+                    printed_output = f"error: exit {rc}: {error_info}"
+                    
+            except asyncio.TimeoutError:
+                # 超时处理
+                kill_process(proc)
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                printed_output = "error: 代码执行超时"
+                
+            except Exception as e:
+                # 其他执行异常
+                kill_process(proc)
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+                printed_output = f"error: 执行异常: {e}"
                         
     except Exception as e:
-        # 顶层兜底，保持与原实现一致的行为：将异常转为可读字符串
+        # 顶层异常处理
         printed_output = f"error: {e}"
         print(f"_worker_docker 执行异常: {e}")
 
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
         cleanup_tmpdir()
 
+    # 测试结果
     if_passed = await test_if_eq(printed_output, str(expected_output)) if printed_output is not None else False
     
     result = {
@@ -658,12 +608,12 @@ def _ensure_ray_initialized() -> bool:
     import ray  
 
     if not ray.is_initialized():
-        multi_logger.log_ray_status(context="test_ray_log_function ")
+        multi_logger.log_ray_status(mode="train", context="test_ray_log_function ")
        
         
         try:
             num_cpus_env = os.getenv("RAY_NUM_CPUS")
-            multi_logger.log_ray_status(context="before_code_utils_ray_init")
+            multi_logger.log_ray_status(mode="train", context="before_code_utils_ray_init")
             init_kwargs = dict(
                 ignore_reinit_error=True,
                 include_dashboard=False,
@@ -685,14 +635,14 @@ def _ensure_ray_initialized() -> bool:
                 cluster = ray.cluster_resources()
                 avail = ray.available_resources()
                 multi_logger.log_ray_status(
-                    context="after_code_utils_ray_init"
+                    mode="train", context="after_code_utils_ray_init"
                 )
             except Exception as e:
                 print(f"Warning: failed to get ray cluster info: {e}")
                 pass
         except Exception as e:
             print(f"Failed to initialize ray: {e}")
-            multi_logger.log_ray_status(context="code_utils_ray_init_failed")
+            multi_logger.log_ray_status(mode="train", context="code_utils_ray_init_failed")
             return False
     else:
         try:

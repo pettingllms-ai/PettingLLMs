@@ -5,7 +5,7 @@ from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
 from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
-from pettingllms.multi_agent_env.math.math_utils import extract_code, get_code_execution_output, test_if_eq
+from pettingllms.multi_agent_env.math.math_utils import extract_code, get_code_execution_output, test_if_eq, evaluate_math_solution
 logger = logging.getLogger(__name__)
 
 
@@ -37,7 +37,7 @@ class ToolAgent(Agent):
   
         self.multi_logger = get_multi_logger()
 
-    def update_from_env(self, env_data: Env):
+    def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
         self.env_data = env_data
 
@@ -59,9 +59,8 @@ class ToolAgent(Agent):
         reasoning_solution = getattr(state, "reasoning_generated_solution", None)
         reasoning_extracted_answer = getattr(state, "reasoning_extracted_answer", None)
         
-        need_generate = code_solution in (None, "") or code_extracted_answer in (None, "")
 
-        if need_generate:
+        if turn_idx == 0:
             formatted_prompt = (
                 f"You are a helpful assistant that solves mathematical problems through step-by-step reasoning.\n\n"
                 f"You need to think step by step and provide a complete solution using python code with clear mathematical reasoning.\n"
@@ -99,22 +98,22 @@ class ToolAgent(Agent):
         """
         generated_solution = self.current_action
         env_data.state.code_generated_solution = generated_solution
-        # 先不设置提取答案，待执行代码后根据输出设置
+        # do not set the extracted answer, set it after the code execution
 
         # 3) Evaluate correctness
         ground_truth_answer = env_data.state.ground_truth_answer
         is_correct = False
         code_execution_output = None
         try:
-            # 执行代码（通过 ray worker）
+            # execute the code (through ray worker)
             code_execution_output = await get_code_execution_output(
                 generated_solution,
-                timeout=40.0,
+                timeout=10.0,
                 ray_actor=env_worker,
             )
         except Exception as e:
             code_execution_output = f"error: {e}"
-        # 记录执行输出
+        # record the execution output
         try:
             env_data.state.code_execution_output = code_execution_output
         except Exception:
@@ -122,49 +121,32 @@ class ToolAgent(Agent):
         
         if code_execution_output is not None and ground_truth_answer is not None:
             try:
-                # 使用执行输出与标准答案进行比较
-                extracted = str(code_execution_output).strip()
-                env_data.state.code_extracted_answer = extracted
-                is_correct = await test_if_eq(extracted, str(ground_truth_answer).strip())
+                
+                is_correct = evaluate_math_solution(code_execution_output, ground_truth_answer)
                 env_data.state.code_is_correct = bool(is_correct)
                 
                 if is_correct:
-                    self.done = True
-                    self.is_pass = True
                     
+                    self.is_pass = True
+           
             except Exception as e:
                 print(f"Warning: Failed to evaluate code solution: {e}")
                 is_correct = False
                 env_data.state.code_is_correct = False
         else:
             env_data.state.code_is_correct = False
-
-        # 4) Update reward based on correctness
-        if len(self.reward_history) > 0:
-            self.agent_reward = float(is_correct) - self.reward_history[-1]
-        else:
-            self.agent_reward = float(is_correct)
-        self.reward_history.append(float(is_correct))
-
-    def calculate_reward(self, env_data: List[Env]) -> float:
-        """
-        Compute reward based on environment state.
-        Uses correctness for reward calculation.
-        """
-        state = getattr(env_data[0], "state", None)
-        correctness = 0.0
-
-        if state is not None:
-            is_correct = getattr(state, "is_correct", None)
-            if isinstance(is_correct, bool):
-                correctness = float(is_correct)
-
-        # Record and return
-        self.agent_reward = correctness
-        self.reward_history.append(self.agent_reward)
         
-        return self.agent_reward
-    
+        if code_execution_output is not None and env_data.state.reasoning_extracted_answer is not None:
+            is_aligned = evaluate_math_solution(code_execution_output, env_data.state.reasoning_extracted_answer)
+            env_data.state.code_reasoning_aligned = bool(is_aligned)
+            if is_aligned:
+                self.done = True
+        else:
+            env_data.state.code_reasoning_aligned = False
+
+        self.agent_reward = float(is_correct)
+        self.reward_history.append(float(is_correct))
+ 
     def reset(self):
         """
         Reset the agent's internal state for a new episode.

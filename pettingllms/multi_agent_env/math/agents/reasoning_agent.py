@@ -40,7 +40,7 @@ class ReasoningAgent(Agent):
         # 初始化多日志系统
         self.multi_logger = get_multi_logger()
 
-    def update_from_env(self, env_data: Env):
+    def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
         self.env_data = env_data
 
@@ -62,9 +62,8 @@ class ReasoningAgent(Agent):
         code_solution = getattr(state, "code_generated_solution", None)
         code_extracted_answer = getattr(state, "code_extracted_answer", None)
         
-        need_generate = reasoning_solution in (None, "") or reasoning_extracted_answer in (None, "")
-
-        if need_generate:
+        
+        if turn_idx == 0:
             formatted_prompt = (
                 f"You are a helpful assistant that solves mathematical problems through step-by-step reasoning.\n\n"
                 f"You need to think step by step and provide a complete solution with clear mathematical reasoning.\n"
@@ -96,7 +95,8 @@ class ReasoningAgent(Agent):
     
     def update_from_model(self, response: str):
         # Parse the response and update agent_data
-        self.current_action = response.strip()
+        extracted_answer = extract_answer(response)
+        self.current_action = extracted_answer
         return self.current_action
 
     async def step(self, env_data: Env, env_worker: Any = None):
@@ -115,11 +115,10 @@ class ReasoningAgent(Agent):
         ground_truth_answer = env_data.state.ground_truth_answer
         is_correct = False
         
-        if generated_solution is not None and ground_truth_answer is not None:
+        if extracted_answer is not None and ground_truth_answer is not None:
             try:
-                # 使用本项目的 utils 进行一致的评估
-                is_correct, extracted = await evaluate_math_solution(generated_solution, ground_truth_answer)
-                env_data.state.reasoning_extracted_answer = extracted
+                # use the utils in this project to evaluate consistently
+                is_correct = await evaluate_math_solution(extracted_answer, ground_truth_answer)
                 if not hasattr(env_data.state, 'reasoning_is_correct'):
                     env_data.state.reasoning_is_correct = is_correct
                 else:
@@ -127,6 +126,9 @@ class ReasoningAgent(Agent):
                 
                 if is_correct:
                     self.done = True
+                    self.is_pass = True
+                    self.value = 1.0
+
                     
             except Exception as e:
                 print(f"Warning: Failed to evaluate reasoning solution: {e}")
@@ -141,32 +143,9 @@ class ReasoningAgent(Agent):
             else:
                 env_data.state.reasoning_is_correct = False
 
-        # 4) Update reward based on correctness
-        if len(self.reward_history) > 0:
-            self.agent_reward = float(is_correct) - self.reward_history[-1]
-        else:
-            self.agent_reward = float(is_correct)
+        self.agent_reward = float(is_correct)
         self.reward_history.append(float(is_correct))
 
-    def calculate_reward(self, env_data: List[Env]) -> float:
-        """
-        Compute reward based on environment state.
-        Uses correctness for reward calculation.
-        """
-        state = getattr(env_data[0], "state", None)
-        correctness = 0.0
-
-        if state is not None:
-            is_correct = getattr(state, "is_correct", None)
-            if isinstance(is_correct, bool):
-                correctness = float(is_correct)
-
-        # Record and return
-        self.agent_reward = correctness
-        self.reward_history.append(self.agent_reward)
-        
-        return self.agent_reward
-    
     def reset(self):
         """
         Reset the agent's internal state for a new episode.

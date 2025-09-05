@@ -138,8 +138,8 @@ class MultiAgentsPPOTrainer:
             self.tokenizer_dict[model_name] = trainer.tokenizer
             rollout_engine = trainer.async_rollout_manager
             server_address_list = getattr(rollout_engine, "server_addresses", [])
-            server_address=server_address_list[0]
-            self.server_address_dict[model_name] = server_address
+            # 保存全部可用的 server addresses，以便下游进行随机选择/负载均衡
+            self.server_address_dict[model_name] = server_address_list
  
             # Construct an independent Router for each model
             
@@ -275,6 +275,13 @@ class MultiAgentsPPOTrainer:
 
         # recompute old_log_probs
         with simple_timer("old_log_prob", timing_raw):
+            # 防御性填充，确保 DataProto 可被 actor_rollout_wg 等分
+            try:
+                dp_world_size = ppo_trainer.actor_rollout_wg.world_size
+            except Exception:
+                dp_world_size = 1
+            if dp_world_size > 1:
+                batch, _ = pad_dataproto_to_divisor(batch, dp_world_size)
             old_log_prob = ppo_trainer.actor_rollout_wg.compute_log_prob(batch)
             batch = batch.union(old_log_prob)
 
@@ -438,8 +445,10 @@ class MultiAgentsPPOTrainer:
                         rollout_engine.wake_up()
                     gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list,rollout_mode=self.config.get("sample_mode","no_tree")))
                     for model_name, trainer in self.ppo_trainer_dict.items():
-                        world_sizes = trainer.config.actor_rollout_ref.rollout.tensor_model_parallel_size
-                        batch_per_trainer_temp=self._pad_dataproto_to_world_size(gen_batch_output_per_policy[model_name], world_sizes)
+                        dp_world_size = trainer.actor_rollout_wg.world_size
+                        batch_per_trainer_temp = self._pad_dataproto_to_world_size(
+                            gen_batch_output_per_policy[model_name], dp_world_size
+                        )
                         if batch_per_trainer[model_name].batch is None:
                         # If empty, assi`gn directly
                             

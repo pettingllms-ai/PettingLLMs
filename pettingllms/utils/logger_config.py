@@ -53,7 +53,7 @@ class MultiLoggerConfig:
     Multi-logger system configuration, supports creating different types of loggers
     """
     
-    def __init__(self, log_dir: str = "logs"):
+    def __init__(self, log_dir: str = "logs", experiment_name: str = "default"):
         """
         Initialize multi-logger configuration
         
@@ -65,7 +65,7 @@ class MultiLoggerConfig:
         date_folder = current_time.strftime("%Y-%m-%d")
         timestamp_folder = current_time.strftime("%H-%M-%S")
         
-        self.log_dir = Path(log_dir) / date_folder / timestamp_folder
+        self.log_dir = Path(log_dir) / experiment_name / date_folder / timestamp_folder
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
         # Logger dictionary
@@ -107,9 +107,9 @@ class MultiLoggerConfig:
         logger.propagate = False
         self.loggers[logger_name] = logger
 
-    def _get_or_create_rollout_logger(self, base_name: str, env_idx: int, rollout_idx: int) -> logging.Logger:
+    def _get_or_create_rollout_logger(self, base_name: str, mode: str, env_idx: int, rollout_idx: int) -> logging.Logger:
         """Create or get a per-rollout logger writing under date/time/env_idx/rollout_idx/{base_name}.log"""
-        logger_key = f"{base_name}:{env_idx}:{rollout_idx}"
+        logger_key = f"{base_name}:{mode}:{env_idx}:{rollout_idx}"
         if logger_key in self.loggers:
             return self.loggers[logger_key]
 
@@ -119,7 +119,7 @@ class MultiLoggerConfig:
         logger.propagate = False
 
         # Create hierarchical directory structure: env_idx/rollout_idx/
-        env_dir = self.log_dir / str(env_idx)
+        env_dir = self.log_dir / str(mode) / str(env_idx)
         rollout_dir = env_dir / str(rollout_idx)
         rollout_dir.mkdir(parents=True, exist_ok=True)
 
@@ -175,7 +175,7 @@ class MultiLoggerConfig:
         logger.addHandler(file_handler)
         self.loggers[logger_name] = logger
     
-    def log_env_agent_info(self, env_idx: int, rollout_idx: int, turn_idx: int, agent_name: str, 
+    def log_env_agent_info(self, mode: str, env_idx: int, rollout_idx: int, turn_idx: int, agent_name: str, 
                           message: str, extra_data: Optional[Dict[str, Any]] = None):
         """
         Log environment and agent related information
@@ -188,7 +188,7 @@ class MultiLoggerConfig:
             message: Log message
             extra_data: Additional structured data
         """
-        logger = self._get_or_create_rollout_logger("env_agent", env_idx, rollout_idx)
+        logger = self._get_or_create_rollout_logger("env_agent", mode, env_idx, rollout_idx)
 
         # Build log content and safely serialize
         log_content = {
@@ -207,7 +207,7 @@ class MultiLoggerConfig:
         
         logger.info(json.dumps(log_content, ensure_ascii=False, indent=2), extra=extra)
     
-    def log_model_interaction(self, env_idx: int, rollout_idx: int, policy_name: str, 
+    def log_model_interaction(self, mode: str, env_idx: int, rollout_idx: int, policy_name: str, 
                             prompt: str, response: str, extra_data: Optional[Dict[str, Any]] = None):
         """
         Log model interaction information
@@ -220,29 +220,7 @@ class MultiLoggerConfig:
             response: Model response
             extra_data: Additional data
         """
-        if rollout_idx is None:
-            # For cases where rollout_idx is None, create special logger in root log dir
-            logger_key = f"model:no_rollout"
-            if logger_key not in self.loggers:
-                logger = logging.getLogger(logger_key)
-                logger.setLevel(logging.INFO)
-                logger.handlers.clear()
-                logger.propagate = False
-                
-                file_path = self.log_dir / "model_no_rollout.log"
-                file_handler = logging.FileHandler(file_path, mode='a', encoding='utf-8')
-                file_handler.setLevel(logging.INFO)
-                
-                formatter = logging.Formatter(
-                    '[%(asctime)s] [POLICY:%(policy_name)s] %(message)s',
-                    datefmt='%Y-%m-%d %H:%M:%S'
-                )
-                file_handler.setFormatter(formatter)
-                logger.addHandler(file_handler)
-                self.loggers[logger_key] = logger
-            logger = self.loggers[logger_key]
-        else:
-            logger = self._get_or_create_rollout_logger("model", env_idx, rollout_idx)
+        logger = self._get_or_create_rollout_logger("model",mode, env_idx, rollout_idx)
 
         log_content = {
             "prompt": prompt,
@@ -258,7 +236,7 @@ class MultiLoggerConfig:
         
         logger.info(json.dumps(log_content, ensure_ascii=False, indent=2), extra=extra)
     
-    def log_async_event(self, env_idx: int, rollout_idx: int, event_type: str, 
+    def log_async_event(self, mode: str, env_idx: int, rollout_idx: int, event_type: str, 
                        message: str, extra_data: Optional[Dict[str, Any]] = None):
         """
         Log asynchronous execution events
@@ -277,7 +255,7 @@ class MultiLoggerConfig:
                 "rollout_idx": rollout_idx if rollout_idx != -1 else "GLOBAL"
             }
         else:
-            logger = self._get_or_create_rollout_logger("async", env_idx, rollout_idx)
+            logger = self._get_or_create_rollout_logger("async", mode, env_idx, rollout_idx)
             extra = {
                 "env_idx": env_idx,
                 "rollout_idx": rollout_idx
@@ -346,7 +324,7 @@ class MultiLoggerConfig:
             
         return ray_status
     
-    def log_rollout_summary(self, env_idx: int, rollout_idx: int, agent_rewards: Dict[str, float], 
+    def log_rollout_summary(self, mode: str, env_idx: int, rollout_idx: int, agent_rewards: Dict[str, float], 
                            termination_reason: str, extra_data: Optional[Dict[str, Any]] = None):
         """
         Log rollout summary information with Ray status check
@@ -374,7 +352,7 @@ class MultiLoggerConfig:
         
         logger.info(json.dumps(log_content, ensure_ascii=False, indent=2), extra=extra)
     
-    def log_ray_status(self, rollout_idx: Optional[int] = None, context: str = "general"):
+    def log_ray_status(self, mode: str = "train", rollout_idx: Optional[int] = None, context: str = "general"):
         """
         Log detailed Ray status information
         
@@ -406,7 +384,7 @@ class MultiLoggerConfig:
         else:
             logger.info(json.dumps(log_content, ensure_ascii=False, indent=2), extra=extra)
     
-    def log_error(self, env_idx: Optional[int], rollout_idx: Optional[int], error_source: str, 
+    def log_error(self, mode: str, env_idx: Optional[int], rollout_idx: Optional[int], error_source: str, 
                          error: Exception, context_data: Optional[Dict[str, Any]] = None,
                          severity: str = "ERROR", additional_info: Optional[Dict[str, Any]] = None):
         """
@@ -427,7 +405,7 @@ class MultiLoggerConfig:
         # Determine which logger to use based on error source
         if error_source in ["env_agent", "model", "async"]:
             if rollout_idx is not None and env_idx is not None:
-                logger = self._get_or_create_rollout_logger(error_source, env_idx, rollout_idx)
+                logger = self._get_or_create_rollout_logger(error_source,mode, env_idx, rollout_idx)
             else:
                 # Use base logger if no rollout context
                 logger = self.loggers.get(error_source, self.loggers["summary"])
@@ -509,15 +487,10 @@ class MultiLoggerConfig:
 # Global logger configuration instance
 _global_logger_config = None
 
-def get_multi_logger() -> MultiLoggerConfig:
+def get_multi_logger(experiment_name: str = "default") -> MultiLoggerConfig:
     """Get global multi-logger configuration instance"""
     global _global_logger_config
     if _global_logger_config is None:
-        _global_logger_config = MultiLoggerConfig()
+        _global_logger_config = MultiLoggerConfig(experiment_name)
     return _global_logger_config
 
-def init_multi_logger(log_dir: str = "logs") -> MultiLoggerConfig:
-    """Initialize global multi-logger configuration"""
-    global _global_logger_config
-    _global_logger_config = MultiLoggerConfig(log_dir)
-    return _global_logger_config

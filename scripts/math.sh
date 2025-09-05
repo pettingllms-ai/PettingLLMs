@@ -30,5 +30,5 @@ model_0_resource="resource.n_gpus_per_node=2  $model_0_config_path.trainer.n_gpu
 
 model_0_data="+$model_0_config_path.data.train_files=$model_0_data_dir/text/train.parquet +$model_0_config_path.data.val_files=$model_0_data_dir/text/test.parquet"
 
-python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math \
+python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_single_policy \
     $model_0_USE_GRPO $model_0_resource $model_0_data

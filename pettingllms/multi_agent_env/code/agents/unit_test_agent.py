@@ -42,7 +42,7 @@ class UnitTestGenerationAgent(Agent):
     def reset(self):
         super().reset()
 
-    def update_from_env(self, env_data: Env):
+    def update_from_env(self, turn_idx: int, env_data: Env):
         """
         Update the agent's internal prompt after an environment step.
         Rules:
@@ -72,12 +72,11 @@ class UnitTestGenerationAgent(Agent):
                 formatted_prompt_for_mismatch_cases += f"Code {idx+1}:\n{code}\n"
                 for mismatch_case in state.generated_test_vs_generated_code_mismatch_cases_history[idx]:
                     formatted_prompt_for_mismatch_cases += f"Input: {mismatch_case['test_input']}\n"
-                    formatted_prompt_for_mismatch_cases += f"Expected output: {mismatch_case['generated_test_output']}\n"
-                    formatted_prompt_for_mismatch_cases += f"Actual mismatch output: {mismatch_case['code_execution_output']}\n"
-        need_generate = current_code in (None, "") or mismatch_cases in (None, "") 
-
-
-        if need_generate:
+                    formatted_prompt_for_mismatch_cases += f"LLM generated test case output: {mismatch_case['generated_test_output']}\n"
+                    formatted_prompt_for_mismatch_cases += f"LLM code execution output: {mismatch_case['code_execution_output']}\n"
+                    formatted_prompt_for_mismatch_cases += f"Two outputs are not the same.\n"
+        
+        if turn_idx == 0:
             # Test-case generation mode
             formatted_prompt = (
                 f" You are a helpful assistant that generates test examples for coding tasks.  \n"

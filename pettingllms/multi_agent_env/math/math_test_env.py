@@ -18,10 +18,9 @@ class MathTestEnvState:
     code_generated_solution: str = None
     reasoning_extracted_answer: str = None
     code_extracted_answer: str = None
-    reasoning_is_correct: bool = None
-    code_is_correct: bool = None
-    solved_by_agent: str = None  # "reasoning", "code", "both", or None
-
+    reasoning_is_correct: bool = False
+    code_is_correct: bool = False
+    code_reasoning_aligned: bool = False
 class MathTestEnv(MultiAgentsEnvironment):
     """
     Environment for mathematical problem solving tasks with single-agent interaction.
@@ -50,7 +49,6 @@ class MathTestEnv(MultiAgentsEnvironment):
         self.state.reasoning_extracted_answer = None
         self.state.code_extracted_answer = None
         self.state.reasoning_is_correct = None
-        self.state.solved_by_agent = None
 
 
 class MathTestEnvBatch:

@@ -42,7 +42,7 @@ class CodeGenerationAgent(Agent):
     def reset(self):
         super().reset()
 
-    def update_from_env(self, env_data: Env):
+    def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
         self.env_data = env_data
 
@@ -63,10 +63,10 @@ class CodeGenerationAgent(Agent):
         current_test_input = getattr(state, "generated_test_input", None)
         current_test_output = getattr(state, "generated_test_output", None)
         current_code_output = getattr(state, "exe_code_generated_test_output", None)
-        need_generate = current_code in (None, "") or current_test_input in (None, "") or current_code_output in (None, "")
+        
         mismatch_cases = getattr(state, "generated_test_vs_generated_code_match_cases", None)
        
-        formatted_prompt_for_mismatch_cases = ""
+        formatted_prompt_for_mismatch_cases = "The previous history of mismatch cases between the current generated test cases and the current code execution result:\n"
         for idx, code in enumerate(state.generated_code_history):
             if state.generated_test_vs_generated_code_mismatch_cases_history[idx] is not None:
                 formatted_prompt_for_mismatch_cases += f"Code {idx+1}:\n{code}\n"
@@ -74,11 +74,8 @@ class CodeGenerationAgent(Agent):
                     formatted_prompt_for_mismatch_cases += f"Input: {mismatch_case['test_input']}\n"
                     formatted_prompt_for_mismatch_cases += f"Expected output: {mismatch_case['generated_test_output']}\n"
                     formatted_prompt_for_mismatch_cases += f"Actual mismatch output: {mismatch_case['code_execution_output']}\n"
-        need_generate = current_code in (None, "") or mismatch_cases in (None, "") 
-
-
-
-        if need_generate:
+        
+        if turn_idx == 0:
             # Generation mode
             formatted_prompt = (
                 f"You are a helpful assistant that generates code to solve programming problems.\n\n"
@@ -94,6 +91,8 @@ class CodeGenerationAgent(Agent):
             # Refinement mode
             formatted_prompt = (
                 f"You are a helpful assistant that refines code to pass tests. You need to think first then refine and generate new python script.\n\n"
+                f" Given a coding task, you need to check the current generated test cases and the current code execution result, if the mismatch is caused by the current generated test cases, please refine the code to pass all tests.\n"
+                f"This is the problem:\n{question}\n\n"
                 f"You need to think first then write python script.")
             formatted_prompt += formatted_prompt_for_mismatch_cases + (
                 f"Please first judge the mismatch between the current generated test cases history and the current code execution result history, if the mismatch is caused by the current code, please refine the code to pass all tests. If the mismatch is not caused by the current code, please answer the original code.\n"

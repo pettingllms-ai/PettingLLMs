@@ -32,8 +32,6 @@ resource:
   n_gpus_per_node: 8
   trust_remote_code: true
 
-experiment_name: code_eval
-
 # Environment configuration (shared by all agents)
 env:
   name: code_env
@@ -98,6 +96,9 @@ agent_policy_configs:
       policy_name: "code_generator_model"
       sample_num: 4
 
+project_name: pettingllms
+experiment_name: code_test
+logger: [ 'console', 'wandb' ]
 
 trainer:
   device: cuda

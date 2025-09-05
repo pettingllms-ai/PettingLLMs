@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, Union
 from dataclasses import dataclass
 import ray
-from pettingllms.rewards.math_utils.utils import extract_answer, grade_answer_verl
 import shutil
 import tempfile
 import time
@@ -167,12 +166,12 @@ def _ensure_ray_initialized() -> bool:
     import ray  
 
     if not ray.is_initialized():
-        multi_logger.log_ray_status(context="test_ray_log_function ")
+        multi_logger.log_ray_status(mode="train", context="test_ray_log_function ")
        
         
         try:
             num_cpus_env = os.getenv("RAY_NUM_CPUS")
-            multi_logger.log_ray_status(context="before_code_utils_ray_init")
+            multi_logger.log_ray_status(mode="train", context="before_code_utils_ray_init")
             init_kwargs = dict(
                 ignore_reinit_error=True,
                 include_dashboard=False,
@@ -194,14 +193,14 @@ def _ensure_ray_initialized() -> bool:
                 cluster = ray.cluster_resources()
                 avail = ray.available_resources()
                 multi_logger.log_ray_status(
-                    context="after_code_utils_ray_init"
+                    mode="train", context="after_code_utils_ray_init"
                 )
             except Exception as e:
                 print(f"Warning: failed to get ray cluster info: {e}")
                 pass
         except Exception as e:
             print(f"Failed to initialize ray: {e}")
-            multi_logger.log_ray_status(context="code_utils_ray_init_failed")
+            multi_logger.log_ray_status(mode="train", context="code_utils_ray_init_failed")
             return False
     else:
         try:
@@ -284,7 +283,6 @@ async def evaluate_code(
     results: List[Dict[str, Any]] = []
     if backend == "ray_docker" and _ensure_ray_initialized():
         try:
-            # 规范化 actor 列表
             actors = [ray_actor]
 
             obj_refs = []
@@ -398,12 +396,12 @@ def _ensure_ray_initialized() -> bool:
     import ray  
 
     if not ray.is_initialized():
-        multi_logger.log_ray_status(context="test_ray_log_function ")
+        multi_logger.log_ray_status(mode="train", context="test_ray_log_function ")
        
         
         try:
             num_cpus_env = os.getenv("RAY_NUM_CPUS")
-            multi_logger.log_ray_status(context="before_code_utils_ray_init")
+            multi_logger.log_ray_status(mode="train", context="before_code_utils_ray_init")
             init_kwargs = dict(
                 ignore_reinit_error=True,
                 include_dashboard=False,
@@ -425,14 +423,14 @@ def _ensure_ray_initialized() -> bool:
                 cluster = ray.cluster_resources()
                 avail = ray.available_resources()
                 multi_logger.log_ray_status(
-                    context="after_code_utils_ray_init"
+                    mode="train", context="after_code_utils_ray_init"
                 )
             except Exception as e:
                 print(f"Warning: failed to get ray cluster info: {e}")
                 pass
         except Exception as e:
             print(f"Failed to initialize ray: {e}")
-            multi_logger.log_ray_status(context="code_utils_ray_init_failed")
+            multi_logger.log_ray_status(mode="train", context="code_utils_ray_init_failed")
             return False
     else:
         try:
@@ -657,12 +655,12 @@ def _ensure_ray_initialized() -> bool:
     import ray  
 
     if not ray.is_initialized():
-        multi_logger.log_ray_status(context="test_ray_log_function ")
+        multi_logger.log_ray_status(mode="train", context="test_ray_log_function ")
        
         
         try:
             num_cpus_env = os.getenv("RAY_NUM_CPUS")
-            multi_logger.log_ray_status(context="before_code_utils_ray_init")
+            multi_logger.log_ray_status(mode="train", context="before_code_utils_ray_init")
             init_kwargs = dict(
                 ignore_reinit_error=True,
                 include_dashboard=False,
@@ -684,14 +682,14 @@ def _ensure_ray_initialized() -> bool:
                 cluster = ray.cluster_resources()
                 avail = ray.available_resources()
                 multi_logger.log_ray_status(
-                    context="after_code_utils_ray_init"
+                    mode="train", context="after_code_utils_ray_init"
                 )
             except Exception as e:
                 print(f"Warning: failed to get ray cluster info: {e}")
                 pass
         except Exception as e:
             print(f"Failed to initialize ray: {e}")
-            multi_logger.log_ray_status(context="code_utils_ray_init_failed")
+            multi_logger.log_ray_status(mode="train", context="code_utils_ray_init_failed")
             return False
     else:
         try:
@@ -1009,7 +1007,7 @@ def _format_math_problem(example: Dict, index: int, mode: str = "train") -> Opti
 
 
 async def evaluate_math_solution(
-    solution: str,
+    generated_solution: str,
     ground_truth_answer: str
 ) -> Tuple[bool, Optional[str]]:
     """
@@ -1022,20 +1020,13 @@ async def evaluate_math_solution(
     Returns:
         (is_correct, extracted_answer)
     """
-    try:
-        # Extract answer from solution
-        extracted_answer = extract_answer(solution)
-        
-        if extracted_answer is None:
-            return False, None
-        
-        # Grade the answer
-        is_correct = extracted_answer == ground_truth_answer
-        return is_correct, extracted_answer
-        
-    except Exception as e:
-        print(f"Error evaluating math solution: {e}")
-        return False, None
+   
+    if generated_solution is None:
+        return False
+
+    is_correct = generated_solution == ground_truth_answer
+    return is_correct
+     
 
 
 # Test function

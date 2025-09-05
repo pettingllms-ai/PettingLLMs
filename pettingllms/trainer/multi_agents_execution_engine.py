@@ -6,6 +6,7 @@ import json
 import traceback
 import uuid
 from tqdm.asyncio import tqdm
+import random
 try:
     from verl.protocol import DataProto
 except Exception:  # fallback when verl is a src tree: verl/verl/protocol.py
@@ -119,6 +120,7 @@ class MultiAgentsExecutionEngine:
             raise ValueError("env is not set in the config")
             
         print(f"env_name: {env_name}")
+        self.experiment_name = self.config.experiment_name
         
         # Store env_name for later use
         self.env_name = env_name
@@ -213,7 +215,7 @@ class MultiAgentsExecutionEngine:
                 self.timer.checkpoint(f"Creating {num_workers} Ray docker workers")
                 self.env_workers = [RayDockerWorker.remote(idx) for idx in range(num_workers)]
                 self.multi_logger.log_rollout_summary(
-                    -1, -1, "env_workers",
+                    self.mode, -1, -1, "env_workers",
                     f"init {num_workers} env workers"
                 )
             else:
@@ -259,14 +261,14 @@ class MultiAgentsExecutionEngine:
         
         for turn_idx in range(self.max_turns):
             self.multi_logger.log_async_event(
-                env_idx, rollout_idx, "turn_start",
+                self.mode, env_idx, rollout_idx, "turn_start",
                 f"Starting turn {turn_idx + 1}",
                 {"turn_idx": turn_idx + 1}
             )
             
             for agent_idx, agent_name in enumerate(self.turn_order):
                 current_agent = agent_group[agent_idx]
-                current_agent.update_from_env(env)
+                current_agent.update_from_env(turn_idx,env)
                 prompt = current_agent.current_prompt
                 policy_name = self.agent_policy_mapping.get(agent_name) if self.agent_policy_mapping else None
                 # Convert to DataProto format
@@ -287,13 +289,19 @@ class MultiAgentsExecutionEngine:
                 print(f"DEBUG: begin tp generate response for {agent_name} with model {model_name} using llm_async_generate")
                 
                 try:
+                    # 随机选择一个可用的 server address（兼容字符串/列表）
+                    _addresses = self.server_address_dict.get(policy_name)
+                    if isinstance(_addresses, (list, tuple)):
+                        _address = random.choice(_addresses) if len(_addresses) > 0 else _addresses[0]
+                    
+
                     output_dpr,response_str = await llm_async_generate(
                         rollout_idx=rollout_idx, 
                         turn_idx=turn_idx, 
                         agent_idx=agent_idx,
                         prompt_dpr=format_prompt, 
                         ppo_trainer_config=ppo_trainer_config,
-                        address=self.server_address_dict[policy_name],
+                        address=_address,
                         model_name=model_name,
                         tokenizer=self.tokenizer_dict[policy_name],
                         image_data=None,
@@ -305,7 +313,7 @@ class MultiAgentsExecutionEngine:
                     )
                 except Exception as e:
                     self.multi_logger.log_env_agent_info(
-                        env_idx, rollout_idx, turn_idx + 1, agent_name,
+                        self.mode, env_idx, rollout_idx, turn_idx + 1, agent_name,
                         f"Failed to generate response: {e}",
                         {"error": str(e), "traceback": traceback.format_exc()}
                     )
@@ -323,7 +331,7 @@ class MultiAgentsExecutionEngine:
                     )
                 except asyncio.TimeoutError:
                     self.multi_logger.log_env_agent_info(
-                        env_idx, rollout_idx, turn_idx + 1, agent_name,
+                        self.mode, env_idx, rollout_idx, turn_idx + 1, agent_name,
                         f"❌ Environment step timed out after {self.step_timeout}s",
                         {"error": "timeout", "timeout_seconds": self.step_timeout}
                     )
@@ -347,17 +355,16 @@ class MultiAgentsExecutionEngine:
                         ])
                         print(f"The length of concatenated trajectory_per_task_dict[policy_name]: {len(trajectory_per_task_dict[policy_name])}")
                 
-                if agent_name == self.turn_order[-1]:
-                    self.multi_logger.log_env_agent_info(
-                        env_idx, rollout_idx, turn_idx + 1, agent_name,
+                self.multi_logger.log_env_agent_info(
+                        self.mode, env_idx, rollout_idx, turn_idx + 1, agent_name,
                         "Trajectory information updated",
                         {
+                            "agent_prompt": prompt,
+                            "agent_response": response_str,
                             "env_state": env.state,
                        
                         }
                     )
-                    reward=env.state.ground_truth_test_vs_generated_code_match_ratio
-        
         
             finish=False
             if agent_group[-1].done:
@@ -366,7 +373,7 @@ class MultiAgentsExecutionEngine:
                 agent_rewards={agent_name: agent.reward_history for agent_name, agent in zip(self.turn_order, agent_group)}
                 
                 self.multi_logger.log_rollout_summary(
-                    env_idx, rollout_idx, "success!!",
+                    self.mode, env_idx, rollout_idx, "success!!",
                     f"Rollout {rollout_idx} completed successfully",
                     extra_data={
                         "turn_idx": turn_idx,
@@ -378,7 +385,7 @@ class MultiAgentsExecutionEngine:
                 break
         agent_rewards={agent_name: agent.reward_history for agent_name, agent in zip(self.turn_order, agent_group)}
         self.multi_logger.log_rollout_summary(
-                env_idx, rollout_idx, "rollout_complete",
+                self.mode, env_idx, rollout_idx, "rollout_complete",
                 f"Rollout {rollout_idx} completed successfully",
                 extra_data={
                     "turn_idx": 4,
@@ -403,7 +410,7 @@ class MultiAgentsExecutionEngine:
             latency_s = time.perf_counter() - start_time
             self.rollout_latency_dict[rollout_idx] = {"latency_s": latency_s, "reward": reward}
             self.multi_logger.log_async_event(
-                env_idx, rollout_idx, "rollout_latency",
+                self.mode, env_idx, rollout_idx, "rollout_latency",
                 f"Rollout {rollout_idx} latency: {latency_s:.3f}s",
                 {"latency_s": float(latency_s)}
             )
@@ -436,116 +443,146 @@ class MultiAgentsExecutionEngine:
         for turn_idx in range(self.max_turns):
             agent_done_list=[]
 
-            for agent_idx, agent_name in enumerate(self.turn_order):
-                async def single_generate_response(idx):
-                    rollout_idx=rollout_idx_list[idx]
-                    env=envs_list[idx]
-                    current_agent = agent_groups[idx][agent_idx]
-                    current_agent.update_from_env(env)
-                    prompt = current_agent.current_prompt
-                    policy_name = self.agent_policy_mapping.get(agent_name) 
-                    format_prompt =convert_prompt_to_dpr( self.tokenizer_dict[policy_name], 
-                            self.processor_dict.get(policy_name), 
-                            prompt, 
-                            self.max_prompt_length,
-                            multi_modal=False
+            async def single_generate_response(idx,agent_idx,agent_name):
+                rollout_idx=rollout_idx_list[idx]
+                env=envs_list[idx]
+                current_agent = agent_groups[idx][agent_idx]
+                current_agent.update_from_env(turn_idx,env)
+                prompt = current_agent.current_prompt
+                policy_name = self.agent_policy_mapping.get(agent_name) 
+                format_prompt =convert_prompt_to_dpr( self.tokenizer_dict[policy_name], 
+                        self.processor_dict.get(policy_name), 
+                        prompt, 
+                        self.max_prompt_length,
+                        multi_modal=False
+                )
+                if format_prompt.batch is None:
+                    return None
+                ppo_trainer_config = self.ppo_trainer_config_dict.get(policy_name, None)
+                model_path=ppo_trainer_config.actor_rollout_ref.model.path
+                model_name = "/".join(model_path.split("/")[-2:])
+                output_dpr = None
+                response_str = None
+                print(f"DEBUG: begin tp generate response for {agent_name} with model {model_name} using llm_async_generate")
+                
+                try:
+                    # 随机选择一个可用的 server address（兼容字符串/列表）
+                    _addresses = self.server_address_dict.get(policy_name)
+                    if isinstance(_addresses, (list, tuple)):
+                        _address = random.choice(_addresses) if len(_addresses) > 0 else _addresses[0]
+                   
+                    output_dpr,response_str = await llm_async_generate(
+                        rollout_idx=rollout_idx, 
+                        turn_idx=turn_idx, 
+                        agent_idx=agent_idx,
+                        prompt_dpr=format_prompt, 
+                        ppo_trainer_config=ppo_trainer_config,
+                        address=_address,
+                        model_name=model_name,
+                        tokenizer=self.tokenizer_dict[policy_name],
+                        image_data=None,
+                        application_id=str(uuid.uuid4()),
+                        env_idx=env_idx,
+                        policy_name=policy_name,
+                        timeout=self.generate_timeout,
+                        mode=self.mode
                     )
-                    if format_prompt.batch is None:
-                        return None
-                    ppo_trainer_config = self.ppo_trainer_config_dict.get(policy_name, None)
-                    model_path=ppo_trainer_config.actor_rollout_ref.model.path
-                    model_name = "/".join(model_path.split("/")[-2:])
+                except Exception:
                     output_dpr = None
                     response_str = None
-                    print(f"DEBUG: begin tp generate response for {agent_name} with model {model_name} using llm_async_generate")
                     
-                    try:
-                        output_dpr,response_str = await llm_async_generate(
-                            rollout_idx=rollout_idx, 
-                            turn_idx=turn_idx, 
-                            agent_idx=agent_idx,
-                            prompt_dpr=format_prompt, 
-                            ppo_trainer_config=ppo_trainer_config,
-                            address=self.server_address_dict[policy_name],
-                            model_name=model_name,
-                            tokenizer=self.tokenizer_dict[policy_name],
-                            image_data=None,
-                            application_id=str(uuid.uuid4()),
-                            env_idx=rollout_idx // self.sample_num,
-                            policy_name=policy_name,
-                            timeout=self.generate_timeout,
-                            mode=self.mode
-                        )
-                    except Exception:
-                        output_dpr = None
-                        response_str = None
-                        
-                    current_agent.update_from_model(response_str)
+                current_agent.update_from_model(response_str)
+                self.multi_logger.log_env_agent_info(
+                        self.mode, env_idx, rollout_idx, turn_idx + 1, agent_name,
+                        "Trajectory information updated",
+                        {
+                            "agent_prompt": prompt,
+                            "agent_response": response_str,
+                       
+                        }
+                    )
+                return {
+                    'current_agent': current_agent,
+                    'output_dpr': output_dpr,
+                    'policy_name': policy_name,
+                }
+
+            
+            tasks = []
+            task_info = []  # store (idx, agent_idx, agent_name) information
+            
+            for idx in range(len(rollout_idx_list)):
+                for agent_idx, agent_name in enumerate(self.turn_order):
+                    tasks.append(single_generate_response(idx, agent_idx, agent_name))
+                    task_info.append((idx, agent_idx, agent_name))
+            
+            # parallel execute all tasks
+            flat_results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # reorganize results into 2D structure: results[idx][agent_idx]
+            results = []
+            for idx in range(len(rollout_idx_list)):
+                agent_results = []
+                for agent_idx in range(len(self.turn_order)):
+                    # calculate the flat index
+                    flat_idx = idx * len(self.turn_order) + agent_idx
+                    agent_results.append(flat_results[flat_idx])
+                results.append(agent_results)
+
+            async def single_step(idx):
+
+                for agent_idx,agent_name in enumerate(self.turn_order):
+                    current_agent = agent_groups[idx][agent_idx]
                     try:
                         await asyncio.wait_for(
-                            current_agent.step(self.envs[rollout_idx],env_worker=self.env_workers[rollout_idx]),
+                            current_agent.step(self.envs[rollout_idx_list[idx]],env_worker=self.env_workers[rollout_idx_list[idx]]),
                             timeout=self.step_timeout
                         )
                     except asyncio.TimeoutError:
                         current_agent.agent_reward = 0.0
                         current_agent.reward_history.append(0.0)
-                    
-                    self.multi_logger.log_env_agent_info(
-                        env_idx, rollout_idx, turn_idx + 1, agent_name,
-                        "Trajectory information updated",
-                        {
-                            "env_state": env.state,
-                       
-                        }
-                    )
+                    output_dpr = results[idx][agent_idx]['output_dpr']
                     if output_dpr is not None:
                         output_dpr.non_tensor_batch["reward"] = np.array([current_agent.agent_reward])
                         output_dpr.non_tensor_batch["agent_name"] = np.array([agent_name], dtype=object)  # Add agent name for metrics trackin
-                    return {
-                        'current_agent': current_agent,
-                        'output_dpr': output_dpr,
-                        'policy_name': policy_name
-                    }
-                
-                tasks=[single_generate_response(idx) for idx in range(len(rollout_idx_list))]
-                results=await asyncio.gather(*tasks, return_exceptions=True)
-               
-                values = []
-                agent_done=False
-                for i in range(len(rollout_idx_list)):
-                    agent_i = agent_groups[i][agent_idx]
-                    val = getattr(agent_i, 'value', None)
-                    if agent_i.done:
-                        agent_done=True                 
-                    if val is None:
-                        val = -1e9
-                    values.append(val)
-                agent_done_list.append(agent_done)
-                try:
-                    best_i = int(np.argmax(np.asarray(values)))
-                except Exception:
-                    best_i = 0
-                selected_env = envs_list[best_i]
-                envs_list = [selected_env for _ in envs_list]
-                agent_groups = [copy.deepcopy(agent_groups[best_i]) for _ in agent_groups]
-                if agent_done:
-                    for result in results:
-                            if result is not None and not isinstance(result, Exception):
-                                current_agent = result['current_agent']
-                                output_dpr = result['output_dpr']
-                                policy_name = result['policy_name']
-                                if output_dpr is not None:
-                                    if trajectory_per_task_dict[policy_name].batch is None:
-                                        trajectory_per_task_dict[policy_name] = output_dpr
-                                    else:
-                                        # Use concat instead of union, because each response content is different
-                                        trajectory_per_task_dict[policy_name] = DataProto.concat([
-                                            trajectory_per_task_dict[policy_name], 
-                                            output_dpr
-                                        ])
-                                        print(f"The length of concatenated trajectory_per_task_dict[policy_name]: {len(trajectory_per_task_dict[policy_name])}")
-                    break
-            if agent_done_list.count(True)==len(agent_done_list):
+                    
+            steps = [single_step(idx) for idx in range(len(rollout_idx_list))]
+            await asyncio.gather(*steps)
+            rollout_score_idx=[]
+            for idx in range(len(rollout_idx_list)):
+                result_score=0
+                for agent_idx in range(len(self.turn_order)):
+                    current_agent = agent_groups[idx][agent_idx]
+                    result_score += current_agent.agent_reward
+                rollout_score_idx.append(result_score)
+            try:
+                best_i = int(np.argmax(np.asarray(rollout_score_idx)))
+            except Exception:
+                best_i = 0
+            selected_env = envs_list[best_i]
+            selected_agent_group = agent_groups[best_i]
+            
+            # check if any agent has completed the task
+            agent_done = selected_agent_group[-1].done
+            envs_list = [copy.deepcopy(selected_env) for _ in envs_list]
+            agent_groups = [copy.deepcopy(selected_agent_group) for _ in agent_groups]
+            
+            if agent_done:
+                for result in flat_results:
+                        if result is not None and not isinstance(result, Exception):
+                            current_agent = result['current_agent']
+                            output_dpr = result['output_dpr']
+                            policy_name = result['policy_name']
+                            if output_dpr is not None:
+                                if trajectory_per_task_dict[policy_name].batch is None:
+                                    trajectory_per_task_dict[policy_name] = output_dpr
+                                else:
+                                    # Use concat instead of union, because each response content is different
+                                    trajectory_per_task_dict[policy_name] = DataProto.concat([
+                                        trajectory_per_task_dict[policy_name], 
+                                        output_dpr
+                                    ])
+                                    print(f"The length of concatenated trajectory_per_task_dict[policy_name]: {len(trajectory_per_task_dict[policy_name])}")
                 break
         return trajectory_per_task_dict
 
@@ -617,7 +654,7 @@ class MultiAgentsExecutionEngine:
                     task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)}, {failed_count} failed)")
                     
                     self.multi_logger.log_async_event(
-                        -1, -1, "task_error",
+                        self.mode, -1, -1, "task_error",
                         f"Task failed with error: {e}",
                         {
                             "failed_count": failed_count,
@@ -631,10 +668,10 @@ class MultiAgentsExecutionEngine:
                     
         except Exception as e:
             # Log Ray status when encountering errors
-            self.multi_logger.log_ray_status(context="during_error")
+            self.multi_logger.log_ray_status(mode=self.mode, context="during_error")
             
             self.multi_logger.log_async_event(
-                -1, -1, "concurrent_batch_error",
+                self.mode, -1, -1, "concurrent_batch_error",
                 f"Concurrent execution encountered error: {e}",
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
@@ -642,7 +679,7 @@ class MultiAgentsExecutionEngine:
                 if not task.done():
                     task_name = task.get_name()
                     self.multi_logger.log_async_event(
-                        -1, -1, "task_cancel",
+                        self.mode, -1, -1, "task_cancel",
                         f"Cancelling task {task_name}"
                     )
                     task.cancel()
@@ -656,7 +693,7 @@ class MultiAgentsExecutionEngine:
         
         
         self.multi_logger.log_async_event(
-            -1, -1, "concurrent_batch_complete",
+            self.mode, -1, -1, "concurrent_batch_complete",
             "Concurrent execution completed",
             {
                 "successfully_processed": completed_count,
@@ -669,7 +706,7 @@ class MultiAgentsExecutionEngine:
         )
         
         # Log Ray status after concurrent execution
-        self.multi_logger.log_ray_status(context="after_concurrent_batch")
+        self.multi_logger.log_ray_status(mode=self.mode, context="after_concurrent_batch")
         
         concurrent_timer.checkpoint("Starting UID assignment and filtering")
         # Assign uid and filter the rollouts
@@ -693,14 +730,14 @@ class MultiAgentsExecutionEngine:
 
         non_tensor_batch = data_proto.non_tensor_batch
         
-        if not all(key in non_tensor_batch for key in ["rollout_idx", "turn_idx", "agent_idx"]):
+        if not all(key in non_tensor_batch for key in ["env_idx", "turn_idx", "agent_idx"]):
             # If required keys are missing, just assign random UIDs and return
             data_proto.non_tensor_batch["uid"] = np.array(
                 [str(uuid.uuid4()) for _ in range(len(data_proto))], dtype=object
             )
             return data_proto
         
-        rollout_indices = non_tensor_batch["rollout_idx"]
+        rollout_indices = non_tensor_batch["env_idx"]
         turn_indices = non_tensor_batch["turn_idx"] 
         agent_indices = non_tensor_batch["agent_idx"]
         rewards = non_tensor_batch.get("reward", [])
@@ -821,7 +858,7 @@ class MultiAgentsExecutionEngine:
             }
             
             self.multi_logger.log_async_event(
-                -1, -1, "reward_summary",
+                self.mode, -1, -1, "reward_summary",
                 f"UID assignment and reward statistics complete",
                 summary
             )
@@ -866,7 +903,6 @@ def test_rollout_engine_simple(config_path=None):
     
 @hydra.main(config_path="../config/code", config_name="code_eval", version_base=None)
 def run_benchmark_with_hydra(config: DictConfig):
-    """使用 Hydra 运行 benchmark，可以通过命令行覆盖任何配置参数"""
     from omegaconf import OmegaConf
     
     # 加载 trainer 配置
@@ -878,5 +914,4 @@ def run_benchmark_with_hydra(config: DictConfig):
     
    
 if __name__ == "__main__":
-    # 如果直接运行该文件，使用 Hydra 版本
     run_benchmark_with_hydra()

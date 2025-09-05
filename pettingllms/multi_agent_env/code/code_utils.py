@@ -143,17 +143,17 @@ def load_problem_batch(
                 
         return batch_results
     
-    # validation mode: 先尝试本地，没有则下载
+    # validation mode: try local first, if not found, then download
     else:
         if not parquet_file.exists():
             raise FileNotFoundError(
-                f"❌ 验证模式需要本地测试集 {parquet_file}，未找到！请先运行 scripts/dataprocess/load_train_code.py 生成数据。"
+                f"❌ Validation mode requires local test set {parquet_file}, not found! Please run scripts/dataprocess/load_train_code.py to generate data."
             )
-        print(f"📁 从本地加载测试集: {local_datasets_dir}")
+        print(f"📁 Loading test set from local: {local_datasets_dir}")
         try:
-            # parquet 单文件默认 split 名称为 "train"
+            # parquet single file default split name is "train"
             ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
-            print(f"✅ 测试集加载成功，共 {len(ds)} 条")
+            print(f"✅ Test set loaded successfully, {len(ds)} samples")
         except Exception as e:
             raise Exception(f"❌ Failed to load local dataset: {e}")
         
@@ -163,10 +163,10 @@ def load_problem_batch(
             problem_dict = _format_competition_problem(example, i, mode="validate")
             if problem_dict:
                 batch_results.append(problem_dict)
-                if i % 100 == 0:  # 每100个打印一次进度
+                if i % 100 == 0:  # print progress every 100 samples
                     print(f"🔄 Loaded validation problem {i+1}/{len(ds)}")
         
-        print(f"✅ 成功返回 {len(batch_results)} 条验证样本")
+        print(f"✅ Successfully returned {len(batch_results)} validation samples")
         return batch_results
 
 
@@ -227,43 +227,11 @@ async def _worker_docker(
     def cleanup_tmpdir():
         if not os.path.exists(tmpdir):
             return
-        
-        for attempt in range(3):
-            try:
-                shutil.rmtree(tmpdir, ignore_errors=False)
-                print(f"成功删除临时目录: {tmpdir}")
-                return
-            except OSError as e:
-                print(f"删除临时目录失败 (尝试 {attempt + 1}/3): {e}")
-                if attempt < 2:
-                    # 如果删除失败，尝试强制删除所有文件
-                    try:
-                        for root, dirs, files in os.walk(tmpdir):
-                            for file in files:
-                                file_path = os.path.join(root, file)
-                                try:
-                                    os.chmod(file_path, 0o777)
-                                    os.remove(file_path)
-                                except Exception:
-                                    pass
-                            for dir_name in dirs:
-                                dir_path = os.path.join(root, dir_name)
-                                try:
-                                    os.chmod(dir_path, 0o777)
-                                except Exception:
-                                    pass
-                        # 再次尝试删除目录
-                        os.rmdir(tmpdir)
-                        print(f"强制删除临时目录成功: {tmpdir}")
-                        return
-                    except Exception as force_e:
-                        print(f"强制删除也失败: {force_e}")
-                        time.sleep(0.1)  # 短暂等待后重试
-                else:
-                    # 最后一次尝试，使用 ignore_errors=True
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-                    print(f"使用 ignore_errors 删除临时目录: {tmpdir}")
-    
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=False)
+        except Exception:
+            print(f"failed to remove tmpdir: {tmpdir}")
+            return
     stdin_file = None
     stdout_file = None
     stderr_file = None
@@ -278,7 +246,7 @@ async def _worker_docker(
         stdout_path = os.path.join(tmpdir, "stdout.txt")
         stderr_path = os.path.join(tmpdir, "stderr.txt")
 
-        # 预写入 stdin 内容，并将 stdout/stderr 重定向到临时文件，避免通过管道通信
+        # pre-write stdin content, and redirect stdout/stderr to temporary files to avoid communication through pipes
         with open(stdin_path, "w", encoding="utf-8") as f_in:
             f_in.write(stdin_text)
 
@@ -287,17 +255,27 @@ async def _worker_docker(
         stderr_file = open(stderr_path, "wb")
 
         try:
+            env = dict(os.environ)
+            env.update({
+                "PYTHONFAULTHANDLER": "1",
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONWARNINGS": "default",
+                "PYTHONTRACEMALLOC": "5",
+                "PYTHONIOENCODING": "utf-8",
+            })
+
             proc = await asyncio.create_subprocess_exec(
-                "python", script_path,
+                sys.executable, "-X", "dev", "-W", "default", "-u", script_path,
                 stdin=stdin_file,
                 stdout=stdout_file,
                 stderr=stderr_file,
                 cwd=tmpdir,
+                env=env,
                 start_new_session=True,
             )
 
             try:
-                await asyncio.wait_for(proc.wait(), timeout=timeout-10)
+                await asyncio.wait_for(proc.wait(), timeout=timeout-2)
                 rc = proc.returncode
             except asyncio.TimeoutError:
                 try:
@@ -307,6 +285,13 @@ async def _worker_docker(
                         proc.kill()
                     except Exception:
                         pass
+                # 在超时时向 stderr 追加父进程侧的说明，便于诊断
+                try:
+                    with open(stderr_path, "ab") as f_err_append:
+                        msg = f"[parent] Timeout after {timeout}s; process killed.\n".encode()
+                        f_err_append.write(msg)
+                except Exception:
+                    pass
                 try:
                     await proc.wait()
                 except Exception:
@@ -314,8 +299,6 @@ async def _worker_docker(
                 rc = None
                 printed_output = None
                 print("printed_output: None (timeout)")
-            except Exception:
-                # 其他等待异常：尽力清理
                 try:
                     if proc.returncode is None:
                         os.killpg(proc.pid, signal.SIGKILL)
@@ -329,10 +312,7 @@ async def _worker_docker(
                 except Exception:
                     pass
                 rc = proc.returncode
-            
-            # 若不是超时，读取重定向的输出文件
             if printed_output is None and rc is None:
-                # 已在超时分支设置
                 pass
             elif rc is not None:
                 try:
@@ -357,7 +337,6 @@ async def _worker_docker(
                         combined = last_line
                     printed_output = f"error: exit {rc}: {combined}"
         finally:
-            # 确保所有文件句柄都被关闭
             for file_handle, file_name in [(stdin_file, "stdin"), (stdout_file, "stdout"), (stderr_file, "stderr")]:
                 if file_handle is not None:
                     try:
@@ -367,9 +346,8 @@ async def _worker_docker(
                         print(f"关闭 {file_name} 文件句柄失败: {e}")
                         
     except Exception as e:
-        # 顶层兜底，保持与原实现一致的行为：将异常转为可读字符串
+        # top level fallback, keep the same behavior as the original implementation: convert exception to readable string
         printed_output = f"error: {e}"
-        print(f"_worker_docker 执行异常: {e}")
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -584,9 +562,9 @@ def get_ray_docker_worker_cls():
         return getattr(get_ray_docker_worker_cls, "_cls")
 
     try:
-        _max_conc = 500
+        _max_conc = 800
 
-        @ray.remote(num_cpus=0.25, max_concurrency=_max_conc)
+        @ray.remote(num_cpus=0.1, max_concurrency=_max_conc)
         class _RayDockerWorker:
             def __init__(self, idx):
                 if not isinstance(idx, (int, float)):
@@ -656,10 +634,10 @@ def extract_test_cases(text: str):
     从包含多组 **Test Input:** / **Test Output:** 代码块的字符串中提取内容。
     返回形如 {"input": [..], "output": [..]} 的字典。
     """
-    # 统一换行
+    # unify line endings
     s = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # 支持 ``` 或 ```txt / ```python 等形式的代码块
+    # support ``` or ```txt / ```python etc.
     input_blocks = re.findall(
         r"\*\*Test Input:\*\*\s*```(?:[a-zA-Z0-9_+\-]*\n)?(.*?)```",
         s, flags=re.DOTALL
@@ -669,11 +647,11 @@ def extract_test_cases(text: str):
         s, flags=re.DOTALL
     )
 
-    # 去掉首尾空白，但保留内容中的换行
+    # remove leading and trailing whitespace, but keep line endings in content
     test_input = [blk.strip() for blk in input_blocks]
     test_output = [blk.strip() for blk in output_blocks]
 
-    # 对齐长度（防止不等长）
+    # align length (prevent unequal length)
     n = min(len(test_input), len(test_output))
     test_input = test_input[:n]
     test_output = test_output[:n]
