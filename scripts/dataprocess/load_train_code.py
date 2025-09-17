@@ -468,13 +468,13 @@ def process_apps_train() -> pd.DataFrame:
     print("🔄 加载 apps ...")
     ds = load_dataset(
         "json",
-        data_files={"test": "hf://datasets/codeparrot/apps/test.jsonl"},
-        split="test",
+        data_files={"train": "hf://datasets/codeparrot/apps/train.jsonl"},
+        split="train",
     )
     ds = list(ds)
     rows = []
     
-    for ex in ds[1000:5000]:
+    for ex in ds:
         # 解析 solutions 和 input_output 字段
         try:
             solutions = json.loads(ex.get("solutions", "[]"))
@@ -725,5 +725,5 @@ if __name__ == "__main__":
     out_dir = project_root / "datasets" / "code" / "train"
     os.makedirs(out_dir, exist_ok=True)
     df_apps_train = process_apps_train()
-    df_apps_train.to_parquet(out_dir / "apps_train_easier.parquet", index=False)
-    print(f"💾 保存: {out_dir / 'apps_train_easier.parquet'}")
+    df_apps_train.to_parquet(out_dir / "apps_train.parquet", index=False)
+    print(f"💾 保存: {out_dir / 'apps_train.parquet'}")

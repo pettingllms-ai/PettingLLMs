@@ -197,7 +197,10 @@ class ToolAgent(Agent):
         env_data.state.tool_action = self.current_action
         state = copy.deepcopy(env_data.state)
         state.step(self.current_action)
-        self.agent_reward = state.reward
+        if self.current_action is None:
+            self.agent_reward = -5
+        else:
+            self.agent_reward = 1+ state.reward
         self.agent_reward_history.append(self.agent_reward)
         
         # 检查是否成功完成任务
