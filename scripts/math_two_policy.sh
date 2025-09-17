@@ -34,12 +34,12 @@ model_1_resource="  $model_1_config_path.trainer.n_gpus_per_node=1 $model_1_conf
 model_0_data="+$model_0_config_path.data.train_files=$model_0_data_dir/text/train.parquet +$model_0_config_path.data.val_files=$model_0_data_dir/text/test.parquet"
 model_1_data="+$model_1_config_path.data.train_files=$model_1_data_dir/text/train.parquet +$model_1_config_path.data.val_files=$model_1_data_dir/text/test.parquet"
 python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_two_policies \
-    experiment_name=math_1.7B_two_policies_AIME25 \
+    experiment_name=math_8B_two_policies_AIME25 \
     if_dapo=True\
     benchmark=AIME25\
     +difficulty=train_polaris\
-    models.model_0.path=/home/lah003/models/Qwen3-1.7B\
-    models.model_1.path=/home/lah003/models/Qwen3-1.7B\
+    models.model_0.path=/home/lah003/models/Qwen3-8B\
+    models.model_1.path=/home/lah003/models/Qwen3-8B\
     $total_resource \
     $model_0_USE_GRPO $model_0_resource $model_0_data \
     $model_1_USE_GRPO $model_1_resource $model_1_data\
@@ -49,7 +49,7 @@ python3 -m pettingllms.trainer.train --config-path ../config/math --config-name 
     data.gen_batch_size=128\
     data.gen_n_samples=4\
     data.max_prompt_length=8192\
-    data.max_response_length=4096\
+    data.max_response_length=8192\
     data.resample_freq=1\
     data.filter_method=mean\
     data.filter_ratio=0.3\

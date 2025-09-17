@@ -32,9 +32,9 @@ model_0_data="+$model_0_config_path.data.train_files=$model_0_data_dir/text/trai
 
 python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_single_agent \
     $model_0_USE_GRPO $model_0_resource $model_0_data\
-    models.model_0.path=/home/lah003/models/Qwen3-1.7B\
+    models.model_0.path=/home/lah003/models/Qwen3-8B\
     benchmark=AIME25\
-    experiment_name=1.7b_baseline_AIME25\
+    experiment_name=8b_baseline_AIME25\
     if_dapo=True\
     trainer.total_training_steps=400\
     trainer.save_freq=150\
@@ -43,7 +43,7 @@ python3 -m pettingllms.trainer.train --config-path ../config/math --config-name 
     data.gen_n_samples=4\
     data.max_prompt_length=8192\
     +difficulty=train_polaris\
-    data.max_response_length=4096\
+    data.max_response_length=8192\
     data.resample_freq=1\
     data.filter_method=mean\
     data.filter_ratio=0.3\
