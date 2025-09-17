@@ -35,11 +35,11 @@ model_0_data="+$model_0_config_path.data.train_files=$model_0_data_dir/text/trai
 model_1_data="+$model_1_config_path.data.train_files=$model_1_data_dir/text/train.parquet +$model_1_config_path.data.val_files=$model_1_data_dir/text/test.parquet"
 python3 -m pettingllms.trainer.train --config-path ../config/code --config-name code_two_policies \
     benchmark=livecodebench\
-    experiment_name=code_1.7B_two_policies_livecodebench_turn5 \
-    models.model_0.path=Qwen/Qwen3-1.7B\
-    models.model_1.path=Qwen/Qwen3-1.7B\
+    experiment_name=code_8B_two_policies_livecodebench_turn5 \
+    models.model_0.path=Qwen/Qwen3-8B\
+    models.model_1.path=Qwen/Qwen3-8B\
     +if_dapo=True\
-    +difficulty=easier\
+    +difficulty=easy\
     trainer.total_training_steps=400\
     trainer.save_freq=150\
     data.epoch_size=40\

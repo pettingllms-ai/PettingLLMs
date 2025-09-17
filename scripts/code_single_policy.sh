@@ -34,10 +34,10 @@ python3 -m pettingllms.trainer.train --config-path ../config/code --config-name 
     +if_dapo=True\
     +num_workers=10000\
     enable_thinking=false\
-    models.model_0.path="/home/lah003/models/Qwen3-1.7B"\
+    models.model_0.path="/home/lah003/models/Qwen3-8B"\
     benchmark=livecodebench\
-    models.model_0.path=Qwen/Qwen3-1.7B\
-    +difficulty=easier\
+    models.model_0.path=Qwen/Qwen3-8B\
+    +difficulty=easy\
     trainer.total_training_steps=400\
     trainer.save_freq=150\
     data.epoch_size=40\

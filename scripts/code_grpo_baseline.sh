@@ -33,8 +33,8 @@ python3 -m pettingllms.trainer.train --config-path ../config/code --config-name 
     experiment_name=livecodebench_baseline \
     +if_dapo=True\
     benchmark=livecodebench\
-    models.model_0.path=Qwen/Qwen3-1.7B\
-    +difficulty=easier\
+    models.model_0.path=Qwen/Qwen3-8B\
+    +difficulty=easy\
     data.epoch_size=40\
     data.gen_batch_size=128\
     data.gen_n_samples=4\
