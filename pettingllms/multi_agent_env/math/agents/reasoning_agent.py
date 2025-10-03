@@ -3,11 +3,9 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
-from pettingllms.multi_agent_env.math.math_utils import extract_answer, extract_reasoning_steps
-from pettingllms.multi_agent_env.math.math_utils import evaluate_math_solution
-
+from pettingllms.multi_agent_env.math.math_utils import extract_answer
+from math_verify import parse, verify
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +34,6 @@ class ReasoningAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-        
-        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
@@ -118,7 +114,7 @@ class ReasoningAgent(Agent):
         if extracted_answer is not None and ground_truth_answer is not None:
             try:
                 # use the utils in this project to evaluate consistently
-                is_correct =evaluate_math_solution(extracted_answer, ground_truth_answer)
+                is_correct =verify(extracted_answer, parse(ground_truth_answer))
                 env_data.state.reasoning_is_correct = is_correct
                 
                 if is_correct:

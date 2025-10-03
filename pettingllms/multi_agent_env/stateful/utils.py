@@ -7,13 +7,13 @@ from typing import List, Tuple, Optional, Dict
 import numpy as np
 import marshal
 
-# ========== 默认配置（可用命令行覆盖） ==========
+
 GRID_H = GRID_W = 5
 TRAIN_SIZE = 1000
 TEST_SIZE  = 100
 TRAIN_SEED = 123
 TEST_SEED  = 456
-BLOCK_RATIO = 0.22  # 5x5 建议 0.18~0.28；过大易无路
+BLOCK_RATIO = 0.22 
 
 OUT_DIR = Path("datasets/plan_path")
 TRAIN_PATH = OUT_DIR / "train.json"
@@ -23,34 +23,6 @@ TEST_PATH  = OUT_DIR / "test.json"
 
 from typing import Any, Dict, Optional, List, Tuple
 
-
-def _extract_actions(text: str) -> Optional[List[str]]:
-    """
-    尝试从文本中解析动作序列（U/D/L/R）。优先 JSON，其次宽松匹配。
-    支持：
-      Actions: ["R","R","D","L"]
-      ["U","D","L","R"]
-      U R D L U
-    """
-    # 1) JSON-like 数组
-    try:
-        # 找到第一个方括号数组片段
-        m = re.search(r"\[(?:.|\n)*?\]", text)
-        if m:
-            arr = json.loads(m.group(0))
-            if isinstance(arr, list) and all(isinstance(x, str) for x in arr):
-                cand = [x.strip().upper() for x in arr]
-                if all(x in {"U", "D", "L", "R"} for x in cand):
-                    return cand
-    except Exception:
-        pass
-
-    # 2) 宽松：抓取连续的 U/D/L/R 字母（逗号/空格/换行分隔）
-    toks = re.findall(r"[UDLR]", text.upper())
-    if toks:
-        return toks
-    return None
-# ========== 基础工具 ==========
 def bfs_shortest_path(grid: np.ndarray, start: Tuple[int,int], goal: Tuple[int,int]) -> Optional[List[Tuple[int,int]]]:
     from collections import deque
     H, W = grid.shape
@@ -123,74 +95,8 @@ def truncatefn(s, length=300):
     return s if len(s) <= length else s[: length // 2] + "...(truncated)..." + s[-length // 2 :]
 
 
-def _format_grid(lines: List[str]) -> str:
-    return "\n".join(lines)
-
-
 import re
 
-def _extract_path(text: str) -> Optional[List[Tuple[int, int]]]:
-    """
-    尝试从文本中解析坐标路径 [[r,c],...]
-    支持 JSON，或松散的 [r,c] [r,c] ... 形式。
-    """
-    # 1) 直接 JSON
-    try:
-        m = re.search(r"\[(?:.|\n)*?\]", text)
-        if m:
-            arr = json.loads(m.group(0))
-            if isinstance(arr, list) and arr and isinstance(arr[0], (list, tuple)):
-                path = []
-                for p in arr:
-                    if isinstance(p, (list, tuple)) and len(p) == 2:
-                        r, c = int(p[0]), int(p[1])
-                        path.append((r, c))
-                    else:
-                        return None
-                return path
-    except Exception:
-        pass
-
-    # 2) 宽松地抓 [r,c]
-    pairs = re.findall(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*\]", text)
-    if pairs:
-        return [(int(r), int(c)) for r, c in pairs]
-    return None
-
-
-def _actions_to_path(actions: List[str], start: Tuple[int, int], passable_fn, in_bounds_fn) -> List[Tuple[int, int]]:
-    """从动作序列构造路径（遇到非法动作用“停留+标记”为非法，但最终评分会惩罚非法）。"""
-    pos = start
-    path = [pos]
-    delta = {"U": (-1, 0), "D": (1, 0), "L": (0, -1), "R": (0, 1)}
-    for a in actions:
-        if a not in delta:
-            # 非法动作：保持原地，让后续 reward_for_path 统计非法步
-            path.append(pos)
-            continue
-        dr, dc = delta[a]
-        nr, nc = pos[0] + dr, pos[1] + dc
-        if in_bounds_fn(nr, nc) and passable_fn(nr, nc):
-            pos = (nr, nc)
-        # 若越界/撞墙，保持原地；非法步会在 reward_for_path 中计入
-        path.append(pos)
-    return path
-
-
-
-def main():
-  
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-
-    train = synthesize(TRAIN_SIZE, TRAIN_SEED)
-    test  = synthesize(TEST_SIZE,  TEST_SEED)
-
-    TRAIN_PATH.write_text(json.dumps(train, ensure_ascii=False, indent=2), encoding="utf-8")
-    TEST_PATH.write_text(json.dumps(test,  ensure_ascii=False, indent=2), encoding="utf-8")
-
-    print(f"✅ Saved {len(train)} samples to {TRAIN_PATH}")
-    print(f"✅ Saved {len(test)} samples to  {TEST_PATH}")
 
 def load_plan_path_problem_batch(
     env_indices: List[int],
@@ -232,7 +138,7 @@ def load_plan_path_problem_batch(
                     })
             return problems
         else:
-            # 验证模式：从文件加载或生成固定问题
+            
             if TEST_PATH.exists():
                 with open(TEST_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -248,10 +154,10 @@ def load_plan_path_problem_batch(
                         })
                 return problems
             else:
-                # 如果没有测试文件，生成固定的测试问题
+              
                 problems = []
                 for i in range(len(env_indices)):
-                    grid_problems = synthesize(1, seed=1000 + i)  # 固定种子确保可重现
+                    grid_problems = synthesize(1, seed=1000 + i)  
                     if grid_problems:
                         problem = grid_problems[0]
                         problems.append({
@@ -293,10 +199,10 @@ def load_plan_path_problem_batch(
         return problems
     
     elif benchmark_name == "sudoku4x4":
-        # 对于sudoku4x4问题，使用seed生成不同的初始状态
+       
         problems = []
         for i in range(len(env_indices)):
-            # 每个环境使用不同的seed
+ 
             seed = env_indices[i] if i < len(env_indices) else i
             problems.append({"seed": seed})
         return problems
@@ -310,6 +216,9 @@ def load_plan_path_problem_batch(
 
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import copy
+import queue
+import deque
 
 def get_shortest_action_path(room_fixed, room_state, MAX_DEPTH=100):
         """
@@ -895,6 +804,3 @@ CHANGE_COORDINATES = {
     3: (0, 1)
 }
 
-
-if __name__ == "__main__":
-    main()

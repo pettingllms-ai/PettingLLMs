@@ -127,8 +127,56 @@ cd PettingLLMs
 bash setup.bash
 ```
 
+---
 
+## 🎯 Quick Start
 
+### 1. Dataset Preparation
+
+Prepare datasets for different tasks:
+
+```bash
+# Code tasks (APPS, CodeContests, LiveCodeBench)
+python scripts/dataprocess/load_code.py
+
+# Math tasks (AIME24/25, OlympiadBench)
+python scripts/dataprocess/load_math.py
+
+# Game/Planning tasks (Sokoban, Sudoku)
+python scripts/dataprocess/load_sokoban.py
+```
+
+Datasets will be saved to `datasets/code/`, `datasets/math/`, and `datasets/sudoku_environments/`.
+
+### 2. Training
+
+**Example: Train multi-agent system on math tasks**
+
+```bash
+bash scripts/train/math.sh
+```
+
+Other training scripts available in `scripts/train/`:
+- `code_single_policy.sh`, `code_two_policy.sh` - Code domain
+- `plan_path_single.sh`, `plan_path_two_policy.sh` - Planning domain
+- `sokoban_two_policy.sh`, `sokodu_single.sh` - Game domain
+
+### 3. Evaluation
+
+**Example: Evaluate trained model**
+
+Edit `scripts/evaluate/evaluate.sh` to set your model path and config:
+```bash
+MODEL_PATHS=("/path/to/your/model")
+CONFIG_NAME="math_single_policy"
+```
+
+Then run:
+```bash
+bash scripts/evaluate/evaluate.sh
+```
+
+---
 
 ## 📌 License
 

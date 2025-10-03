@@ -3,9 +3,9 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
-from pettingllms.multi_agent_env.math.math_utils import extract_code, get_code_execution_output, test_if_eq, evaluate_math_solution
+from pettingllms.multi_agent_env.math.math_utils import extract_code, get_code_execution_output
+from math_verify import parse, verify
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +34,6 @@ class ToolAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-  
-        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
@@ -110,10 +108,10 @@ class ToolAgent(Agent):
             # execute the code (through ray worker)
             code_execution_output = await get_code_execution_output(
                 generated_solution,
-                timeout=20.0,  # 增加到20秒，配合缓冲时间支持大规模并发
+                timeout=20.0,
                 ray_actor=env_worker,
             )
-            env_data.state.code_extracted_answer = code_execution_output
+            env_data.state.code_extracted_answer = parse(code_execution_output)
         except Exception as e:
             code_execution_output = f"error: {e}"
             env_data.state.code_extracted_answer = code_execution_output
@@ -126,7 +124,7 @@ class ToolAgent(Agent):
         if code_execution_output is not None and ground_truth_answer is not None:
             try:
                 
-                is_correct = evaluate_math_solution(code_execution_output, ground_truth_answer)
+                is_correct = verify(parse(code_execution_output), parse(ground_truth_answer))
                 env_data.state.code_is_correct = bool(is_correct)
                 
                 if is_correct:
@@ -144,7 +142,7 @@ class ToolAgent(Agent):
             env_data.state.code_is_correct = False
         
         if code_execution_output is not None and env_data.state.reasoning_extracted_answer is not None:
-            is_aligned = evaluate_math_solution(code_execution_output, env_data.state.reasoning_extracted_answer)
+            is_aligned = verify(parse(code_execution_output),parse(env_data.state.reasoning_extracted_answer))
             env_data.state.code_reasoning_aligned = bool(is_aligned)
             if is_aligned:
                 self.done = True

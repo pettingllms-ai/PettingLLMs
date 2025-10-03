@@ -1,35 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-async_vllm_code_eval.py
-
-Launch vLLM with a local checkpoint and evaluate code benchmarks via async generation.
-
-Supported benchmarks (best-effort):
-- humaneval  : uses `human_eval` package if available for prompts/tests; otherwise loads from HF via `datasets` if installed.
-- mbpp       : uses HF `mbpp` (or `mbpp-plus`) if installed; falls back to JSON/Parquet path if given.
-- apps       : (generation-only stub) loads from HF `codeparrot/apps` if installed; otherwise expects local JSON/Parquet.
-
-Outputs:
-- Saves generations and (if run) test results to out_dir.
-- JSONL per-benchmark with {task_id, prompt, generation, passed, stderr, latency_s, tokens}.
-- CSV summary per-benchmark with pass@1 (if tests executed).
-
-Usage (examples):
-    python async_vllm_code_eval.py \
-        --model /path/to/your/checkpoint \
-        --benchmarks humaneval mbpp \
-        --max-new-tokens 512 --temperature 0.0 \
-        --tp 1 --dtype bfloat16 \
-        --concurrency 32 \
-        --out-dir ./runs/2025-09-07
-
-Notes:
-- This script executes *generated code* for some benchmarks. Use appropriate sandboxing (e.g., docker) for safety.
-- If a loader dependency is missing, the script will gracefully degrade to "generation only".
-- For HumanEval, if the `human_eval` package is present, we use its tests; otherwise we only generate.
-"""
-
 import argparse
 import asyncio
 import json
@@ -45,9 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Sequence
 import numpy as np
 import sys
 import asyncio
-# ------------------------------
-# vLLM Async Engine
-# ------------------------------
+
 
 from vllm import SamplingParams
 from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -153,7 +119,6 @@ def init_agent_execution_engine(config: DictConfig, address: str):
             processor_dict[model_name] = processor
             ppo_trainer_config = model_config.ppo_trainer_config
             ppo_trainer_config_dict[model_name] = ppo_trainer_config
-            # 优先使用 address_map 中为该 policy 指定的地址，否则回退到全局 address
             policy_addr = address_map.get(model_name, address)
             server_address_dict[model_name] = [policy_addr]
             
@@ -217,36 +182,10 @@ def test(config: DictConfig, address: str):
     print(response)
 
 
-@hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
+@hydra.main(config_path="../../pettingllms/config/math", config_name="math_single_policy", version_base=None)
 def main(config: DictConfig):
-   
-    address = None
-    
-
-    if hasattr(config, 'vllm_address') and config.vllm_address:
-        address = config.vllm_address
-        print(f"📡 Using service address from config file: {address}")
-    
-
-    elif os.environ.get("VLLM_SERVICE_ADDRESS"):
-        address = os.environ.get("VLLM_SERVICE_ADDRESS")
-        print(f"📡 Using service address from environment variable: {address}")
-    
-
-    else:
-        try:
-            import sys
-            sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
-            from vllm_port_manager import VLLMPortManager
-            manager = VLLMPortManager()
-            address = manager.get_proxy_address()
-            print(f"📡 Retrieved service address from port manager: {address}")
-        except Exception as e:
-           
-            address = "127.0.0.1:8220"
-            print(f"⚠️ Failed to get address from port manager, using default address: {address}")
-    
-    print(f"🚀 Final service address in use: {address}")
+    address = getattr(config, 'vllm_address', '127.0.0.1:8220')
+    print(f"🚀 Using vLLM service address: {address}")
    
     success_rollout_idx_list_dict,success_rollout_rate_dict = validate(config, address)
     with open("success_rollout_idx_list_dict.json", "a") as f:

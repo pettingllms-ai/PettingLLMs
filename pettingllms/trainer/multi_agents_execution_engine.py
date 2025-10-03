@@ -158,7 +158,7 @@ class MultiAgentsExecutionEngine:
         
 
     def init_agents_and_envs(self,mode="train",step_idx=0,resample=True):
-        self.multi_logger = get_multi_logger()
+        self.multi_logger = get_multi_logger(experiment_name=self.experiment_name)
         self.timer.checkpoint("Starting init_agents_and_envs")
         self.mode=mode
         self.success_rollout_idx_list_dict={}

@@ -4,7 +4,6 @@ from typing import Any
 
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from pettingllms.multi_agent_env.code.code_utils import extract_test_cases
 from typing import List
 logger = logging.getLogger(__name__)
@@ -37,7 +36,6 @@ class UnitTestGenerationAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-        self.multi_logger = get_multi_logger()
 
     def reset(self):
         super().reset()

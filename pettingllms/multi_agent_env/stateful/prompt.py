@@ -8,7 +8,7 @@ def _truncate(s, length=300):
         s = str(s)
     return s if len(s) <= length else s[: length // 2] + "...(truncated)..." + s[-length // 2 :]
 
-# ========== 各 benchmark 的 prompt 生成函数 ==========
+
 
 def prompt_plan_path(turn_idx: int, state: Any) -> str:
     grid = getattr(state, "grid", None) or []
@@ -97,7 +97,7 @@ def prompt_sudoku4x4(turn_idx: int, state: Any) -> str:
             f"Analyze errors and provide the corrected solution.\n"
         )
 
-# ========== 统一调度 ==========
+
 
 def prompt_sokoban(turn_idx: int, state: Any) -> str:
     observation = getattr(state, "observation", "") or getattr(state, "grid", "")

@@ -3,7 +3,6 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
 from pettingllms.multi_agent_env.math.math_utils import extract_reasoning_steps
 from pettingllms.multi_agent_env.math.math_utils import evaluate_math_solution
@@ -36,8 +35,6 @@ class ReasoningAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-        
-        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data

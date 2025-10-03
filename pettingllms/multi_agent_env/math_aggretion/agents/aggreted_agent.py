@@ -3,7 +3,6 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
 from pettingllms.multi_agent_env.math.math_utils import evaluate_math_solution
 from math_verify import parse, verify
@@ -35,8 +34,6 @@ class AggregationAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-  
-        self.multi_logger = get_multi_logger()
 
     def update_from_env(self, turn_idx: int, env_data: Env):
         # Save environment data
@@ -98,7 +95,7 @@ class AggregationAgent(Agent):
     
     def update_from_model(self, response: str):
         # Parse the response to extract the selected answer
-        # parse返回一个列表，取第一个元素作为提取的答案
+
         parsed_response_list = parse(response)
         self.current_action = parsed_response_list[0] if parsed_response_list else None
         return self.current_action

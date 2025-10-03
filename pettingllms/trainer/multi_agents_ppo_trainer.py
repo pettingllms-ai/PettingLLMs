@@ -165,23 +165,13 @@ class MultiAgentsPPOTrainer:
         )
 
     def init_workers(self):
-        """
-        Initialize workers for all PPO trainers.
-        
-        注意：由于 trainer 对象包含不可序列化的组件（如 asyncio event loops），
-        无法使用 Ray remote tasks 或线程池来并行化。但 init_workers() 内部
-        的 Ray worker 创建本身已经是并行的。
-        """
+  
+     
         colorful_print("Initializing workers for all PPO trainers...", "cyan")
         if not self.ppo_trainer_dict:
             colorful_print("No PPO trainers to initialize", "yellow")
             return
 
-        # 必须在主进程中顺序调用，因为：
-        # 1. trainer 对象包含 asyncio event loops (不可序列化)
-        # 2. Ray worker groups 和 AsyncLLMServerManager 也不可序列化
-        # 3. 但每个 trainer.init_workers() 内部已经使用 Ray 并行创建多个 workers
-        
         colorful_print(f"Initializing {len(self.ppo_trainer_dict)} trainers sequentially (each trainer spawns workers in parallel)...", "blue")
         
         for idx, (model_name, trainer) in enumerate(self.ppo_trainer_dict.items(), 1):
@@ -378,52 +368,15 @@ class MultiAgentsPPOTrainer:
     
 
     def _initialize_logger_safely(self):
-        """安全地初始化logger，处理wandb超时问题"""
         from verl.utils.tracking import Tracking
-        import time
-        import os
         
-        # 设置wandb环境变量以改善连接稳定性
-        os.environ.setdefault("WANDB_INIT_TIMEOUT", "60")  # 60秒超时
-        os.environ.setdefault("WANDB_HTTP_TIMEOUT", "30")   # HTTP超时
-        
-        max_retries = 3
-        retry_delay = 5  # 秒
-        
-        for attempt in range(max_retries):
-            try:
-                pprint(f"Initializing logger (attempt {attempt + 1}/{max_retries})...")
-                
-                logger = Tracking(
-                    project_name=self.config.project_name,
-                    experiment_name=self.config.experiment_name,
-                    default_backend=self.config.logger,
-                    config=OmegaConf.to_container(self.config, resolve=True),
-                )
-                pprint("Logger initialized successfully!")
-                return logger
-                
-            except (TimeoutError, Exception) as e:
-                pprint(f"Logger initialization failed (attempt {attempt + 1}): {type(e).__name__}: {e}")
-                if attempt < max_retries - 1:
-                    pprint(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2  # 指数退避
-                else:
-                    # 如果所有重试都失败，使用console logger作为fallback
-                    pprint("All logger initialization attempts failed. Using console logger as fallback.")
-                    try:
-                        logger = Tracking(
-                            project_name=self.config.project_name,
-                            experiment_name=self.config.experiment_name,
-                            default_backend=["console"],  # 只使用console logger
-                            config=OmegaConf.to_container(self.config, resolve=True),
-                        )
-                        pprint("Console logger initialized successfully.")
-                        return logger
-                    except Exception as fallback_e:
-                        pprint(f"Even console logger failed: {fallback_e}")
-                        raise RuntimeError("Failed to initialize any logger") from fallback_e
+        logger = Tracking(
+            project_name=self.config.project_name,
+            experiment_name=self.config.experiment_name,
+            default_backend=self.config.logger,
+            config=OmegaConf.to_container(self.config, resolve=True),
+        )
+        return logger
 
     def fit(self):
         """
@@ -478,11 +431,9 @@ class MultiAgentsPPOTrainer:
                 # validation before training
                 val_metrics = self._validate()
                 last_resample_mode = "validate"
-                
-                # 将验证指标添加到主metrics字典中
+         
                 metrics.update(val_metrics)
                 
-                # 初始化最佳性能跟踪
                 current_avg_success_rate = val_metrics.get('validation/average/success_rate', 0.0)
                 pprint(f"Initial validation metrics logged")
                 print(f"Time taken to validate: {time.time() - start_time}")

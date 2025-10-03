@@ -16,12 +16,11 @@ class TokenizerCache:
 
     def get(self, model_name: str):
         if model_name not in self._cache:
-            if model_name.startswith("models/") and not model_name.startswith("/"):
-                actual_model_path = f"/home/lah003/{model_name}"
-            else:
-                actual_model_path = model_name
-            
-            tokenizer = AutoTokenizer.from_pretrained(actual_model_path, use_fast=True)
+            # Do NOT rewrite model name; try to load as-is. If fails, cache None and fallback later.
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+            except Exception:
+                tokenizer = None
             self._cache[model_name] = tokenizer
         return self._cache[model_name]
 
@@ -58,13 +57,8 @@ def build_app() -> FastAPI:
         if not model_name:
             return JSONResponse(content={"error": "model is required"}, status_code=400)
 
-        actual_model_name = model_name
-        if model_name.startswith("models/") and not model_name.startswith("/"):
-            actual_model_name = f"/home/lah003/{model_name}"
-        
-
+        # Keep model name as-is to match vLLM served-model-name exactly
         req_json_copy = req_json.copy()
-        req_json_copy["model"] = actual_model_name
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(f"{backend_base}/completions", json=req_json_copy) as resp:
@@ -88,12 +82,19 @@ def build_app() -> FastAPI:
                     continue
 
                 token_ids = []
-                for tok in tokens:
-                    tid = tokenizer.convert_tokens_to_ids(tok)
-                    if isinstance(tid, int) and tid >= 0:
-                        token_ids.append(f"token_id:{tid}")
-                    else:
-                        token_ids.append("token_id:-1")
+                if tokenizer is None:
+                    # Fallback: preserve format with unknown id
+                    token_ids = ["token_id:-1" for _ in tokens]
+                else:
+                    for tok in tokens:
+                        try:
+                            tid = tokenizer.convert_tokens_to_ids(tok)
+                            if isinstance(tid, int) and tid >= 0:
+                                token_ids.append(f"token_id:{tid}")
+                            else:
+                                token_ids.append("token_id:-1")
+                        except Exception:
+                            token_ids.append("token_id:-1")
 
                 logprobs["tokens"] = token_ids
 

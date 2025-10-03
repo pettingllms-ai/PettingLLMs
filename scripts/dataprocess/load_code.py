@@ -30,7 +30,6 @@ def transform_tokens(s: str) -> str:
     events = []
     masked = s
 
-    # 先抓第一段 [[...]]，避免内部再被拆
     start2 = s.find('[[')
     if start2 != -1:
         end2 = _find_matching_bracket(s, start2)
@@ -158,17 +157,17 @@ def _normalize_cell(s: str) -> str:
     return s
 
 def _clean_solution(sol: Any) -> str:
-    """去掉三引号/markdown 代码围栏，确保字符串"""
+    """Remove triple quotes/markdown code fences and ensure string format"""
     if sol is None:
         return ""
     s = str(sol).strip()
-    # 去除 ```python ... ``` 或 ``` ... ```
+    # Remove ```python ... ``` or ``` ... ```
     s = re.sub(r"^```(?:\w+)?\s*", "", s)
     s = re.sub(r"\s*```$", "", s)
     return s.strip()
 
 def _filter_nonempty_io(df: pd.DataFrame) -> pd.DataFrame:
-    """只保留 test_input 和 test_output 都非空的样本"""
+    """Only keep samples where both test_input and test_output are non-empty"""
     def _len_list(x):
         try:
             return len(x)
@@ -193,7 +192,7 @@ def _extract_args_from_call(call: str, prefer_fn: Optional[str] = None) -> Optio
     m = re.match(r'(?P<fn>\w+)\s*\((?P<args>.*)\)\s*$', call.strip(), re.S)
     if not m:
         return None
-    # 若 prefer_fn 提供且不匹配，仍接受（一些包装器内部转发）
+    # If prefer_fn is provided and does not match, still accept (some wrapper internal forwarding)
     return m.group("args")
 
 def parse_asserts_to_io(lines: List[str], prefer_fn: Optional[str] = None) -> Tuple[List[str], List[str]]:
@@ -247,19 +246,19 @@ def _node_to_text(n: ast.AST) -> str:
    
     if isinstance(n, ast.Constant) and isinstance(n.value, str):
         return n.value
-    # 其他字面量：int/float/bool/None
+    # Other literals: int/float/bool/None
     if isinstance(n, ast.Constant):
         return repr(n.value) if not isinstance(n.value, (int, float, bool, type(None))) else str(n.value)
-    # 特殊处理矩阵（二维列表）
+    # Special handling for matrices (2D lists)
     if isinstance(n, ast.List):
-        # 检查是否是矩阵形式（所有元素都是列表）
+        # Check if it is matrix form (all elements are lists)
         if all(isinstance(elem, ast.List) for elem in n.elts):
-            # 这是一个矩阵，保持原格式
+            # This is a matrix, keep original format
             return ast.unparse(n)
         else:
-            # 普通列表，也保持原格式
+            # Regular list, also keep original format
             return ast.unparse(n)
-    # 列表/字典/元组/表达式：反向生成源代码
+    # Lists/dicts/tuples/expressions: reverse generate source code
     return ast.unparse(n)
 
 def convert_asserts_to_io(assert_lines: List[str]) -> Dict[str, List[str]]:
@@ -273,29 +272,29 @@ def convert_asserts_to_io(assert_lines: List[str]) -> Dict[str, List[str]]:
             continue
         call_expr, expected_expr = m.groups()
 
-        # 解析函数调用
+        # Parse function call
         call_tree = ast.parse(call_expr, mode="eval")
         if not isinstance(call_tree.body, ast.Call):
             continue
         call = call_tree.body
 
-        # 输入：处理参数，特别注意矩阵格式
+        # Input: process parameters, pay special attention to matrix format
         arg_texts = []
         for a in call.args:
             text = _node_to_text(a)
-            # 如果这是一个矩阵（包含方括号和逗号），保持为单行
+            # If this is a matrix (contains brackets and commas), keep as single line
             if text.startswith('[') and text.endswith(']') and ',' in text:
                 arg_texts.append(text)
             else:
                 arg_texts.append(text)
         
-        # 如果只有一个参数且看起来是矩阵格式，直接使用
+        # If there is only one parameter and it looks like matrix format, use directly
         if len(arg_texts) == 1 and arg_texts[0].startswith('[') and arg_texts[0].endswith(']'):
             input_str = arg_texts[0] + "\n"
         else:
             input_str = "\n".join(arg_texts) + "\n"
 
-        # 期望输出
+        # Expected output
         expected_node = ast.parse(expected_expr, mode="eval").body
         output_str = _node_to_text(expected_node) + "\n"
 
@@ -306,7 +305,7 @@ def convert_asserts_to_io(assert_lines: List[str]) -> Dict[str, List[str]]:
 
 
 def process_code_contests(split: str) -> pd.DataFrame:
-    print(f"🔄 加载 deepmind/code_contests split={split} ...")
+    print(f"Loading deepmind/code_contests split={split} ...")
     ds = load_dataset("deepmind/code_contests", split=split)
     rows = []
     for ex in ds:
@@ -330,11 +329,11 @@ def process_code_contests(split: str) -> pd.DataFrame:
         })
     df = pd.DataFrame(rows, columns=["question","test_input","test_output","solution"])
     df = _filter_nonempty_io(df)
-    print(f"✅ code_contests/{split}: {len(df)}")
+    print(f"Completed code_contests/{split}: {len(df)}")
     return df
 
 def process_apps_test() -> pd.DataFrame:
-    print("🔄 加载 apps ...")
+    print("Loading apps ...")
     ds = load_dataset(
         "json",
         data_files={"test": "hf://datasets/codeparrot/apps/test.jsonl"},
@@ -344,26 +343,26 @@ def process_apps_test() -> pd.DataFrame:
     rows = []
     
     for ex in ds[:500]:
-        # 解析 solutions 和 input_output 字段
+        # Parse solutions and input_output fields
         try:
             solutions = json.loads(ex.get("solutions", "[]"))
             input_output = json.loads(ex.get("input_output", "{}"))
         except (json.JSONDecodeError, TypeError):
             continue
             
-        # 获取问题描述
+        # Get problem description
         question = (ex.get("question") or "").strip()
         if not question:
             continue
             
-        # 处理解决方案
+        # Process solutions
         if not solutions:
             solution = ""
         else:
-            # apps 数据集的 solutions 是字符串列表，直接取第一个
+            # apps dataset solutions is a list of strings, take the first one
             solution = _clean_solution(solutions[0]) if solutions else ""
             
-        # 处理测试输入输出
+        # Process test input and output
         test_input = []
         test_output = []
         
@@ -375,7 +374,7 @@ def process_apps_test() -> pd.DataFrame:
                 test_input = [_normalize_cell(str(x)) for x in inputs]
                 test_output = [_normalize_cell(str(x)) for x in outputs]
         
-        # 只保留有测试用例的样本
+        # Only keep samples with test cases
         if not (test_input and test_output):
             continue
             
@@ -388,11 +387,11 @@ def process_apps_test() -> pd.DataFrame:
     
     df = pd.DataFrame(rows, columns=["question", "test_input", "test_output", "solution"])
     df = _filter_nonempty_io(df)
-    print(f"✅ apps: {len(df)}")
+    print(f"Completed apps: {len(df)}")
     return df
 
 def process_apps_train() -> pd.DataFrame:
-    print("🔄 加载 apps ...")
+    print("Loading apps ...")
     ds = load_dataset(
         "json",
         data_files={"test": "hf://datasets/codeparrot/apps/test.jsonl"},
@@ -402,26 +401,26 @@ def process_apps_train() -> pd.DataFrame:
     rows = []
     
     for ex in ds[500:4500]:
-        # 解析 solutions 和 input_output 字段
+        # Parse solutions and input_output fields
         try:
             solutions = json.loads(ex.get("solutions", "[]"))
             input_output = json.loads(ex.get("input_output", "{}"))
         except (json.JSONDecodeError, TypeError):
             continue
             
-        # 获取问题描述
+        # Get problem description
         question = (ex.get("question") or "").strip()
         if not question:
             continue
             
-        # 处理解决方案
+        # Process solutions
         if not solutions:
             solution = ""
         else:
-            # apps 数据集的 solutions 是字符串列表，直接取第一个
+            # apps dataset solutions is a list of strings, take the first one
             solution = _clean_solution(solutions[0]) if solutions else ""
             
-        # 处理测试输入输出
+        # Process test input and output
         test_input = []
         test_output = []
         
@@ -433,7 +432,7 @@ def process_apps_train() -> pd.DataFrame:
                 test_input = [_normalize_cell(str(x)) for x in inputs]
                 test_output = [_normalize_cell(str(x)) for x in outputs]
         
-        # 只保留有测试用例的样本
+        # Only keep samples with test cases
         if not (test_input and test_output):
             continue
             
@@ -446,12 +445,12 @@ def process_apps_train() -> pd.DataFrame:
     
     df = pd.DataFrame(rows, columns=["question", "test_input", "test_output", "solution"])
     df = _filter_nonempty_io(df)
-    print(f"✅ apps: {len(df)}")
+    print(f"Completed apps: {len(df)}")
     return df
 
 
 # ============================================================
-# LiveCodeBench（使用 code_generation_lite v6）
+# LiveCodeBench (using code_generation_lite v6)
 # ============================================================
 
 class Platform(Enum):
@@ -560,55 +559,61 @@ def _load_lcb_lite_v6() -> pd.DataFrame:
     return df
 
 def process_livecodebench() -> pd.DataFrame:
-    print(f"🔄 加载 LiveCodeBench v6 ...")
+    print(f"Loading LiveCodeBench v6 ...")
     df = _load_lcb_lite_v6()
-    print(f"✅ livecodebench v6: {len(df)}")
+    print(f"Completed livecodebench v6: {len(df)}")
     return df
 
 
 
 def main():
-    
-    
-
-
     project_root = Path(__file__).resolve().parents[2]
-    out_dir = project_root / "datasets" / "code" 
-    os.makedirs(out_dir, exist_ok=True)
-    print(f"📁 out_dir: {out_dir}")
-
-
-
-    df_apps = process_apps_test()
-    (out_dir / "apps.parquet").unlink(missing_ok=True)
-    df_apps.to_parquet(out_dir / "apps.parquet", index=False)
-    print(f"💾 save: {out_dir / 'apps.parquet'}")
-
-    # 2.0 CodeContests(train)
-    df_train = process_code_contests(split="train")
-    (out_dir / "train.parquet").unlink(missing_ok=True)
-    df_train.to_parquet(out_dir / "train.parquet", index=False)
-    print(f"💾 save: {out_dir / 'train.parquet'}")
-
-    # 2.1 CodeContests(test)
-    df_cc_test = process_code_contests(split="test")
-    (out_dir / "code_contests.parquet").unlink(missing_ok=True)
-    df_cc_test.to_parquet(out_dir / "code_contests.parquet", index=False)
-    print(f"💾 save: {out_dir / 'code_contests.parquet'}")
-
-
-    # 2.2 Apps
-    df_apps_train = process_apps_train()
-    (out_dir / "apps_train.parquet").unlink(missing_ok_dir=True)
-    df_apps_train.to_parquet(out_dir / "apps_train.parquet", index=False)
-    print(f"💾 save: {out_dir / 'apps_train.parquet'}")
     
+    # Create train and test directories
+    train_dir = project_root / "datasets" / "code" / "train"
+    test_dir = project_root / "datasets" / "code" / "test"
+    os.makedirs(train_dir, exist_ok=True)
+    os.makedirs(test_dir, exist_ok=True)
+    print(f"train_dir: {train_dir}")
+    print(f"test_dir: {test_dir}")
 
-    # 2.4 LiveCodeBench v6
+    # ============================================================
+    # TRAIN dataset
+    # ============================================================
+    
+    # 1. CodeContests(train)
+    df_cc_train = process_code_contests(split="train")
+    (train_dir / "code_contests_train.parquet").unlink(missing_ok=True)
+    df_cc_train.to_parquet(train_dir / "code_contests_train.parquet", index=False)
+    print(f"Saved: {train_dir / 'code_contests_train.parquet'}")
+
+    # 2. Apps(train)
+    df_apps_train = process_apps_train()
+    (train_dir / "apps_train.parquet").unlink(missing_ok=True)
+    df_apps_train.to_parquet(train_dir / "apps_train.parquet", index=False)
+    print(f"Saved: {train_dir / 'apps_train.parquet'}")
+    
+    # ============================================================
+    # TEST dataset
+    # ============================================================
+
+    # 1. CodeContests(test)
+    df_cc_test = process_code_contests(split="test")
+    (test_dir / "code_contests_test.parquet").unlink(missing_ok=True)
+    df_cc_test.to_parquet(test_dir / "code_contests_test.parquet", index=False)
+    print(f"Saved: {test_dir / 'code_contests_test.parquet'}")
+
+    # 2. Apps(test)
+    df_apps_test = process_apps_test()
+    (test_dir / "apps_test.parquet").unlink(missing_ok=True)
+    df_apps_test.to_parquet(test_dir / "apps_test.parquet", index=False)
+    print(f"Saved: {test_dir / 'apps_test.parquet'}")
+
+    # 3. LiveCodeBench v6
     df_lcb = process_livecodebench()
-    (out_dir / "livecodebench.parquet").unlink(missing_ok=True)
-    df_lcb.to_parquet(out_dir / "livecodebench.parquet", index=False)
-    print(f"💾 save: {out_dir / 'livecodebench.parquet'}")
+    (test_dir / "livecodebench.parquet").unlink(missing_ok=True)
+    df_lcb.to_parquet(test_dir / "livecodebench.parquet", index=False)
+    print(f"Saved: {test_dir / 'livecodebench.parquet'}")
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,6 @@
 set -x
 
-export CUDA_VISIBLE_DEVICES=6
+export CUDA_VISIBLE_DEVICES=0
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -18,16 +18,18 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
 
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 
+model_0_config_path="models.model_0.ppo_trainer_config"
+model_0_data_dir=~/data/math/model_0
 
-model_0_USE_GRPO="$model_0_config_path.algorithm.adv_estimator=grpo $model_0_config_path.actor_rollout_ref.actor.use_kl_loss=False"
+
 
 model_0_resource="resource.n_gpus_per_node=1  $model_0_config_path.trainer.n_gpus_per_node=1 $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=1"
 
 
-python3 -m pettingllms.trainer.train --config-path ../config/stateful --config-name plan_path_single_agent \
-    $model_0_USE_GRPO $model_0_resource $model_0_data\
+python3 -m pettingllms.trainer.train --config-path ../config/stateful --config-name stateful_single_policy \
+    $model_0_resource $model_0_data\
     models.model_0.path=/home/nvidia/data/models/Qwen3-1.7B\
-    experiment_name=plan_path_single_agent_1.7B\
+    experiment_name=plan_path_single_policy_1.7B\
     if_dapo=True\
     benchmark=plan_path\
     trainer.total_training_steps=400\

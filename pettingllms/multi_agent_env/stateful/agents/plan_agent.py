@@ -7,7 +7,7 @@ from typing import Any, List, Tuple, Dict, Optional
 
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
+
 from pettingllms.multi_agent_env.stateful.prompt import build_plan_prompt
 from pettingllms.multi_agent_env.stateful.utils import _extract_actions, _extract_path, _actions_to_path, _format_grid
 logger = logging.getLogger(__name__)
@@ -88,7 +88,6 @@ class PlanAgent(Agent):
         self.benchmark = benchmark
         for k, v in (kwargs or {}).items():
             setattr(self, k, v)
-        self.multi_logger = get_multi_logger()
         self.action_list = []
         self.state_list = []
 

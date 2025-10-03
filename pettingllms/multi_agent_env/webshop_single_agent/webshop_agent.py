@@ -4,7 +4,6 @@ import re
 from typing import Any, List
 from pettingllms.multi_agent_env.base.agent import Agent
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +40,7 @@ class WebShopAgent(Agent):
         # Accept other unrelated keyword arguments for compatibility
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
-        
-        # Initialize multi-logger system
-        self.multi_logger = get_multi_logger()
+       
 
     def update_from_env(self, env_data: Env):
         """

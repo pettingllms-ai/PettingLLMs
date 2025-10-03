@@ -28,7 +28,6 @@ from verl.utils import hf_processor, hf_tokenizer
 from verl.utils.fs import copy_to_local
 from verl.utils.model import compute_position_id_with_mask
 from verl.utils.torch_functional import get_response_mask, pad_2d_list_to_length
-from pettingllms.utils.logger_config import get_multi_logger
 from dataclasses import dataclass
 from openai.types.completion import Completion
 from datetime import datetime, timedelta

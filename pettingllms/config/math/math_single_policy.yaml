@@ -8,7 +8,7 @@ defaults:
   # Inject a separate ppo_trainer/base subtree for each model; can be overridden independently
   - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
   - _self_
-benchmark: "MATH500"
+benchmark: "AIME24"
 # dataset config (shared by all agents)
 data:
   filter_method: mean

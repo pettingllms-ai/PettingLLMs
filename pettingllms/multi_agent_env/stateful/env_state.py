@@ -6,14 +6,7 @@ import math
 import random
 import numpy as np
 from collections import deque
-# 为了使用基于utils.py的Sokoban生成逻辑
-try:
-    from .utils import generate_room
-except Exception:
-    try:
-        from pettingllms.multi_agent_env.plan_path.utils import generate_room
-    except Exception:
-        generate_room = None  # 运行时再做保护
+from pettingllms.multi_agent_env.stateful.utils import generate_room
 
 # =========================================================
 # 1) Eight Queens (N-Queens) EnvState
@@ -21,7 +14,6 @@ except Exception:
 
 @dataclass
 class EnvStateBase:
-    # 将基类参数移到最后，或者使用field(init=False)
     tool_action: List[str] = field(default_factory=list, init=False)
     tool_code: str = field(default="", init=False)
     tool_execution_output: str = field(default="", init=False)
@@ -29,7 +21,6 @@ class EnvStateBase:
     observation: str = field(default="", init=False)
     
     def __post_init__(self):
-        # 在子类的__post_init__中会调用super().__post_init__()
         if not hasattr(self, 'tool_action'):
             self.tool_action = []
         if not hasattr(self, 'tool_code'):
@@ -42,7 +33,6 @@ class EnvStateBase:
             self.observation = ""
     
     def __str__(self) -> str:
-        """只打印基类属性和observation"""
         return (
             f"tool_action: {self.tool_action}\n"
             f"tool_code: {self.tool_code}\n"
@@ -67,7 +57,6 @@ class EightQueensEnvState(EnvStateBase):
     
     def __post_init__(self):
         super().__post_init__()
-        # 重新初始化以确保N个位置
         self.cols = [-1] * self.N
         self.positions = [-1] * self.N
         self.reset()
@@ -1137,7 +1126,7 @@ class PlanPathGridEnvState(EnvStateBase):
             # 最优加成（如果可达）
             sp = self.shortest_path()
             if sp is not None:
-                if self.steps == len(sp) - 1:  # 注意：steps 是“动作步数”，sp 是“节点数”
+                if self.steps == len(sp) - 1:  # 注意：steps 是"动作步数"，sp 是"节点数"
                     reward += self.r_opt
             self.done = True
         elif self.steps >= self.max_steps:

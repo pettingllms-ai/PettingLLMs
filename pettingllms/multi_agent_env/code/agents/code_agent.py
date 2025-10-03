@@ -3,7 +3,6 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 from typing import List
 from pettingllms.multi_agent_env.code.code_utils import (
         evaluate_code_against_tests,
@@ -37,7 +36,6 @@ class CodeGenerationAgent(Agent):
         for key, value in (kwargs or {}).items():
             setattr(self, key, value)
 
-        self.multi_logger = get_multi_logger()
 
     def reset(self):
         super().reset()

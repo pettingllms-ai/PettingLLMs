@@ -11,7 +11,7 @@ from pettingllms.multi_agent_env.math.math_utils import (
 logger = logging.getLogger(__name__)
 
 @dataclass
-class MathTestEnvState:
+class MathEnvState:
     problem: str = None
     ground_truth_answer: str = None
     reasoning_generated_solution: str = None
@@ -21,7 +21,7 @@ class MathTestEnvState:
     reasoning_is_correct: bool = False
     code_is_correct: bool = False
     code_reasoning_aligned: bool = False
-class MathTestEnv(Env):
+class MathEnv(Env):
     """
     Environment for mathematical problem solving tasks with single-agent interaction.
     
@@ -40,7 +40,7 @@ class MathTestEnv(Env):
         Initialize the math test environment.
         """
         super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, max_turns=max_turns, config=config)
-        self.state = MathTestEnvState()
+        self.state = MathEnvState()
 
     def reset(self):
         self.state.reasoning_generated_solution = None
@@ -50,7 +50,7 @@ class MathTestEnv(Env):
         self.state.reasoning_is_correct = None
 
 
-class MathTestEnvBatch:
+class MathEnvBatch:
     def __init__(self, env_idx_list: List[int],env_indices: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict, mode="train", *, env_workers: List = None):
         benchmark_name=getattr(config,"benchmark") if hasattr(config,"benchmark") else "MATH500"
         self.problem_list = load_math_problem_batch(env_indices, mode=mode, config=config,benchmark_name=benchmark_name)
@@ -62,12 +62,12 @@ class MathTestEnvBatch:
             raise ValueError(f"Failed to load problems from math dataset. Please check if the dataset is available and accessible.")
 
         for i, problem in enumerate(self.problem_list):
-            state = MathTestEnvState(
+            state = MathEnvState(
                 problem=problem["question"],
                 ground_truth_answer=problem["solution"],
             )
             for s in range(samples):
-                env = MathTestEnv(env_idx=i, rollout_idx=rollout_idx_list[i*samples+s], max_turns=max_turns, config=None)
+                env = MathEnv(env_idx=i, rollout_idx=rollout_idx_list[i*samples+s], max_turns=max_turns, config=None)
                 env.state = copy.deepcopy(state)
                 self.env_list.append(env)
                 

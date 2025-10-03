@@ -8,11 +8,6 @@ and supports streaming data loading.
 
 import os
 import sys
-import json
-import io
-import time
-import typing
-import multiprocessing
 import multiprocessing as mp
 import re
 import random
@@ -27,39 +22,10 @@ import traceback as _traceback
 import errno
 import signal
 from typing import Any
-def _stdin_from_input_val_like_inproc(input_val: Any) -> str:
-    return str(input_val)
-
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, Union
 from tqdm import tqdm
 import numpy as np
-import itertools
-from dataclasses import dataclass
-from huggingface_hub import hf_hub_download
-
-@dataclass
-class evaluate_result:
-    """
-    Dataclass for test results
-    """
-    test_case_id: int
-    input: str
-    expected_output: str
-    actual_output: str
-    passed: bool
-    error_type: Optional[str] = None
-    
-    def to_dict(self) -> Dict:
-        """Convert to dict format to keep backward compatibility"""
-        return {
-            "test_case_id": self.test_case_id,
-            "input": self.input,
-            "expected_output": self.expected_output,
-            "actual_output": self.actual_output,
-            "passed": self.passed,
-            "error_type": self.error_type
-        }
 
 try:
     from datasets import load_dataset as hf_load_dataset
@@ -79,89 +45,62 @@ except ImportError:
 
 def load_problem_batch( 
     indices: List[int],
-    dataset_name: str="train",
-    difficulty: str="difficult",
-    benchmark_name: str="test",
-    split: str = "train",
+    dataset_name: str="apps",
+    benchmark_name: str="livecodebench",
     mode: str = "train"
 ) -> List[Dict[str, Any]]:
     """
     Load a batch of programming problems.
     
     Args:
-        batch_size: Batch size
-        dataset_name: Dataset name (e.g., "deepmind/code_contests", "Gen-Verse/CodeContests")
-        split: Dataset split ("train", "test", etc.)
+        indices: List of indices to load
+        dataset_name: Dataset name for training (e.g., "code_contests", "apps")
+        benchmark_name: Benchmark name for validation (e.g., "livecodebench", "code_contests", "apps")
         mode: "train" or "validate"
         
     Returns:
         A list of dicts with keys question/test_input/test_output/solution
     """
-    if not DATASETS_AVAILABLE:
-        print("❌ datasets library unavailable")
-        return []
     
-    if mode == "validate":
-        print(f"🔄 Loading all problems from dataset {dataset_name} (split={split})...")
-    else:
-        print(f"🔄 Loading {len(indices)} problems from dataset {dataset_name}...")
+    current_dir = Path(__file__).parent.parent.parent.parent
+    local_datasets_dir = current_dir / "datasets" / "code"
     
-    # 获取本地数据集路径
-    current_dir = Path(__file__).parent.parent.parent.parent  # 回到 pettingllms 根目录
-    local_datasets_dir = current_dir / "datasets" / "code" / dataset_name.lower().replace("/", "_")
-    split_name = "train" if mode == "train" else benchmark_name
-    if difficulty == "easy" and mode == "train":
-        split_name = "apps_train"
-    if difficulty == "easier" and mode == "train":
-        split_name = "apps_train_easier"
-    if difficulty == "test":
-        split_name = "apps_test"
-    parquet_file = local_datasets_dir / f"{split_name}.parquet"
     if mode == "train":
-        if not parquet_file.exists():
-            raise FileNotFoundError(f"❌ Train mode requires local dataset at {parquet_file}, but file not found!")
-        
-        print(f"📁 Loading from local dataset: {local_datasets_dir}")
-        try:
-            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split=split)
-            print(f"✅ Successfully loaded local dataset with {len(ds)} samples")
-        except Exception as e:
-            raise Exception(f"❌ Failed to load local dataset: {e}")
-        batch_results = []
-        
-        for i, idx in enumerate(indices):
+        parquet_file = local_datasets_dir / "train" / f"{dataset_name}_train.parquet"
+    else:
+        parquet_file = local_datasets_dir / "test" / f"{benchmark_name}_test.parquet"
+    
+    if not parquet_file.exists():
+        raise FileNotFoundError(
+            f"Parquet file not found: {parquet_file}. "
+            f"Please run scripts/dataprocess/load_code.py to generate data."
+        )
+    
+    print(f"Loading dataset from: {parquet_file}")
+    try:
+        ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
+        print(f"Successfully loaded dataset with {len(ds)} samples")
+    except Exception as e:
+        raise Exception(f"Failed to load dataset: {e}")
+    
+    batch_results = []
+    
+    if mode == "train":
+        for idx in indices:
             example = ds[idx]
             problem_dict = _format_competition_problem(example, idx, mode="train")
             if problem_dict:
                 batch_results.append(problem_dict)
-                
-        return batch_results
-    
-    # validation mode: try local first, if not found, then download
     else:
-        if not parquet_file.exists():
-            raise FileNotFoundError(
-                f"❌ Validation mode requires local test set {parquet_file}, not found! Please run scripts/dataprocess/load_train_code.py to generate data."
-            )
-        print(f"📁 Loading test set from local: {local_datasets_dir}")
-        try:
-            # parquet single file default split name is "train"
-            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
-            print(f"✅ Test set loaded successfully, {len(ds)} samples")
-        except Exception as e:
-            raise Exception(f"❌ Failed to load local dataset: {e}")
-        
-
-        batch_results = []
         for i, example in enumerate(ds):
             problem_dict = _format_competition_problem(example, i, mode="validate")
             if problem_dict:
                 batch_results.append(problem_dict)
-                if i % 100 == 0:  # print progress every 100 samples
-                    print(f"🔄 Loaded validation problem {i+1}/{len(ds)}")
-        
-        print(f"✅ Successfully returned {len(batch_results)} validation samples")
-        return batch_results
+                if i % 100 == 0:
+                    print(f"Loaded validation problem {i+1}/{len(ds)}")
+    
+    print(f"Successfully loaded {len(batch_results)} problems")
+    return batch_results
 
 
 
@@ -410,9 +349,6 @@ async def _worker_docker(
     return result
 
 
-_RAY_TASK_HANDLE = None  # 缓存 Ray 远程函数句柄
-
-
 async def _await_ray_object_ref(obj_ref, timeout_seconds: float = 10.0):
     import ray
     import time
@@ -566,60 +502,24 @@ async def evaluate_code_against_tests(
         success_count = sum(1 for r in results if not str(r.get("code_execution_output", "")).startswith("error:"))
         error_count = len(results) - success_count
         #print(f"✅ Ray代码测试任务完成: {success_count} 成功, {error_count} 失败")
+    except asyncio.TimeoutError as e:
+        print(f"❌ Ray execution timed out: {e}")
+        # 超时情况：返回超时错误结果
+        results = [{
+            "test_input": test_inputs[i] if i < len(test_inputs) else "",
+            "code_execution_output": f"error: timeout - {e}",
+            "test_output": test_outputs[i] if i < len(test_outputs) else "",
+            "passed": False,
+        } for i in range(len(test_inputs))]
     except Exception as e:
-        print(f"Ray execution failed, falling back to docker: {e}")
-        try:
-            # 确保所有参数都是有效的
-            if not isinstance(code, str):
-                print(f"Warning: code parameter is not string: {type(code)}")
-                code = str(code) if code is not None else ""
-            
-            if not isinstance(test_inputs, list):
-                print(f"Warning: test_inputs parameter is not list: {type(test_inputs)}")
-                test_inputs = [test_inputs] if test_inputs is not None else []
-            
-            if not isinstance(test_outputs, list):
-                print(f"Warning: test_outputs parameter is not list: {type(test_outputs)}")
-                test_outputs = [test_outputs] if test_outputs is not None else []
-            
-            # 确保列表长度一致
-            total_tests = max(len(test_inputs), len(test_outputs))
-            if len(test_inputs) < total_tests:
-                test_inputs.extend([""] * (total_tests - len(test_inputs)))
-            if len(test_outputs) < total_tests:
-                test_outputs.extend([""] * (total_tests - len(test_outputs)))
-            
-            tasks = [
-                asyncio.create_task(
-                    _worker_docker(code, test_inputs[i], test_outputs[i], timeout, image)
-                ) for i in range(total_tests)
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            processed_results = []
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    print(f"Docker worker {i} failed: {result}")
-                    processed_results.append({
-                        "test_input": test_inputs[i] if i < len(test_inputs) else "",
-                        "code_execution_output": f"error: {result}",
-                        "test_output": test_outputs[i] if i < len(test_outputs) else "",
-                        "passed": False,
-                    })
-                else:
-                    processed_results.append(result)
-            
-            results = processed_results
-            
-        except Exception as fallback_error:
-            print(f"Fallback to docker also failed: {fallback_error}")
-            # 最后的fallback：返回错误结果
-            results = [{
-                "test_input": test_inputs[i] if i < len(test_inputs) else "",
-                "code_execution_output": f"error: fallback failed - {fallback_error}",
-                "test_output": test_outputs[i] if i < len(test_outputs) else "",
-                "passed": False,
-            } for i in range(max(len(test_inputs), len(test_outputs), 1))]
+        print(f"❌ Ray execution failed: {e}")
+        # 其他错误情况：返回错误结果
+        results = [{
+            "test_input": test_inputs[i] if i < len(test_inputs) else "",
+            "code_execution_output": f"error: {e}",
+            "test_output": test_outputs[i] if i < len(test_outputs) else "",
+            "passed": False,
+        } for i in range(len(test_inputs))]
 
   
     passed_tests = 0
@@ -722,21 +622,8 @@ def get_ray_docker_worker_cls():
         return None
 
 
+# =================== Test case parsing ===================
 
-
-# ============ RayDockerWorker 池管理 ============
-_RAY_DOCKER_ACTOR_POOL: List[Any] | None = None
-
-
-
-
-def modify(c):
-    c = c.replace("plaintext\n", "")
-    c = c.replace("\\n", "\n")
-    if not c.endswith("\n"):
-        c += "\n"
-    return c
-# ===================TODO: Test case parsing ===================
 def extract_test_cases(text: str):
     """
     从包含多组 **Test Input:** / **Test Output:** 代码块的字符串中提取内容。
@@ -796,129 +683,3 @@ def extract_code_from_response(response: str) -> str:
     
     # If no code block found, return entire response
     return response.strip()
-
-
-# =================== Metric computation ===================
-
-
-
-def compute_basic_metrics(results: List[Dict]) -> Dict[str, Any]:
-    """
-    Compute basic evaluation metrics.
-    
-    Args:
-        results: Evaluation results list
-        
-    Returns:
-        Dict of basic metrics
-    """
-    if not results:
-        return {
-            "total_tasks": 0,
-            "success_rate": 0.0,
-            "average_iterations": 0.0,
-            "average_test_pass_rate": 0.0
-        }
-    
-    total_tasks = len(results)
-    successful_tasks = sum(1 for r in results if r.get("success", False))
-    
-    # Compute average iterations
-    iterations = [r.get("total_iterations", 0) for r in results]
-    avg_iterations = sum(iterations) / len(iterations) if iterations else 0.0
-    
-    # Compute average test pass rate
-    test_pass_rates = []
-    for r in results:
-        if "final_test_results" in r and "pass_rate" in r["final_test_results"]:
-            test_pass_rates.append(r["final_test_results"]["pass_rate"])
-        elif "code_evaluation" in r and "pass_rate" in r["code_evaluation"]:
-            test_pass_rates.append(r["code_evaluation"]["pass_rate"])
-    
-    avg_test_pass_rate = sum(test_pass_rates) / len(test_pass_rates) if test_pass_rates else 0.0
-    
-    return {
-        "total_tasks": total_tasks,
-        "successful_tasks": successful_tasks,
-        "success_rate": successful_tasks / total_tasks,
-        "average_iterations": avg_iterations,
-        "average_test_pass_rate": avg_test_pass_rate,
-        "total_errors": total_tasks - successful_tasks
-    }
-
-
-
-# =================== Helper functions ===================
-
-def save_evaluation_results(
-    results: Dict[str, Any], 
-    output_path: str,
-    pretty_print: bool = True
-) -> None:
-    """
-    Save evaluation results to file.
-    
-    Args:
-        results: Evaluation results dict
-        output_path: Output file path
-        pretty_print: Whether to pretty print JSON
-    """
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        if pretty_print:
-            json.dump(results, f, indent=2, ensure_ascii=False)
-        else:
-            json.dump(results, f, ensure_ascii=False)
-            
-    print(f"💾 Evaluation results saved to: {output_path}")
-
-
-def print_evaluation_summary(metrics: Dict[str, Any]) -> None:
-    """
-    Print evaluation summary.
-    
-    Args:
-        metrics: Evaluation metrics dict
-    """
-    print(f"\n🎯 Evaluation Summary:")
-    print(f"  📊 Total tasks: {metrics.get('total_tasks', 0)}")
-    print(f"  ✅ Successful: {metrics.get('successful_tasks', 0)}")
-    print(f"  📈 Success rate: {metrics.get('success_rate', 0):.2%}")
-    print(f"  🔄 Avg iterations: {metrics.get('average_iterations', 0):.1f}")
-    print(f"  🧪 Avg test pass rate: {metrics.get('average_test_pass_rate', 0):.2%}")
-    
-    # Print Pass@K metrics
-    for k in [1, 5, 10]:
-        if f"pass@{k}" in metrics:
-            print(f"  📊 Pass@{k}: {metrics[f'pass@{k}']:.2%}")
-    
-    # Print error statistics
-    if "error_statistics" in metrics:
-        print(f"\n❌ Error statistics:")
-        for error_type, count in metrics["error_statistics"].items():
-            if count > 0:
-                print(f"  {error_type}: {count}")
-
-
-# =================== Main Evaluation Functions ===================
-
-
-def test_load_problem(batch_size: int):
-    # Get problems
-    for benchmark in ["human_eval","livecodebench","test","mbpp"]:
-        results= load_problem_batch(
-            indices=list(range(batch_size)),
-            benchmark_name="train",
-            mode="train",
-            difficulty="easy"
-
-        )
-        print(f"--------------------------------Here is the benchmark--------------------------------")
-        print(results)
-        
-
-if __name__ == "__main__":
-    
-
-    test_load_problem(5)

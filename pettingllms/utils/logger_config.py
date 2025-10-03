@@ -60,9 +60,9 @@ class MultiLoggerConfig:
         Args:
             log_dir: Log file storage directory
         """
-        # Create directory structure with date and timestamp
+        # Create directory structure with date only
         current_time = datetime.now()
-        date_folder = current_time.strftime("%Y-%m-%d")
+        date_folder = current_time.strftime("%m-%d")
         timestamp_folder = current_time.strftime("%H-%M-%S")
         
         self.log_dir = Path(log_dir) / experiment_name / date_folder / timestamp_folder
@@ -487,10 +487,6 @@ class MultiLoggerConfig:
 # Global logger configuration instance
 _global_logger_config = None
 
-def get_multi_logger(experiment_name: str = "default") -> MultiLoggerConfig:
-    """Get global multi-logger configuration instance"""
-    global _global_logger_config
-    if _global_logger_config is None:
-        _global_logger_config = MultiLoggerConfig(experiment_name)
-    return _global_logger_config
-
+def get_multi_logger(experiment_name: str = "default", log_dir: str = "logs") -> MultiLoggerConfig:
+    # Ensure correct parameter binding; previous version passed experiment_name as log_dir by position
+    return MultiLoggerConfig(log_dir=log_dir, experiment_name=experiment_name)

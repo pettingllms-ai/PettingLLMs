@@ -3,9 +3,7 @@ from typing import Any, Dict, Optional
 import ray
 from pettingllms.multi_agent_env.base.agent import Agent
 from pettingllms.multi_agent_env.base.env import Env
-from pettingllms.utils.logger_config import get_multi_logger
 
-# 我们将在 utils.py 里实现下面这些
 from .utils import (
     build_prompt_from_obs,
     extract_action_from_text,
@@ -22,7 +20,6 @@ class AlfWorldAgent(Agent):
         self.rollout_idx = rollout_idx
         for k, v in (kwargs or {}).items():
             setattr(self, k, v)
-        self.multi_logger = get_multi_logger()
         self.current_prompt = None
         self.current_action = None
 
