@@ -1,13 +1,13 @@
 # PettingLLMs
 
 <div align="center">
-<img src="../figs/logo.svg" alt="PettingLLMs Logo" width="800">
+<img src="figs/logo.svg" alt="PettingLLMs Logo" width="800">
 </div>
 
 **Reinforcement Learning Framework for Multi LLM Agents** 🚀🌟
 
 <div align="center">
-<img src="../figs/pettingllms.svg" alt="PettingLLMs Overview" width="800">
+<img src="figs/pettingllms.svg" alt="PettingLLMs Overview" width="800">
 </div>
 
 ## Overview

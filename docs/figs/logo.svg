@@ -1,0 +1,265 @@
+<!-- PettingLLMs - foreground title, background robots, layered depth -->
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
+
+  <title>PettingLLMs Logo</title>
+
+  <!-- ====== Defs: gradients, filters, paths ====== -->
+  <defs>
+    <!-- Title gradient -->
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff9a9e"/>
+      <stop offset="50%" stop-color="#fad0c4"/>
+      <stop offset="100%" stop-color="#fbc2eb"/>
+    </linearGradient>
+
+    <!-- Soft ground gradient -->
+    <linearGradient id="groundGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#a8e6a3" stop-opacity="0.45"/>
+    </linearGradient>
+
+    <!-- Ground shadow gradient -->
+    <radialGradient id="groundShadow" cx="50%" cy="100%" r="70%">
+      <stop offset="0%" stop-color="#4caf50" stop-opacity="0.6"/>
+      <stop offset="70%" stop-color="#66bb6a" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#81c784" stop-opacity="0.2"/>
+    </radialGradient>
+
+    <!-- Title glow + stroke emphasis -->
+    <filter id="titleGlow" x="-50%" y="-30%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur1"/>
+      <feMerge>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Soft drop shadow -->
+    <filter id="softShadow" x="-50%" y="-30%" width="200%" height="200%">
+      <feOffset dx="0" dy="3" in="SourceAlpha" result="off"/>
+      <feGaussianBlur in="off" stdDeviation="3" result="blur"/>
+      <feColorMatrix in="blur" type="matrix"
+        values="0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 0 0
+                0 0 0 .25 0" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Arc path for curved title -->
+    <path id="title-arc" d="M 80 375 Q 400 305 720 375" />
+
+  </defs>
+
+  <!-- ====== Background ground ====== -->
+  <!-- Ground shadow -->
+  <ellipse cx="400" cy="220" rx="380" ry="150" fill="url(#groundShadow)"/>
+  
+  <!-- Original ground -->
+  <g filter="url(#softShadow)">
+    <ellipse cx="400" cy="200" rx="360" ry="30" fill="url(#groundGrad)"/>
+  </g>
+
+  <!-- ====== Robots: placed first so they sit BEHIND the title ====== -->
+  <g id="robot-squad" transform="translate(0, 0)" opacity="0.82">
+
+    <!-- Robot 1: Tinky Winky (Purple) -->
+    <g id="tinky-winky-robot" transform="translate(540, -10)">
+      <!-- Robot Legs -->
+      <g id="robot-legs-purple">
+        <rect x="70" y="245" width="40" height="30" rx="12" fill="#6a3e8a"/>
+        <rect x="140" y="245" width="40" height="30" rx="12" fill="#6a3e8a"/>
+        <rect x="70" y="270" width="40" height="10" rx="5" fill="#a26cc8"/>
+        <rect x="140" y="270" width="40" height="10" rx="5" fill="#a26cc8"/>
+      </g>
+      <!-- Main body (rounder, bigger tummy screen) -->
+      <g id="robot-body-purple">
+        <path d="M 60 150 C 36 172, 36 208, 60 230 Z" fill="#a26cc8"/>
+        <path d="M 190 150 C 214 172, 214 208, 190 230 Z" fill="#a26cc8"/>
+        <circle cx="60" cy="155" r="15" fill="#6a3e8a"/>
+        <circle cx="190" cy="155" r="15" fill="#6a3e8a"/>
+        <circle cx="35" cy="180" r="25" fill="#ffd3b6"/>
+        <circle cx="215" cy="180" r="25" fill="#ffd3b6"/>
+        <rect x="50" y="140" width="150" height="110" rx="38" fill="#8e5aae"/>
+        <!-- bigger tummy screen -->
+        <rect x="78" y="158" width="94" height="72" rx="18" fill="#6a3e8a" stroke="#fef9e7" stroke-width="3" opacity="0.95"/>
+        <line x1="92" y1="178" x2="158" y2="178" stroke="#8e5aae" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="188" x2="158" y2="188" stroke="#8e5aae" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="198" x2="158" y2="198" stroke="#8e5aae" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <!-- Head (rounder cap) -->
+      <g id="robot-head-purple">
+        <path d="M 50 80 C 28 80, 28 50, 55 50 C 72 50, 72 80, 50 80" fill="#8e5aae" />
+        <path d="M 45 75 C 35 75, 35 55, 55 55 C 65 55, 65 75, 45 75" fill="#fef9e7" />
+        <path d="M 200 80 C 222 80, 222 50, 195 50 C 178 50, 178 80, 200 80" fill="#8e5aae" />
+        <path d="M 205 75 C 215 75, 215 55, 195 55 C 185 55, 185 75, 205 75" fill="#fef9e7" />
+        <path d="M 40,150 Q 30,120 50,100 Q 60,70 90,75 Q 125,65 160,75 Q 190,70 200,100 Q 220,120 210,150 Z" fill="#6a3e8a"/>
+        <rect x="50" y="80" width="150" height="100" rx="35" fill="#8e5aae"/>
+        <!-- Antenna: Triangle (soft) -->
+        <path d="M125 42 L 112 65 L 138 65 Z" fill="#ffd54f" />
+        <rect x="70" y="100" width="110" height="65" rx="22" fill="#fef9e7"/>
+        <g id="face-features-purple" stroke-linecap="round" stroke-linejoin="round">
+          <g id="left-eye-purple"><circle cx="100" cy="128" r="10" fill="#424242"/><circle cx="104" cy="124" r="4" fill="white"/></g>
+          <g id="right-eye-purple"><circle cx="150" cy="128" r="10" fill="#424242"/><circle cx="154" cy="124" r="4" fill="white"/></g>
+          <path d="M 105 145 Q 125 160, 145 145" stroke="#424242" stroke-width="3" fill="none"/>
+        </g>
+        <g id="blush-purple" fill="#f4a7b9"><circle cx="85" cy="142" r="7" opacity="0.8"/><circle cx="165" cy="142" r="7" opacity="0.8"/></g>
+      </g>
+    </g>
+
+    <!-- Robot 2: Dipsy (Green) -->
+    <g id="dipsy-robot" transform="translate(360, -5)">
+      <!-- Robot Legs -->
+      <g id="robot-legs-green">
+        <rect x="70" y="245" width="40" height="30" rx="12" fill="#6b9e2f"/>
+        <rect x="140" y="245" width="40" height="30" rx="12" fill="#6b9e2f"/>
+        <rect x="70" y="270" width="40" height="10" rx="5" fill="#b9e851"/>
+        <rect x="140" y="270" width="40" height="10" rx="5" fill="#b9e851"/>
+      </g>
+      <!-- Main body (rounder, bigger tummy screen) -->
+      <g id="robot-body-green">
+        <path d="M 60 150 C 36 172, 36 208, 60 230 Z" fill="#b9e851"/>
+        <path d="M 190 150 C 214 172, 214 208, 190 230 Z" fill="#b9e851"/>
+        <circle cx="60" cy="155" r="15" fill="#6b9e2f"/>
+        <circle cx="190" cy="155" r="15" fill="#6b9e2f"/>
+        <circle cx="35" cy="180" r="25" fill="#ffd3b6"/>
+        <circle cx="215" cy="180" r="25" fill="#ffd3b6"/>
+        <rect x="50" y="140" width="150" height="110" rx="38" fill="#93d400"/>
+        <!-- bigger tummy screen -->
+        <rect x="78" y="158" width="94" height="72" rx="18" fill="#6b9e2f" stroke="#fef9e7" stroke-width="3" opacity="0.95"/>
+        <line x1="92" y1="178" x2="158" y2="178" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="188" x2="158" y2="188" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="198" x2="158" y2="198" stroke="#93d400" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <!-- Head (rounder cap) -->
+      <g id="robot-head-green">
+        <path d="M 50 80 C 28 80, 28 50, 55 50 C 72 50, 72 80, 50 80" fill="#93d400" />
+        <path d="M 45 75 C 35 75, 35 55, 55 55 C 65 55, 65 75, 45 75" fill="#fef9e7" />
+        <path d="M 200 80 C 222 80, 222 50, 195 50 C 178 50, 178 80, 200 80" fill="#93d400" />
+        <path d="M 205 75 C 215 75, 215 55, 195 55 C 185 55, 185 75, 205 75" fill="#fef9e7" />
+        <path d="M 40,150 Q 30,120 50,100 Q 60,70 90,75 Q 125,65 160,75 Q 190,70 200,100 Q 220,120 210,150 Z" fill="#6b9e2f"/>
+        <rect x="50" y="80" width="150" height="100" rx="35" fill="#93d400"/>
+        <!-- Antenna: Stick -->
+        <rect x="122" y="40" width="6" height="40" rx="3" fill="#ffd54f"/>
+        <rect x="70" y="100" width="110" height="65" rx="22" fill="#fef9e7"/>
+        <g id="face-features-green" stroke-linecap="round" stroke-linejoin="round">
+          <g id="left-eye-green"><circle cx="100" cy="128" r="10" fill="#424242"/><circle cx="104" cy="124" r="4" fill="white"/></g>
+          <g id="right-eye-green"><circle cx="150" cy="128" r="10" fill="#424242"/><circle cx="154" cy="124" r="4" fill="white"/></g>
+          <path d="M 105 145 Q 125 160, 145 145" stroke="#424242" stroke-width="3" fill="none"/>
+        </g>
+        <g id="blush-green" fill="#f4a7b9"><circle cx="85" cy="142" r="7" opacity="0.8"/><circle cx="165" cy="142" r="7" opacity="0.8"/></g>
+      </g>
+    </g>
+
+    <!-- Robot 3: Laa-Laa (Yellow) -->
+    <g id="laa-laa-robot" transform="translate(180, 0)">
+      <!-- Robot Legs -->
+      <g id="robot-legs-yellow">
+        <rect x="70" y="245" width="40" height="30" rx="12" fill="#d4c200"/>
+        <rect x="140" y="245" width="40" height="30" rx="12" fill="#d4c200"/>
+        <rect x="70" y="270" width="40" height="10" rx="5" fill="#fcf38b"/>
+        <rect x="140" y="270" width="40" height="10" rx="5" fill="#fcf38b"/>
+      </g>
+      <!-- Main body (rounder, bigger tummy screen) -->
+      <g id="robot-body-yellow">
+        <path d="M 60 150 C 36 172, 36 208, 60 230 Z" fill="#fcf38b"/>
+        <path d="M 190 150 C 214 172, 214 208, 190 230 Z" fill="#fcf38b"/>
+        <circle cx="60" cy="155" r="15" fill="#d4c200"/>
+        <circle cx="190" cy="155" r="15" fill="#d4c200"/>
+        <circle cx="35" cy="180" r="25" fill="#ffd3b6"/>
+        <circle cx="215" cy="180" r="25" fill="#ffd3b6"/>
+        <rect x="50" y="140" width="150" height="110" rx="38" fill="#f9e200"/>
+        <!-- bigger tummy screen -->
+        <rect x="78" y="158" width="94" height="72" rx="18" fill="#d4c200" stroke="#fef9e7" stroke-width="3" opacity="0.95"/>
+        <line x1="92" y1="178" x2="158" y2="178" stroke="#f9e200" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="188" x2="158" y2="188" stroke="#f9e200" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="198" x2="158" y2="198" stroke="#f9e200" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <!-- Head (rounder cap + curly antenna) -->
+      <g id="robot-head-yellow">
+        <path d="M 50 80 C 28 80, 28 50, 55 50 C 72 50, 72 80, 50 80" fill="#f9e200" />
+        <path d="M 45 75 C 35 75, 35 55, 55 55 C 65 55, 65 75, 45 75" fill="#fef9e7" />
+        <path d="M 200 80 C 222 80, 222 50, 195 50 C 178 50, 178 80, 200 80" fill="#f9e200" />
+        <path d="M 205 75 C 215 75, 215 55, 195 55 C 185 55, 185 75, 205 75" fill="#fef9e7" />
+        <path d="M 40,150 Q 30,120 50,100 Q 60,70 90,75 Q 125,65 160,75 Q 190,70 200,100 Q 220,120 210,150 Z" fill="#d4c200"/>
+        <rect x="50" y="80" width="150" height="100" rx="35" fill="#f9e200"/>
+        <!-- Antenna: Curly -->
+        <path d="M 125 80 Q 145 60 125 40 T 105 20" stroke="#ffaaa5" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <rect x="70" y="100" width="110" height="65" rx="22" fill="#fef9e7"/>
+        <g id="face-features-yellow" stroke-linecap="round" stroke-linejoin="round">
+          <g id="left-eye-yellow"><circle cx="100" cy="128" r="10" fill="#424242"/><circle cx="104" cy="124" r="4" fill="white"/></g>
+          <g id="right-eye-yellow"><circle cx="150" cy="128" r="10" fill="#424242"/><circle cx="154" cy="124" r="4" fill="white"/></g>
+          <path d="M 105 145 Q 125 160, 145 145" stroke="#424242" stroke-width="3" fill="none"/>
+        </g>
+        <g id="blush-yellow" fill="#f4a7b9"><circle cx="85" cy="142" r="7" opacity="0.8"/><circle cx="165" cy="142" r="7" opacity="0.8"/></g>
+      </g>
+    </g>
+
+    <!-- Robot 4: Po (Red) -->
+    <g id="po-robot" transform="translate(0, 20)">
+      <!-- Robot Legs -->
+      <g id="robot-legs-red">
+        <rect x="70" y="245" width="40" height="30" rx="12" fill="#b00000"/>
+        <rect x="140" y="245" width="40" height="30" rx="12" fill="#b00000"/>
+        <rect x="70" y="270" width="40" height="10" rx="5" fill="#e84a4a"/>
+        <rect x="140" y="270" width="40" height="10" rx="5" fill="#e84a4a"/>
+      </g>
+      <!-- Main body (rounder, bigger tummy screen) -->
+      <g id="robot-body-red">
+        <path d="M 60 150 C 36 172, 36 208, 60 230 Z" fill="#e84a4a"/>
+        <path d="M 190 150 C 214 172, 214 208, 190 230 Z" fill="#e84a4a"/>
+        <circle cx="60" cy="155" r="15" fill="#b00000"/>
+        <circle cx="190" cy="155" r="15" fill="#b00000"/>
+        <circle cx="35" cy="180" r="25" fill="#ffd3b6"/>
+        <circle cx="215" cy="180" r="25" fill="#ffd3b6"/>
+        <rect x="50" y="140" width="150" height="110" rx="38" fill="#c70000"/>
+        <!-- bigger tummy screen -->
+        <rect x="78" y="158" width="94" height="72" rx="18" fill="#b00000" stroke="#fef9e7" stroke-width="3" opacity="0.95"/>
+        <line x1="92" y1="178" x2="158" y2="178" stroke="#c70000" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="188" x2="158" y2="188" stroke="#c70000" stroke-width="3" stroke-linecap="round"/>
+        <line x1="92" y1="198" x2="158" y2="198" stroke="#c70000" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <!-- Head (rounder cap) -->
+      <g id="robot-head-red">
+        <path d="M 50 80 C 28 80, 28 50, 55 50 C 72 50, 72 80, 50 80" fill="#c70000" />
+        <path d="M 45 75 C 35 75, 35 55, 55 55 C 65 55, 65 75, 45 75" fill="#fef9e7" />
+        <path d="M 200 80 C 222 80, 222 50, 195 50 C 178 50, 178 80, 200 80" fill="#c70000" />
+        <path d="M 205 75 C 215 75, 215 55, 195 55 C 185 55, 185 75, 205 75" fill="#fef9e7" />
+        <path d="M 40,150 Q 30,120 50,100 Q 60,70 90,75 Q 125,65 160,75 Q 190,70 200,100 Q 220,120 210,150 Z" fill="#b00000"/>
+        <rect x="50" y="80" width="150" height="100" rx="35" fill="#c70000"/>
+        <!-- Antenna: Circle -->
+        <circle cx="125" cy="55" r="15" stroke="#ffd54f" stroke-width="4" fill="none"/>
+        <line x1="125" y1="70" x2="125" y2="85" stroke="#ffd54f" stroke-width="4" stroke-linecap="round"/>
+        <rect x="70" y="100" width="110" height="65" rx="22" fill="#fef9e7"/>
+        <g id="face-features-red" stroke-linecap="round" stroke-linejoin="round">
+          <g id="left-eye-red"><circle cx="100" cy="128" r="10" fill="#424242"/><circle cx="104" cy="124" r="4" fill="white"/></g>
+          <g id="right-eye-red"><circle cx="150" cy="128" r="10" fill="#424242"/><circle cx="154" cy="124" r="4" fill="white"/></g>
+          <path d="M 105 145 Q 125 160, 145 145" stroke="#424242" stroke-width="3" fill="none"/>
+        </g>
+        <g id="blush-red" fill="#f4a7b9"><circle cx="85" cy="142" r="7" opacity="0.8"/><circle cx="165" cy="142" r="7" opacity="0.8"/></g>
+      </g>
+    </g>
+
+  </g>
+
+  <!-- ====== Foreground: semi-transparent capsule behind the title ====== -->
+  <g filter="url(#softShadow)">
+    <rect x="70" y="300" width="660" height="86" rx="43" fill="#ffffff" opacity="0.55"/>
+  </g>
+
+  <!-- ====== Foreground Title: curved and on top ====== -->
+  <text font-family="'Baloo 2', 'Comic Sans MS', 'Marker Felt', cursive"
+        font-size="108"
+        fill="url(#textGradient)"
+        stroke="#333"
+        stroke-width="2.5"
+        paint-order="stroke"
+        filter="url(#titleGlow)"
+        style="text-anchor: middle;">
+    <textPath href="#title-arc" startOffset="50%">PettingLLMs</textPath>
+  </text>
+
+</svg>

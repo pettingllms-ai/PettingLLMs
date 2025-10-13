@@ -1,187 +1,117 @@
-# PettingLLMs Documentation
+# PettingLLMs 文档
 
-This directory contains the documentation for PettingLLMs, built using [MkDocs](https://www.mkdocs.org/) with the [Material theme](https://squidfunk.github.io/mkdocs-material/).
+这个文档使用 MkDocs + Material 主题构建。
 
-## 🚀 Quick Start
+## 🚀 快速开始
 
-### Building the Documentation
-
-To build the documentation:
-
-```bash
-./build_docs.sh
-```
-
-Or from project root:
-
-```bash
-bash build_docs.sh
-```
-
-### Serving the Documentation Locally
-
-To build and serve the documentation with live reload:
-
-```bash
-./build_docs.sh serve
-```
-
-The documentation will be available at `http://localhost:8000`.
-
-## 📁 Structure
-
-```
-.
-├── mkdocs.yml              # MkDocs configuration (in root)
-├── build_docs.sh           # Build script (in root)
-├── docs/                   # Documentation content
-│   ├── index.md            # Homepage
-│   ├── getting-started/    # Getting started guides
-│   ├── core-concepts/      # Core concepts
-│   ├── training/           # Training guides
-│   ├── evaluation/         # Evaluation guides
-│   ├── results/            # Benchmark results
-│   ├── api/                # API reference
-│   ├── contributing.md     # Contribution guide
-│   ├── stylesheets/        # Custom CSS
-│   ├── javascripts/        # Custom JS
-│   └── requirements.txt    # Documentation dependencies
-└── site/                   # Generated static site (after build)
-```
-
-## 🔧 Features
-
-### Documentation Features
-- **Material Design**: Modern, responsive theme
-- **Code highlighting**: Syntax highlighting for multiple languages
-- **Navigation**: Automatic navigation generation
-- **Search**: Full-text search functionality
-- **Mobile-friendly**: Responsive design for all devices
-- **Math support**: LaTeX math rendering with MathJax
-
-### Customizations
-- Custom color scheme matching PettingLLMs branding
-- Enhanced tables for benchmark results
-- Code block improvements
-- Responsive image handling
-
-## ✍️ Writing Documentation
-
-### Adding New Pages
-
-1. Create a new `.md` file in the appropriate `docs/` subdirectory
-2. Add the page to the `nav` section in `mkdocs.yml` (in root)
-3. Use Markdown syntax for content
-
-### Code Examples
-
-Use fenced code blocks with language specification:
-
-```python
-from pettingllms.trainer import train
-
-# Train agent
-train(config, num_iterations=2000)
-```
-
-### Math Equations
-
-Use LaTeX syntax:
-
-- Inline: `\( E = mc^2 \)`
-- Block: `\[ \frac{-b \pm \sqrt{b^2-4ac}}{2a} \]`
-
-### Admonitions
-
-```markdown
-!!! note
-    This is a note.
-
-!!! warning
-    This is a warning.
-
-!!! tip
-    This is a tip.
-```
-
-## 📝 Dependencies
-
-Documentation dependencies are in `docs/requirements.txt`:
+### 安装依赖
 
 ```bash
 pip install -r docs/requirements.txt
 ```
 
-Required packages:
-- `mkdocs`: Static site generator
-- `mkdocs-material`: Material Design theme
-- `mkdocstrings[python]`: API documentation from docstrings
-- `mkdocs-autorefs`: Cross-references
-- `pymdown-extensions`: Enhanced Markdown extensions
+### 本地预览（推荐）
 
-## 🚀 Deployment
-
-### Build Static Site
+启动本地开发服务器，支持热重载：
 
 ```bash
+# 方式 1: 使用构建脚本
+./build_docs.sh serve
+
+# 方式 2: 直接使用 mkdocs
+mkdocs serve
+```
+
+然后在浏览器中打开 `http://localhost:8000` 即可查看文档。
+
+### 构建静态网站
+
+生成静态 HTML 文件：
+
+```bash
+# 方式 1: 使用构建脚本
 ./build_docs.sh build
+
+# 方式 2: 直接使用 mkdocs
+mkdocs build
 ```
 
-Output in `site/` directory.
+构建后的文件在 `site/` 目录下。
 
-### Deploy to GitHub Pages
+### 部署到 GitHub Pages
+
+自动部署到 GitHub Pages：
 
 ```bash
+# 方式 1: 使用构建脚本
 ./build_docs.sh deploy
+
+# 方式 2: 直接使用 mkdocs
+mkdocs gh-deploy
 ```
 
-### Clean Build Artifacts
+### 清理构建文件
 
 ```bash
 ./build_docs.sh clean
 ```
 
-## 🐛 Troubleshooting
+## 📁 文档结构
 
-### Import errors when building
-
-Ensure PettingLLMs is installed:
-```bash
-pip install -e .
+```
+docs/
+├── index.md                    # 首页
+├── getting-started/           # 入门指南
+│   ├── installation.md
+│   ├── quick-start.md
+│   └── datasets.md
+├── core-concepts/             # 核心概念
+│   ├── overview.md
+│   ├── at-grpo.md
+│   ├── workflows.md
+│   └── training-system.md
+├── training/                  # 训练指南
+│   ├── overview.md
+│   ├── games.md
+│   ├── planning.md
+│   ├── code.md
+│   └── math.md
+├── evaluation/                # 评估指南
+│   └── guide.md
+├── results/                   # 结果展示
+│   ├── benchmarks.md
+│   └── ablations.md
+├── api/                       # API 文档
+│   └── index.md
+└── contributing.md            # 贡献指南
 ```
 
-### Missing dependencies
+## 🎨 特性
 
-Install documentation dependencies:
-```bash
-pip install -r docs/requirements.txt
-```
+- ✨ Material Design 主题
+- 🌓 深色/浅色模式切换
+- 🔍 全文搜索
+- 📱 响应式设计
+- 🎯 导航标签页
+- 💻 代码高亮
+- 📊 MathJax 数学公式支持
+- 🔗 自动生成 API 文档
 
-### Build fails
+## 📝 编辑文档
 
-Check that:
-- All Markdown files are valid
-- `mkdocs.yml` syntax is correct
-- All linked files exist
+1. 所有文档文件使用 Markdown 格式
+2. 文档源文件在 `docs/` 目录下
+3. 编辑后运行 `mkdocs serve` 可实时预览
+4. 主要配置在 `mkdocs.yml` 文件中
 
-## 📚 Resources
+## 🔧 配置文件
 
-- [MkDocs documentation](https://www.mkdocs.org/)
-- [Material theme documentation](https://squidfunk.github.io/mkdocs-material/)
-- [mkdocstrings documentation](https://mkdocstrings.github.io/)
-- [PyMdown Extensions](https://facelessuser.github.io/pymdown-extensions/)
+- `mkdocs.yml` - 主配置文件
+- `docs/requirements.txt` - Python 依赖
+- `build_docs.sh` - 构建脚本
 
-## 🤝 Contributing
+## 📚 更多信息
 
-To contribute to the documentation:
-
-1. Follow the structure outlined above
-2. Use clear, concise language
-3. Include code examples where appropriate
-4. Test your changes locally before submitting
-5. See [Contributing Guide](contributing.md) for more details
-
----
-
-For questions or issues, please open a GitHub issue.
-
+- [MkDocs 官方文档](https://www.mkdocs.org/)
+- [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/)
+- [MkDocstrings](https://mkdocstrings.github.io/)
