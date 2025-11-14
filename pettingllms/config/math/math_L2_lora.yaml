@@ -66,7 +66,7 @@ training:
   experiment_name: math_eval_single_policy
   logger: [ 'console', 'wandb' ]
   model_checkpoints_dir: checkpoints
-  checkpoint_dir: checkpoint  
+  checkpoint_dir: checkpoints  
   save_freq: 40  
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
@@ -75,7 +75,6 @@ training:
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}

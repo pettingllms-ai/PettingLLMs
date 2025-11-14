@@ -57,7 +57,7 @@ actor_rollout_ref:
     use_dynamic_mini_batch: False
     ppo_micro_batch_size: null # will be deprecated, use ppo_micro_batch_size_per_gpu
     ppo_micro_batch_size_per_gpu: null
-    ppo_max_token_len_per_gpu: 16384 # n * ${data.max_prompt_length} + ${data.max_response_length}
+    ppo_max_token_len_per_gpu: 20480 # n * ${data.max_prompt_length} + ${data.max_response_length} (increased for multi-agent with thinking)
     grad_clip: 1.0
     # pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low, 1 + cliprange_high)
     clip_ratio: 0.2 # default value if clip_ratio_low and clip_ratio_high are not specified
@@ -117,7 +117,7 @@ actor_rollout_ref:
     log_prob_use_dynamic_bsz: False
     ppo_micro_batch_size: 1
     ppo_micro_batch_size_per_gpu: null
-    log_prob_max_token_len_per_gpu: 16384
+    log_prob_max_token_len_per_gpu: 20480
     ulysses_sequence_parallel_size: 1 # sp size
     entropy_from_logits_with_chunking: False
   rollout:
@@ -135,7 +135,7 @@ actor_rollout_ref:
     response_length: ${data.max_response_length}
     # for vllm rollout
     dtype: bfloat16
-    gpu_memory_utilization: 0.6  
+    gpu_memory_utilization: 0.7
     ignore_eos: False
     enforce_eager: False  
     free_cache_engine: False
@@ -398,7 +398,7 @@ trainer:
   critic_warmup: 0
   default_hdfs_dir: null
   del_local_ckpt_after_load: False
-  default_local_dir: checkpoints/verl_examples/gsm8k
+  default_local_dir: checkpoints
   max_actor_ckpt_to_keep: 2
   max_critic_ckpt_to_keep: null
   # The timeout for ray worker group to wait for the register center to be ready

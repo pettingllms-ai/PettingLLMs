@@ -19,7 +19,14 @@ class EnvStateBase:
     tool_execution_output: str = field(default="", init=False)
     plan_action: List[str] = field(default_factory=list, init=False)
     observation: str = field(default="", init=False)
-    
+
+    # History records for multi-turn interactions
+    code_history: List[str] = field(default_factory=list, init=False)
+    execution_history: List[str] = field(default_factory=list, init=False)
+    plan_reasoning_history: List[str] = field(default_factory=list, init=False)
+    plan_action_history: List[List[str]] = field(default_factory=list, init=False)
+    tool_action_history: List[List[str]] = field(default_factory=list, init=False)
+
     def __post_init__(self):
         if not hasattr(self, 'tool_action'):
             self.tool_action = []
@@ -31,6 +38,17 @@ class EnvStateBase:
             self.plan_action = []
         if not hasattr(self, 'observation'):
             self.observation = ""
+        # Initialize history lists
+        if not hasattr(self, 'code_history'):
+            self.code_history = []
+        if not hasattr(self, 'execution_history'):
+            self.execution_history = []
+        if not hasattr(self, 'plan_reasoning_history'):
+            self.plan_reasoning_history = []
+        if not hasattr(self, 'plan_action_history'):
+            self.plan_action_history = []
+        if not hasattr(self, 'tool_action_history'):
+            self.tool_action_history = []
     
     def __str__(self) -> str:
         return (
@@ -51,7 +69,7 @@ class EnvStateBase:
         """
         return "done" if getattr(self, 'done', False) else "in_progress"
 
-    def to_dict_compact(self) -> Dict[str, Any]:
+    def to_dict_compact(self, agent_name: str = None) -> Dict[str, Any]:
         """Compact, logging-friendly snapshot across all env states.
         Always includes a unified 'status' and 'done' flag; conditionally includes
         a few common progress/reward fields when present.
@@ -167,45 +185,33 @@ class EightQueensEnvState(EnvStateBase):
         if self.done:
             self.reward = 0.0
             return
-        
+
         # Parse action: expect list with N column indices
         if not isinstance(action, list) or len(action) != self.N:
-            self.reward = -1.0  # Invalid action format penalty
+            self.reward = 0.0  # Invalid action format - failure
             return
-        
+
         # Check all column indices are valid
         for col in action:
             if not isinstance(col, int) or not (0 <= col < self.N):
-                self.reward = -1.0  # Invalid column index penalty
+                self.reward = 0.0  # Invalid column index - failure
                 return
-        
+
         # Record previous state
         prev_conflicts = self._conflicts(self.cols)
-        
+
         # Set new queen positions
         self.cols = list(action)
         self.positions = self.cols[:]
-        
-        # Calculate reward
-        self.reward = -0.01  # Base step penalty
-        
-        # Check conflicts
-        current_conflicts = self._conflicts(self.cols)
-        if current_conflicts > 0:
-            # Conflict penalty (allow intermediate states)
-            self.reward = -0.5 - current_conflicts * 0.1
-        else:
-            # No conflict reward
-            self.reward += 0.5
-            
-            # Check completion
-            if self._is_solved():
-                self.reward += 2.0  # Success completion reward
-                self.step_count += 1
-                if self.step_count <= self.N:  # Optimal steps
-                    self.reward += 0.5
-                self.done = True
-        
+
+        # Calculate reward - binary: 0 for failure, 1 for success
+        self.reward = 0.0  # Default to failure
+
+        # Check completion
+        if self._is_solved():
+            self.reward = 1.0  # Success
+            self.done = True
+
         self.step_count += 1
         self.observation = self.text_observation()
 
@@ -325,50 +331,43 @@ class BlocksworldEnvState(EnvStateBase):
         if self.done:
             self.reward = 0.0
             return
-        
+
         # Parse action: expect list of move operation dictionaries
         if not isinstance(action, list):
-            self.reward = -1.0  # Invalid action format penalty
+            self.reward = 0.0  # Invalid action format - failure
             return
-        
-        total_reward = 0.0
-        
+
         # Execute each action
+        action_valid = True
         for move_action in action:
             if not isinstance(move_action, dict) or "move" not in move_action:
-                total_reward += -0.5  # Invalid action format penalty
-                continue
-            
+                action_valid = False
+                break
+
             move = move_action["move"]
             if not isinstance(move, list) or len(move) != 2:
-                total_reward += -0.5  # Invalid move format penalty
-                continue
-            
+                action_valid = False
+                break
+
             block, dest = move
-            step_reward = -0.01  # Base step penalty
-            
+
             # Check if block is movable (on top of stack)
             if not self._is_clear(block):
-                step_reward = -0.3  # Block not on top penalty
-                total_reward += step_reward
-                continue
-            
-            # Record similarity before move
-            prev_similarity = self._calculate_goal_similarity()
-            
+                action_valid = False
+                break
+
             # Execute move
             try:
                 stack_idx, pos = self._find_block(block)
-                
+
                 # Check if destination is valid
                 if dest != "table" and (dest not in self.all_blocks or not self._is_clear(dest)):
-                    step_reward = -0.3  # Invalid destination penalty
-                    total_reward += step_reward
-                    continue
-                
+                    action_valid = False
+                    break
+
                 # Execute move
                 self.stacks[stack_idx].pop()  # Remove block
-                
+
                 if dest == "table":
                     # Move to table (create new stack)
                     self.stacks.append([block])
@@ -376,46 +375,25 @@ class BlocksworldEnvState(EnvStateBase):
                     # Move to other block
                     dest_stack_idx, _ = self._find_block(dest)
                     self.stacks[dest_stack_idx].append(block)
-                
+
                 # Update current_stacks attribute
                 self.current_stacks = [list(s) for s in self.stacks]
-                
-                # Calculate similarity after move
-                current_similarity = self._calculate_goal_similarity()
-                
-                # Dense reward design
-                # 1. Based on goal similarity improvement
-                similarity_improvement = current_similarity - prev_similarity
-                if similarity_improvement > 0:
-                    step_reward += similarity_improvement * 0.5  # Positive progress reward
-                elif similarity_improvement < 0:
-                    step_reward += similarity_improvement * 0.3  # Negative progress penalty
-                
-                # 2. Based on current similarity reward
-                step_reward += current_similarity * 0.1
-                
-                # 3. Special case reward
-                # If block moved to correct position context
-                target_context = self._get_block_context(block, self.goal_stacks)
-                current_context = self._get_block_context(block, self.stacks)
-                if target_context == current_context and target_context != (None, None):
-                    step_reward += 0.2  # Correct position reward
-                
+
             except ValueError:
-                step_reward = -0.3  # Block not found
-            
-            total_reward += step_reward
+                action_valid = False
+                break
+
             self.step_count += 1
-        
-        # Check completion
-        if self._is_goal_reached():
-            total_reward += 2.0  # Success completion reward
-            # Efficiency reward
-            if self.step_count <= len(self.all_blocks) * 2:
-                total_reward += 0.5  # Efficient completion reward
+
+        # Binary reward: 0 for failure, 1 for success
+        if not action_valid:
+            self.reward = 0.0  # Invalid action - failure
+        elif self._is_goal_reached():
+            self.reward = 1.0  # Success
             self.done = True
-        
-        self.reward = total_reward
+        else:
+            self.reward = 0.0  # Not yet solved - failure
+
         self.current_stacks = [list(s) for s in self.stacks]  # Update current_stacks attribute
         self.observation = self.text_observation()
 
@@ -425,7 +403,7 @@ class BlocksworldEnvState(EnvStateBase):
 # =========================================================
 
 @dataclass
-class Sudoku4x4EnvState(EnvStateBase):
+class SudukuEnvState(EnvStateBase):
     """Dynamic size Sudoku: Fill NxN grid satisfying row, column and sub-grid constraints (keep 4x4 name for compatibility)"""
     
     puzzle: Optional[List[List[int]]] = None
@@ -443,7 +421,15 @@ class Sudoku4x4EnvState(EnvStateBase):
         
         # Read map_size parameter from config if exists
         if self.config and hasattr(self.config, 'env') and hasattr(self.config.env, 'map_size'):
-            self.size = self.config.env.map_size
+            try:
+                self.size = int(self.config.env.map_size)
+            except Exception:
+                self.size = self.config.env.map_size
+        elif self.config and isinstance(self.config, dict) and 'env' in self.config and 'map_size' in self.config['env']:
+            try:
+                self.size = int(self.config['env']['map_size'])
+            except Exception:
+                self.size = self.config['env']['map_size']
         if self.size is None:
             self.size = 16
         
@@ -545,8 +531,12 @@ class Sudoku4x4EnvState(EnvStateBase):
             puzzle[1] = [0, 0, 0, 0, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
             return puzzle
         else:
-            # For other sizes, generate a basic puzzle
-            return self._generate_puzzle_from_seed(42, size)
+            # For other sizes, create a basic empty puzzle
+            puzzle = [[0 for _ in range(size)] for _ in range(size)]
+            # Fill first row with some numbers to make it solvable
+            for i in range(min(size, 4)):
+                puzzle[0][i] = i + 1
+            return puzzle
 
     def reset(self):
         """Reset environment"""
@@ -695,12 +685,12 @@ class Sudoku4x4EnvState(EnvStateBase):
         if self.done:
             self.reward = 0.0
             return
-        
+
         # Check action format
         if isinstance(action, list) and len(action) == self.size and all(isinstance(row, list) and len(row) == self.size for row in action):
             # Format 1: Complete NxN grid [[1,2,3,4],[3,4,1,2],...]
             new_grid = action
-            
+
             # Validate grid format and perform type conversion
             try:
                 converted_grid = []
@@ -709,51 +699,30 @@ class Sudoku4x4EnvState(EnvStateBase):
                     for val in row:
                         int_val = int(val)
                         if not (1 <= int_val <= self.size):
-                            self.reward = -1.0  # Invalid grid value penalty
+                            self.reward = 0.0  # Invalid grid value - failure
                             return
                         converted_row.append(int_val)
                     converted_grid.append(converted_row)
                 new_grid = converted_grid
             except (ValueError, TypeError):
-                self.reward = -1.0  # Invalid grid value penalty
+                self.reward = 0.0  # Invalid grid value - failure
                 return
-            
-            # Record state before filling
-            prev_progress = self._calculate_progress()
-            prev_constraints = self._count_constraints_satisfied()
-            
+
             # Update grid
             self.grid = [row[:] for row in new_grid]
             self.puzzle = [row[:] for row in self.grid]  # Update puzzle attribute
-            
-            # Calculate reward
-            self.reward = -0.01  # Base step penalty
-            
-            # Validate solution correctness
+
+            # Binary reward: 0 for failure, 1 for success
             if self._is_solved():
-                self.reward += 2.0  # Success completion reward
-                # Efficiency reward
-                empty_count = sum(1 for r in range(self.size) for c in range(self.size) if self.init_grid[r][c] == 0)
-                if self.step_count <= empty_count:  # Optimal steps
-                    self.reward += 0.5
+                self.reward = 1.0  # Success
                 self.done = True
             else:
-                # Partial correctness reward
-                current_progress = self._calculate_progress()
-                current_constraints = self._count_constraints_satisfied()
-                
-                progress_reward = (current_progress - prev_progress) * 0.5
-                constraint_improvement = current_constraints - prev_constraints
-                self.reward += progress_reward + constraint_improvement * 0.02
-                
-                # If there are errors, give penalty
-                if not self._is_grid_valid():
-                    self.reward -= 0.5
-        
+                self.reward = 0.0  # Not solved - failure
+
         elif isinstance(action, list) and all(isinstance(step, list) and len(step) == 3 for step in action):
             # Format 2: Fill step list [[r,c,v], [r,c,v], ...]
-            total_reward = 0.0
-            
+            action_valid = True
+
             for step in action:
                 try:
                     r, c, v = step
@@ -762,56 +731,26 @@ class Sudoku4x4EnvState(EnvStateBase):
                 except (ValueError, TypeError, IndexError):
                     # Skip invalid steps
                     continue
-                    
-                step_reward = -0.01  # Base step penalty
-                
-                # Record state before filling
-                prev_progress = self._calculate_progress()
-                prev_constraints = self._count_constraints_satisfied()
-                
+
                 if self._is_valid_placement(r, c, v):
-                    # Smart fill reward
-                    possible_values = self._get_possible_values(r, c)
-                    if len(possible_values) == 1:
-                        step_reward += 0.2  # Unique solution reward
-                    elif len(possible_values) <= 2:
-                        step_reward += 0.1  # Few choices reward
-                    
                     self.grid[r][c] = v
-                    
-                    # Calculate state after filling
-                    current_progress = self._calculate_progress()
-                    current_constraints = self._count_constraints_satisfied()
-                    
-                    # Dense reward design
-                    progress_reward = (current_progress - prev_progress) * 0.5
-                    constraint_improvement = current_constraints - prev_constraints
-                    step_reward += progress_reward + constraint_improvement * 0.02 + current_progress * 0.1
-                    
-                    # Strategy reward
-                    empty_cells = [(rr, cc) for rr in range(self.size) for cc in range(self.size) if self.grid[rr][cc] == 0]
-                    if empty_cells:
-                        current_constraints_count = len(self._get_possible_values(r, c))
-                        avg_constraints = sum(len(self._get_possible_values(rr, cc)) for rr, cc in empty_cells) / len(empty_cells)
-                        if current_constraints_count <= avg_constraints:
-                            step_reward += 0.05
                 else:
-                    step_reward = -0.3  # Invalid action penalty
-                
-                total_reward += step_reward
+                    action_valid = False
+                    break
+
                 self.step_count += 1
-            
-            # Check completion
-            if self._is_solved():
-                total_reward += 2.0  # Success completion reward
-                empty_count = sum(1 for r in range(self.size) for c in range(self.size) if self.init_grid[r][c] == 0)
-                if self.step_count <= empty_count:
-                    total_reward += 0.5
+
+            # Binary reward: 0 for failure, 1 for success
+            if not action_valid:
+                self.reward = 0.0  # Invalid action - failure
+            elif self._is_solved():
+                self.reward = 1.0  # Success
                 self.done = True
-            
-            self.reward = total_reward
+            else:
+                self.reward = 0.0  # Not yet solved - failure
+
         else:
-            self.reward = -1.0  # Invalid action format penalty
+            self.reward = 0.0  # Invalid action format - failure
             return
         
         self.step_count += 1
@@ -912,11 +851,19 @@ class PlanPathGridEnvState(EnvStateBase):
         super().__post_init__()
         # Read map_size parameter from config if exists
         if self.config and hasattr(self.config, 'env') and hasattr(self.config.env, 'map_size'):
-            self.grid_h = self.config.env.map_size
-            self.grid_w = self.config.env.map_size
+            try:
+                self.grid_h = int(self.config.env.map_size)
+                self.grid_w = int(self.config.env.map_size)
+            except Exception:
+                self.grid_h = self.config.env.map_size
+                self.grid_w = self.config.env.map_size
         elif self.config and isinstance(self.config, dict) and 'env' in self.config and 'map_size' in self.config['env']:
-            self.grid_h = self.config['env']['map_size']
-            self.grid_w = self.config['env']['map_size']
+            try:
+                self.grid_h = int(self.config['env']['map_size'])
+                self.grid_w = int(self.config['env']['map_size'])
+            except Exception:
+                self.grid_h = self.config['env']['map_size']
+                self.grid_w = self.config['env']['map_size']
         
         # Generate random environment based on seed
         grid, start, goal = self._generate_random_environment(self.seed, self.grid_h, self.grid_w, self.block_ratio)
@@ -1121,25 +1068,27 @@ class PlanPathGridEnvState(EnvStateBase):
         if self.done:
             self.reward = 0.0
             return
-        
+
         # Check action format
         if isinstance(action, list) and all(isinstance(item, str) for item in action):
             # Action sequence ["R", "R", "D", "D"]
             self._execute_action_sequence(action)
         else:
-            self.reward = -1.0  # Invalid action format
-    
+            self.reward = 0.0  # Invalid action format - failure
+
     def _execute_action_sequence(self, actions: List[str]):
-        """Execute action sequence"""
-        total_reward = 0.0
+        """Execute action sequence - binary reward"""
         for action in actions:
-            pos, reward, done, _ = self.step_single(action)
-            total_reward += reward
+            pos, _, done, _ = self.step_single(action)
             if done:
                 break
-        self.reward = total_reward
-    
-    
+        # Binary reward: 0 for failure, 1 for success
+        if self.done and self.pos == self.goal:
+            self.reward = 1.0  # Success
+        else:
+            self.reward = 0.0  # Failure
+
+
     def step_single(self, action: str) -> Tuple[Tuple[int,int], float, bool, Dict[str,Any]]:
         """
         Execute single action step and return:
@@ -1278,7 +1227,15 @@ class SokobanGridEnvState(EnvStateBase):
          # Read map_size parameter from config if exists
         self.size = None
         if self.config and hasattr(self.config, 'env') and hasattr(self.config.env, 'map_size'):
-            self.size = self.config.env.map_size
+            try:
+                self.size = int(self.config.env.map_size)
+            except Exception:
+                self.size = self.config.env.map_size
+        elif self.config and isinstance(self.config, dict) and 'env' in self.config and 'map_size' in self.config['env']:
+            try:
+                self.size = int(self.config['env']['map_size'])
+            except Exception:
+                self.size = self.config['env']['map_size']
         
         if self.size is None:
             self.size = 16
@@ -1291,11 +1248,11 @@ class SokobanGridEnvState(EnvStateBase):
             p_change_directions=0.35,
             num_steps=25,
             num_boxes=1,
-            tries=4,
+            tries=20,  # Increased from 4 to 20 for better success rate
             second_player=False,
-            search_depth=100,
+            search_depth=200,  # Increased from 100 to 200 for better initial state generation
             min_box_distance=2,  # Minimum distance between boxes and targets
-            min_difficulty_score=None,  # Will default to num_boxes * min_box_distance
+            min_difficulty_score=1,  # Lower difficulty requirement to ease generation
             seed=self.seed,  # Pass seed to ensure reproducible room generation
         )
 
@@ -1549,23 +1506,25 @@ class SokobanGridEnvState(EnvStateBase):
         if self.done:
             self.reward = 0.0
             return
-        
+
         # Check action format
         if isinstance(action, list) and all(isinstance(item, str) for item in action):
             # Action sequence ["R", "R", "D", "D"]
             self._execute_action_sequence(action)
         else:
-            self.reward = -1.0  # Invalid action format
-    
+            self.reward = 0.0  # Invalid action format - failure
+
     def _execute_action_sequence(self, actions: List[str]):
-        """Execute action sequence"""
-        total_reward = 0.0
+        """Execute action sequence - binary reward"""
         for action in actions:
-            pos, reward, done, _ = self.step_single(action)
-            total_reward += reward
+            pos, _, done, _ = self.step_single(action)
             if done:
                 break
-        self.reward = total_reward
+        # Binary reward: 0 for failure, 1 for success
+        if self.done and self._is_won():
+            self.reward = 1.0  # Success
+        else:
+            self.reward = 0.0  # Failure
     
     def step_single(self, action: str) -> Tuple[Tuple[int,int], float, bool, Dict[str,Any]]:
         """
@@ -1640,7 +1599,7 @@ class SokobanGridEnvState(EnvStateBase):
 STATE_REGISTRY = {
     "EightQueens": EightQueensEnvState,
     "Blocksworld": BlocksworldEnvState, 
-    "sudoku4x4": Sudoku4x4EnvState,
+    "suduku": SudukuEnvState,
     "plan_path": PlanPathGridEnvState,
     "sokoban": SokobanGridEnvState,  
 }

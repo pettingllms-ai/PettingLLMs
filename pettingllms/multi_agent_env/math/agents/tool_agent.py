@@ -65,7 +65,7 @@ class ToolAgent(Agent):
                 f"You are a helpful programming assistant that write python code to solve mathematical problems through step-by-step reasoning.\n\n"
                 f"Problem:\n{problem}\n\n"
                 f"You need to think step by step and provide a complete solution using python code with clear mathematical reasoning.\n"
-                f"Please write Python code to solve this problem.\n And you need to print the final answer in the code. Like if the final anwer is the variable x, you need to write ```print(x)```.\n"
+                f"Please write Python code to solve this problem.\n And you need to use print in the code to output the final answer. Please print the variable and do not print the digit. Like if the final anwer is the variable x, you need to write ```print(x)```.\n"
                 f"Respond in the format:\n\n"
                 f"**Code:**\n```python\n# corrected code here\n```\n\n" 
             )
@@ -77,7 +77,8 @@ class ToolAgent(Agent):
             formatted_prompt += (
                 f"Please firstly select or refine the best solution from the history of solutions.\n"
                 f"The previous solutions are possible to be correct and possible to be all incorrect. If one of the solutions is correct, select it. If all the solutions are incorrect, refine the best solution.\n"
-                f"Then solve the problem again. Over all, if the computation is too comlex, the reasoning might be more easier to make mistake. I want you to write the code to solve the problem again.\n")
+                f"Then solve the problem again. Over all, if the computation is too comlex, the reasoning might be more easier to make mistake. I want you to write the code to solve the problem again.\n"
+                )
                 
             
             formatted_prompt += (
@@ -110,25 +111,29 @@ class ToolAgent(Agent):
                 ray_actor=env_worker,
             )
             env_data.state.code_extracted_answer = parse(code_execution_output)
+            # Update history records
+            env_data.state.code_generated_solution_history.append(env_data.state.code_generated_solution)
+            env_data.state.code_extracted_answer_history.append(env_data.state.code_extracted_answer)
+            self.answer_history.append(env_data.state.code_extracted_answer)
+            self.action_history.append(self.current_action)
+            if code_execution_output is None:
+                self.agent_reward = -1
+                return
+            is_correct = verify(parse(code_execution_output), parse(ground_truth_answer))
+            if is_correct:
+                self.success = True
+                self.agent_reward = 1.0
+                env_data.state.code_is_correct = True
+            else:
+                self.success = False
+                self.agent_reward = 0.0
+                env_data.state.code_is_correct = False
         except Exception as e:
             code_execution_output = f"error: {e}"
             env_data.state.code_extracted_answer = code_execution_output
+            self.agent_reward = -1
         
-        # Update history records
-        env_data.state.code_generated_solution_history.append(env_data.state.code_generated_solution)
-        env_data.state.code_extracted_answer_history.append(env_data.state.code_extracted_answer)
-        self.answer_history.append(env_data.state.code_extracted_answer)
-        self.action_history.append(self.current_action)
-                
-        is_correct = verify(parse(code_execution_output), parse(ground_truth_answer))
-        if is_correct:
-            self.success = True
-            self.agent_reward = 1.0
-            env_data.state.code_is_correct = True
-        else:
-            self.success = False
-            self.agent_reward = 0.0
-            env_data.state.code_is_correct = False
+        
         
         
         

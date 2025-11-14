@@ -68,7 +68,7 @@ agent_policy_configs:
       name: "code_generator"
       policy_name: "code_generator_model"
       train_temperature: 1.0
-      val_temperature: 0.2
+      val_temperature: 0
       
     agent_1:
       name: "test_generator"
@@ -130,7 +130,7 @@ trainer:
   critic_warmup: 0
   default_hdfs_dir: null
   del_local_ckpt_after_load: False
-  default_local_dir: checkpoints/pettingllms/code_eval_single_agent
+  default_local_dir: checkpoints
   max_actor_ckpt_to_keep: 3
   max_critic_ckpt_to_keep: null
   ray_wait_register_center_timeout: 300
@@ -149,7 +149,6 @@ data:
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
-  epoch_size: 20
   train_batch_size: 64
   val_batch_size: 32
   max_prompt_length: 4096

@@ -17,8 +17,6 @@ data:
   gen_n_samples: 5
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
 
   # Batch sizes
   train_batch_size: 64
@@ -126,7 +124,7 @@ trainer:
   critic_warmup: 0
   default_hdfs_dir: null
   del_local_ckpt_after_load: False
-  default_local_dir: checkpoints/pettingllms/math_single_policy
+  default_local_dir: checkpoints
   max_actor_ckpt_to_keep: 3
   max_critic_ckpt_to_keep: null
   ray_wait_register_center_timeout: 300
@@ -135,3 +133,26 @@ trainer:
   rejection_sample: False
   rejection_sample_multiplier: 2
   n_training_gpus_per_node: ${resource.n_gpus_per_node}
+
+
+models:
+  model_0:
+    path: ${base_models.policy_0.path}
+    name: ${base_models.policy_0.name}
+    ppo_trainer_config:
+      filter_method: mean
+      filter_ratio: 0.5
+      data: 
+        max_prompt_length: ${training.max_prompt_length}
+        max_response_length: ${training.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${base_models.policy_0.path}
+        rollout:
+          temperature: ${training.sample_temperature}
+          prompt_length: ${training.max_prompt_length}
+          response_length: ${training.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}

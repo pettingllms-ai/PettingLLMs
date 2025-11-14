@@ -4,7 +4,6 @@ from typing import Any
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
 from pettingllms.multi_agent_env.base.env import Env
 from typing import List
-from pettingllms.multi_agent_env.math.math_utils import evaluate_math_solution
 from math_verify import parse, verify
 logger = logging.getLogger(__name__)
 

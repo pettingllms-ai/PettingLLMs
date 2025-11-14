@@ -120,7 +120,7 @@ def extract_actions_from_code_output(output: str, benchmark: str = "plan_path") 
                     if benchmark == "plan_path":
                         if all(isinstance(action, str) and action in ['U', 'D', 'L', 'R'] for action in actions):
                             return actions
-                    elif benchmark == "sudoku4x4":
+                    elif benchmark == "suduku":
                         if (len(actions) > 0 and isinstance(actions[0], list) and 
                             all(isinstance(row, list) and len(row) > 0 for row in actions)):
                             return actions
@@ -142,7 +142,7 @@ def extract_actions_from_code_output(output: str, benchmark: str = "plan_path") 
                     if benchmark == "plan_path":
                         if all(isinstance(action, str) and action in ['U', 'D', 'L', 'R'] for action in actions):
                             return actions
-                    elif benchmark == "sudoku4x4":
+                    elif benchmark == "suduku":
                         if (len(actions) > 0 and isinstance(actions[0], list)):
                             return actions
                     else:
@@ -160,7 +160,7 @@ def extract_actions_from_code_output(output: str, benchmark: str = "plan_path") 
                         if benchmark == "plan_path":
                             if all(isinstance(item, str) and item in ['U', 'D', 'L', 'R'] for item in parsed):
                                 return parsed
-                        elif benchmark == "sudoku4x4":
+                        elif benchmark == "suduku":
                             if (len(parsed) > 0 and isinstance(parsed[0], list)):
                                 return parsed
                         else:
@@ -235,7 +235,7 @@ def load_plan_path_problem_batch(
             problems.append(block_configs[config_idx])
         return problems
     
-    elif benchmark_name == "sudoku4x4":
+    elif benchmark_name == "suduku":
         problems = []
         for i in range(len(env_indices)):
             seed = env_indices[i] if i < len(env_indices) else i
@@ -250,7 +250,7 @@ def load_plan_path_problem_batch(
         return problems
     
     else:
-        raise ValueError(f"Unknown benchmark name: {benchmark_name}. Supported: EightQueens, Blocksworld, sudoku4x4, plan_path, sokoban")
+        raise ValueError(f"Unknown benchmark name: {benchmark_name}. Supported: EightQueens, Blocksworld, suduku, plan_path, sokoban")
 
 
 # ============================================================

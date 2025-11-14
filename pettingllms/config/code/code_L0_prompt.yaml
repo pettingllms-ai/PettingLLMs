@@ -114,7 +114,6 @@ training:
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
-  epoch_size: 20
   train_batch_size: 64
   val_batch_size: 32
   max_prompt_length: 4096

@@ -34,7 +34,7 @@ class Env:
         max_turns: int
         turn: int = 0
         state: Optional[Any] = None
-        is_pass: bool = False
+        success: bool = False
         
         # Save configuration
         self.config = config

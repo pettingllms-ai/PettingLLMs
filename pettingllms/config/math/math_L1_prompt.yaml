@@ -16,7 +16,7 @@ env:
   name: math_env
   dataset: "polaris"
   benchmark: "AIME24"
-  max_turns: 5
+  max_turns: 4
   resolve: false
   multi_modal: false
   batched_init: true
@@ -39,17 +39,17 @@ agent_policy_configs:
     agent_0:
       name: "reasoning_generator"
       policy_name: "shared_model"
-      enable_thinking: true
-      train_temperature: 1.0
-      val_temperature: 0.6
+      enable_thinking: false
+      train_temperature: 1.5
+      val_temperature: 0.2
 
       
     agent_1:
       name: "tool_generator"
       policy_name: "shared_model"
-      enable_thinking: true
-      train_temperature: 1.0
-      val_temperature: 0.
+      enable_thinking: false
+      train_temperature: 1.5
+      val_temperature: 0.2
 
 
 # Multi-agent interaction configuration
@@ -78,7 +78,6 @@ training:
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}
@@ -90,8 +89,8 @@ models:
     path: ${base_models.policy_0.path}
     name: ${base_models.policy_0.name}
     ppo_trainer_config:
-      filter_method: mean
-      filter_ratio: 0.5
+      filter_method: dapo
+      filter_ratio: 0
       data: 
         max_prompt_length: ${training.max_prompt_length}
         max_response_length: ${training.max_response_length}

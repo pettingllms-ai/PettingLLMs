@@ -70,6 +70,15 @@ DATASETS = {
         "q_keys": ["problem", "question", "prompt", "Problem"],
         "a_keys": ["answer", "final_answer", "solution", "Solution", "Answer"],
     },
+    # GSM8K
+    # https://huggingface.co/datasets/openai/gsm8k
+    "GSM8K": {
+        "path": "openai/gsm8k",
+        "subset": "main",
+        "prefer_splits": ["test", "validation", "dev", "train"],
+        "q_keys": ["question", "problem", "prompt"],
+        "a_keys": ["answer", "solution", "final_answer"],
+    },
 }
 
 
@@ -102,32 +111,63 @@ def main():
     os.makedirs(out_test_dir, exist_ok=True)
 
     # 1) POLARIS train
-    print("Loading POLARIS-Project/Polaris-Dataset-53K ...")
-    polaris_all = datasets.load_dataset("POLARIS-Project/Polaris-Dataset-53K")
-    polaris_split = choose_available_split(polaris_all, ["train", "test", "validation", "dev"])
-    polaris_ds = polaris_all[polaris_split]
-    print(f"Using split for POLARIS: {polaris_split} (as train)")
-    polaris_std = standardize_hf_dataset(
-        polaris_ds,
-        ["problem", "question", "prompt", "Problem"],
-        ["answer", "final_answer", "solution", "Solution", "Answer"],
-    )
     polaris_path = out_train_dir / "polaris.parquet"
-    polaris_std.to_parquet(str(polaris_path))
-    print(f"Saved POLARIS train to: {polaris_path} ({len(polaris_std)} rows)")
+    if polaris_path.exists():
+        print(f"POLARIS train already exists at: {polaris_path}, skipping download.")
+    else:
+        print("Loading POLARIS-Project/Polaris-Dataset-53K ...")
+        polaris_all = datasets.load_dataset("POLARIS-Project/Polaris-Dataset-53K")
+        polaris_split = choose_available_split(polaris_all, ["train", "test", "validation", "dev"])
+        polaris_ds = polaris_all[polaris_split]
+        print(f"Using split for POLARIS: {polaris_split} (as train)")
+        polaris_std = standardize_hf_dataset(
+            polaris_ds,
+            ["problem", "question", "prompt", "Problem"],
+            ["answer", "final_answer", "solution", "Solution", "Answer"],
+        )
+        polaris_std.to_parquet(str(polaris_path))
+        print(f"Saved POLARIS train to: {polaris_path} ({len(polaris_std)} rows)")
 
-    # 2) Test sets: AIME24, AIME25, OlympiadBench
-    for benchmark in ["AIME24", "AIME25", "OlympiadBench"]:
+    # 2) GSM8K train
+    gsm8k_train_path = out_train_dir / "gsm8k.parquet"
+    if gsm8k_train_path.exists():
+        print(f"GSM8K train already exists at: {gsm8k_train_path}, skipping download.")
+    else:
+        print("Loading GSM8K train ...")
+        conf = DATASETS["GSM8K"]
+        path = conf["path"]
+        subset = conf.get("subset", None)
+        ds_dict = datasets.load_dataset(path, subset) if subset else datasets.load_dataset(path)
+        if "train" in ds_dict:
+            ds = ds_dict["train"]
+            print(f"Using split for GSM8K: train")
+            ds_std = standardize_hf_dataset(ds, conf["q_keys"], conf["a_keys"])
+            ds_std.to_parquet(str(gsm8k_train_path))
+            print(f"Saved GSM8K train to: {gsm8k_train_path} ({len(ds_std)} rows)")
+        else:
+            print("Warning: GSM8K train split not found")
+
+    # 3) Test sets: AIME24, AIME25, OlympiadBench, GSM8K
+    for benchmark in ["AIME24", "AIME25", "OlympiadBench", "GSM8K"]:
+        out_path = out_test_dir / f"{benchmark}.parquet"
+        if out_path.exists():
+            print(f"{benchmark} test already exists at: {out_path}, skipping download.")
+            continue
+        
         conf = DATASETS[benchmark]
         path = conf["path"]
         subset = conf.get("subset", None)
         print(f"Loading {path}" + (f" (subset={subset})" if subset else "") + " ...")
         ds_dict = datasets.load_dataset(path, subset) if subset else datasets.load_dataset(path)
-        split = choose_available_split(ds_dict, conf["prefer_splits"])
+        
+        if benchmark == "GSM8K":
+            split = "test" if "test" in ds_dict else choose_available_split(ds_dict, conf["prefer_splits"])
+        else:
+            split = choose_available_split(ds_dict, conf["prefer_splits"])
+        
         ds = ds_dict[split]
         print(f"Using split for {benchmark}: {split} (as test)")
         ds_std = standardize_hf_dataset(ds, conf["q_keys"], conf["a_keys"])
-        out_path = out_test_dir / f"{benchmark}.parquet"
         ds_std.to_parquet(str(out_path))
         print(f"Saved {benchmark} test to: {out_path} ({len(ds_std)} rows)")
 

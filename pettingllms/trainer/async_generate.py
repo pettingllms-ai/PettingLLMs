@@ -34,61 +34,116 @@ from openai.types.completion import Completion
 from datetime import datetime, timedelta
 import aiohttp
 
-
-# =================== 全局共享资源管理 ===================
-# 全局共享ClientSession，避免频繁创建销毁连接
 _shared_session = None
-_session_lock = asyncio.Lock()
+_session_lock = None
+_current_loop_id = None
 
-# 全局并发控制Semaphore，限制同时进行的LLM请求数量
+
 _llm_request_semaphore = None
-_semaphore_lock = asyncio.Lock()
+_semaphore_lock = None
+
+
+def reset_event_loop_resources():
+    """Reset all event loop bound resources when a new event loop is created."""
+    global _shared_session, _session_lock, _llm_request_semaphore, _semaphore_lock, _current_loop_id
+    
+    try:
+        loop = asyncio.get_event_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        loop_id = None
+    
+    # Check if we're in a new event loop
+    if loop_id != _current_loop_id:
+        # Clean up old session if it exists
+        if _shared_session is not None and not _shared_session.closed:
+            try:
+                # Try to close the session, but don't fail if the loop is closed
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(_shared_session.close())
+                loop.close()
+            except:
+                pass
+        
+        # Reset all global resources
+        _shared_session = None
+        _session_lock = None
+        _llm_request_semaphore = None
+        _semaphore_lock = None
+        _current_loop_id = loop_id
 
 
 async def get_shared_session() -> aiohttp.ClientSession:
-
+    """Get or create a shared aiohttp session (thread-safe, event loop safe)"""
     global _shared_session
-    
-    async with _session_lock:
+
+    # Quick check without lock
+    if _shared_session is not None and not _shared_session.closed:
+        return _shared_session
+
+    # Import threading for thread-safe initialization
+    import threading
+    if not hasattr(get_shared_session, '_init_lock'):
+        get_shared_session._init_lock = threading.Lock()
+
+    # Thread-safe session creation
+    with get_shared_session._init_lock:
+        # Double-check after acquiring lock
         if _shared_session is None or _shared_session.closed:
             connector = aiohttp.TCPConnector(
-                limit=200,  
-                limit_per_host=100,  
-                ttl_dns_cache=300,  
-                force_close=False,  
-                enable_cleanup_closed=True  
+                limit=200,
+                limit_per_host=100,
+                ttl_dns_cache=300,
+                force_close=False,
+                enable_cleanup_closed=True
             )
-            
+
             timeout = aiohttp.ClientTimeout(
-                total=300,  
-                connect=30,  
-                sock_read=300  
+                total=300,
+                connect=30,
+                sock_read=300
             )
-            
+
             _shared_session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout
             )
-            print(f"[Session] Created shared aiohttp session with connection pool (limit=200, per_host=100)")
-    
+            print(f"[Session] Created shared aiohttp session (pid={os.getpid()}) with connection pool (limit=200, per_host=100)")
+
     return _shared_session
 
 
 async def get_llm_semaphore(max_concurrent: int = 50) -> asyncio.Semaphore:
-
+    """Get or create a semaphore (thread-safe, event loop safe)"""
     global _llm_request_semaphore
-    
-    async with _semaphore_lock:
+
+    # Quick check without lock
+    if _llm_request_semaphore is not None:
+        return _llm_request_semaphore
+
+    # Import threading for thread-safe initialization
+    import threading
+    if not hasattr(get_llm_semaphore, '_init_lock'):
+        get_llm_semaphore._init_lock = threading.Lock()
+
+    # Thread-safe semaphore creation
+    with get_llm_semaphore._init_lock:
+        # Double-check after acquiring lock
         if _llm_request_semaphore is None:
             _llm_request_semaphore = asyncio.Semaphore(max_concurrent)
-            print(f"[Semaphore] Created global LLM request semaphore with max_concurrent={max_concurrent}")
+            print(f"[Semaphore] Created LLM request semaphore (pid={os.getpid()}) with max_concurrent={max_concurrent}")
     
     return _llm_request_semaphore
 
 
 async def cleanup_shared_session():
     
-    global _shared_session
+    global _shared_session, _session_lock
+    
+    if _session_lock is None:
+        _session_lock = asyncio.Lock()
+    
     async with _session_lock:
         if _shared_session is not None and not _shared_session.closed:
             await _shared_session.close()
@@ -97,7 +152,7 @@ async def cleanup_shared_session():
 
 
 
-async def poll_completions_openai(address: str, **completions_request) -> Completion:
+async def poll_completions_openai(address: str, timeout: Optional[float] = None, **completions_request) -> Completion:
    
     session = await get_shared_session()
     semaphore = await get_llm_semaphore(max_concurrent=50)
@@ -111,20 +166,27 @@ async def poll_completions_openai(address: str, **completions_request) -> Comple
         "Content-Type": "application/json",
     }
 
+    # Set timeout for the API call
+    api_timeout = aiohttp.ClientTimeout(total=timeout) if timeout else aiohttp.ClientTimeout(total=300)  # Default 5 minutes
 
     completions_request.pop("meta_info", None)
     completions_request.pop("extra_headers", None)
+    
+    print(f"[API][REQUEST_START] Sending request to {address} at {time.time()} with timeout={api_timeout.total}s")
     async with semaphore:
         try:
             async with session.post(
                 base_url, 
                 json=completions_request, 
-                headers=headers
+                headers=headers,
+                timeout=api_timeout
             ) as response:
+                print(f"[API][RESPONSE_RECEIVED] Got response from {address} with status {response.status} at {time.time()}")
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"API request failed with status {response.status}: {error_text}")
                 result = await response.json()
+                print(f"[API][JSON_PARSED] JSON parsed successfully from {address} at {time.time()}")
                 return result
                 
         except asyncio.TimeoutError as e:
@@ -149,26 +211,42 @@ async def submit_completions(
     prompt: str, 
     max_retries: int = 3,
     initial_retry_delay: float = 1.0,
+    timeout: Optional[float] = None,
     **kwargs
 ):
     last_exception = None
     
+    print(f"[Submit][START] Starting submit_completions to {address} at {time.time()} with timeout={timeout}s")
     for attempt in range(max_retries):
         try:
+            print(f"[Submit][ATTEMPT] Attempt {attempt + 1}/{max_retries} calling poll_completions_openai")
             result = await poll_completions_openai(
                 address=address, 
                 model=model, 
-                prompt=prompt, 
+                prompt=prompt,
+                timeout=timeout,
                 **kwargs
             )
-            
-            # 成功则返回
             if attempt > 0:
                 print(f"[Retry] Request succeeded on attempt {attempt + 1}/{max_retries}")
+            print(f"[Submit][SUCCESS] submit_completions succeeded at {time.time()}")
             return result
             
         except Exception as e:
             last_exception = e
+            try:
+                # Proactively reset loop-bound resources on transient loop/session errors
+                transient_msg = str(e)
+                should_reset = (
+                    isinstance(e, asyncio.TimeoutError)
+                    or (hasattr(e, '__class__') and e.__class__.__name__.startswith('Client'))
+                    or ('Event loop is closed' in transient_msg)
+                )
+                if should_reset:
+                    print("[Submit][RESET] Detected transient loop/session error; resetting event-loop resources")
+                    reset_event_loop_resources()
+            except Exception:
+                pass
             
   
             if attempt == max_retries - 1:
@@ -188,7 +266,7 @@ async def submit_completions(
     else:
         raise Exception(f"Request failed after {max_retries} attempts")
 
-async def postprocess_batch(batch: DataProto, response_ids: list[list[int]], n: int,pad_token_id,eos_token_id,max_response_length,max_prompt_length) -> DataProto:
+def postprocess_batch(batch: DataProto, response_ids: list[list[int]], n: int,pad_token_id,eos_token_id,max_response_length,max_prompt_length) -> DataProto:
     # NOTE: For Completion API, batch_completions is a list of lists of strings (not dictionaries)
     # prompts: left pad
     # responses: right pad
@@ -317,11 +395,17 @@ async def llm_async_generate(
     #override_temperature: Optional[float] = None,
     lora_id: Optional[str] = None,
     agent_config: Optional[DictConfig] = None,
+    sample_num: Optional[int] = 1,  # Number of responses to generate per prompt
 ) -> DataProto:
     """Generate tokens from prompt ids or DataProto.
+    
+    Args:
+        sample_num: Number of different responses to generate for each prompt (default: 1).
+                   When > 1, the API will generate multiple diverse responses.
 
     Returns:
         DataProto: DataProto format output consistent with Router's generate_sequences.
+        List[str]: List of generated text responses (length = sample_num).
     """
 
     if application_id is None:
@@ -337,37 +421,80 @@ async def llm_async_generate(
     except Exception:
         pass
 
+    # Ensure loop-bound resources (aiohttp session, semaphore) are bound to the current event loop
+    try:
+        reset_event_loop_resources()
+    except Exception:
+        pass
+
 
     if mode == "train":
-        default_temp = 1.0
+        default_temp = 0.8
+        default_top_p = 0.9
+        default_top_k = 20
+        default_min_p = 0.0
     else:  # mode == "validate" or other
-        default_temp = 0.6 if enable_thinking else 0.0
+        if enable_thinking:
+            default_temp = 0.6
+            default_top_p = 0.95
+            default_top_k = 20
+            default_min_p = 0.0
+        else:
+            default_temp = 0.7
+            default_top_p = 0.8
+            default_top_k = 20
+            default_min_p = 0.0
     
     if agent_config is not None:
         if mode == "train":
             temp = getattr(agent_config, 'train_temperature', default_temp)
+            top_p = getattr(agent_config, 'train_top_p', default_top_p)
+            top_k = getattr(agent_config, 'train_top_k', default_top_k)
+            min_p = getattr(agent_config, 'train_min_p', default_min_p)
         else:  # mode == "validate" or other
             temp = getattr(agent_config, 'val_temperature', default_temp)
+            top_p = getattr(agent_config, 'val_top_p', default_top_p)
+            top_k = getattr(agent_config, 'val_top_k', default_top_k)
+            min_p = getattr(agent_config, 'val_min_p', default_min_p)
     else:
         temp = default_temp
+        top_p = default_top_p
+        top_k = default_top_k
+        min_p = default_min_p
+    
+    # Validate and fix empty or invalid values
+    if temp is None or temp == '' or (isinstance(temp, str) and not temp.strip()):
+        temp = default_temp
+    if top_p is None or top_p == '' or (isinstance(top_p, str) and not top_p.strip()):
+        top_p = default_top_p
+    if top_k is None or top_k == '' or (isinstance(top_k, str) and not top_k.strip()):
+        top_k = default_top_k
+    if min_p is None or min_p == '' or (isinstance(min_p, str) and not min_p.strip()):
+        min_p = default_min_p
+    
+    # Convert to proper types
+    temp = float(temp)
+    top_p = float(top_p)
+    top_k = int(top_k)
+    min_p = float(min_p)
     
     try:
-        print(f"[LLM][llm_async_generate] enable_thinking={enable_thinking} mode={mode} temperature={temp}")
+        print(f"[LLM][llm_async_generate] enable_thinking={enable_thinking} mode={mode} temperature={temp} top_p={top_p} top_k={top_k} min_p={min_p} sample_num={sample_num}")
     except Exception:
         pass
 
-    top_p=0.95
     kwargs={
-        "n":1,
+        "n": sample_num,  # Generate sample_num responses per prompt
         "temperature":temp,
         "top_p":top_p,
         "max_tokens":ppo_trainer_config.data.max_response_length,
-        "top_k":-1,
+        "top_k":top_k,
+        "min_p":min_p,
         "logprobs":1,
     }
     batch_size = len(prompt_dpr.non_tensor_batch["formatted_prompts"])
     batch_response_ids: list[list[int]] = [[] for _ in range(batch_size)]
-    text = ""  # Initialize text variable for return value
+    text_list = []  # Initialize text list for multiple samples
 
     # Determine which model to use: LoRA adapter or base model
     # In vllm, LoRA is selected by specifying the lora_name as the model parameter
@@ -394,7 +521,8 @@ async def llm_async_generate(
                 model=actual_model,  # Pass LoRA name or base model name
                 prompt=formatted_prompt,
                 max_retries=3, 
-                initial_retry_delay=1.0,  
+                initial_retry_delay=1.0,
+                timeout=timeout,  # Pass timeout to API call
                 **kwargs,
             )
         )
@@ -407,34 +535,40 @@ async def llm_async_generate(
     
     # Use return_exceptions=True to handle failures gracefully
     start_time = time.time()
+    print(f"[LLM][DEBUG] About to await {len(tasks)} API calls for rollout_idx={rollout_idx}, turn_idx={turn_idx}, agent_idx={agent_idx}")
+    print(f"[LLM][AWAIT_START] Waiting for asyncio.gather() at {time.time()}")
     completions_list = await asyncio.gather(*tasks, return_exceptions=True)
     elapsed_time = time.time() - start_time
+    print(f"[LLM][AWAIT_COMPLETE] asyncio.gather() completed at {time.time()}")
     
-    # 统计成功和失败的请求
     success_count = sum(1 for c in completions_list if not isinstance(c, Exception))
     error_count = len(completions_list) - success_count
     
-    try:
-        print(f"[LLM][batch_request] Completed in {elapsed_time:.2f}s: {success_count} success, {error_count} errors")
-    except Exception:
-        pass
+    print(f"[LLM][DEBUG] API calls completed in {elapsed_time:.2f}s: {success_count} success, {error_count} errors for rollout_idx={rollout_idx}")
     
     for batch_index, completions in enumerate(completions_list):
         comps = []
+        batch_texts = []
         
         # Handle exceptions from API calls
         if isinstance(completions, Exception):
             print(f"[ERROR] API call failed for batch {batch_index}: {completions}")
-            # Return empty token list as fallback
-            comps.append([tokenizer.eos_token_id])  # At least add EOS token
+            # Return empty token list as fallback for each sample
+            for _ in range(sample_num):
+                comps.append([tokenizer.eos_token_id])
+                batch_texts.append("")
             batch_response_ids[batch_index] = comps
+            text_list.extend(batch_texts)
             continue
             
         # Handle None or invalid responses
         if completions is None:
             print(f"[WARNING] Got None response for batch {batch_index}")
-            comps.append([tokenizer.eos_token_id])
+            for _ in range(sample_num):
+                comps.append([tokenizer.eos_token_id])
+                batch_texts.append("")
             batch_response_ids[batch_index] = comps
+            text_list.extend(batch_texts)
             continue
             
         # Normal processing
@@ -442,11 +576,14 @@ async def llm_async_generate(
             choices = completions.get("choices", [])
             if not choices:
                 print(f"[WARNING] No choices in response for batch {batch_index}")
-                comps.append([tokenizer.eos_token_id])
+                for _ in range(sample_num):
+                    comps.append([tokenizer.eos_token_id])
+                    batch_texts.append("")
             else:
                 for choice in choices:
                     token_ids = choice.get("logprobs", {}).get("tokens", [])
                     text = choice.get("text", "")
+                    batch_texts.append(text)
                     if token_ids:
                         token_ids = [int(t.split(":")[1]) for t in token_ids]
                         comps.append(token_ids)
@@ -456,19 +593,55 @@ async def llm_async_generate(
                         comps.append([tokenizer.eos_token_id])
         except Exception as e:
             print(f"[ERROR] Failed to process response for batch {batch_index}: {e}")
-            comps.append([tokenizer.eos_token_id])
+            for _ in range(sample_num):
+                comps.append([tokenizer.eos_token_id])
+                batch_texts.append("")
             
         batch_response_ids[batch_index] = comps
+        text_list.extend(batch_texts)
     pad_token_id = tokenizer.pad_token_id
     eos_token_id = tokenizer.eos_token_id
     max_response_length=ppo_trainer_config.data.max_response_length
     max_prompt_length=ppo_trainer_config.data.max_prompt_length
-    output_dpr = await postprocess_batch(prompt_dpr, batch_response_ids, kwargs["n"], pad_token_id, eos_token_id,max_response_length,max_prompt_length)
+    output_dpr = postprocess_batch(prompt_dpr, batch_response_ids, kwargs["n"], pad_token_id, eos_token_id,max_response_length,max_prompt_length)
     output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * output_dpr.batch.shape[0], dtype=object)
     output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * output_dpr.batch.shape[0], dtype=object)
     output_dpr.non_tensor_batch["turn_idx"] = np.array([turn_idx] * output_dpr.batch.shape[0], dtype=object)
     output_dpr.non_tensor_batch["agent_idx"] = np.array([agent_idx] * output_dpr.batch.shape[0], dtype=object)
-    return output_dpr, text
+
+    # Fallback: if text_list is empty but we have response token ids, decode to string
+    try:
+        if (not text_list or all(not t for t in text_list)) and tokenizer is not None:
+            # Decode all samples
+            if "responses" in output_dpr.batch:
+                text_list = []
+                for i in range(min(sample_num, output_dpr.batch["responses"].shape[0])):
+                    resp_ids_tensor = output_dpr.batch["responses"][i]
+                    # filter padding and eos
+                    valid_ids = [int(t) for t in resp_ids_tensor.tolist() if int(t) not in (pad_token_id, eos_token_id)]
+                    decoded = tokenizer.decode(valid_ids, skip_special_tokens=True)
+                    text_list.append(decoded or "")
+    except Exception:
+        # Keep empty text list if decoding fails
+        if not text_list:
+            text_list = [""] * sample_num
+
+    # Return format depends on sample_num:
+    # - sample_num=1: return single string (backward compatible)
+    # - sample_num>1: return list of strings
+    if sample_num == 1:
+        response = text_list[0] if text_list else ""
+        # Debug empty responses
+        if not response:
+            print(f"[WARNING] Empty response for rollout_idx={rollout_idx}, turn_idx={turn_idx}, agent_idx={agent_idx}")
+    else:
+        response = text_list
+        # Debug empty responses
+        if not response or all(not r for r in response):
+            print(f"[WARNING] All responses empty for rollout_idx={rollout_idx}, turn_idx={turn_idx}, agent_idx={agent_idx}")
+    
+    print(f"[LLM][FUNCTION_COMPLETE] llm_async_generate returning for rollout_idx={rollout_idx}, turn_idx={turn_idx}, agent_idx={agent_idx}")
+    return output_dpr, response
     
     
 

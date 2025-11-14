@@ -133,7 +133,11 @@ class ChatCompletionScheduler:
             max_cache_size: int, max cache size of request_id to address mapping.
         """
         self.config = config
-        self.model_name = "/".join(model_path.split("/")[-2:])
+        # Match vLLM's model registration logic
+        if "checkpoint" in model_path:
+            self.model_name = model_path
+        else:
+            self.model_name = "/".join(model_path.split("/")[-2:])
         local_path = copy_to_local(model_path)
         self.tokenizer = hf_tokenizer(local_path, trust_remote_code=True)
 

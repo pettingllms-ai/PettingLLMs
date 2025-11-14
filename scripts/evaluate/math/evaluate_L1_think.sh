@@ -35,7 +35,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "/home/nvidia/data/models/Qwen3-8B"
+    "/home/lah003/models/Qwen3-1.7B"
 )
 
 # Assuming execution from repository root
@@ -43,12 +43,12 @@ REPO_ROOT="$(pwd)"
 CONFIG_PATH="${REPO_ROOT}/pettingllms/config/math"
 CONFIG_NAME="math_L1_prompt"
 BENCHMARK="AIME24"
-MAX_TURNS=5
+MAX_TURNS=1
 BASE_VLLM_PORT=8201
 BASE_PROXY_PORT=8220
 MAX_PROMPT_LENGTH=8192
 MAX_RESPONSE_LENGTH=20000
-eval_temperature=0.6
+EVAL_TEMPERATURE=1
 GPU_START_ID=3
 ENABLE_THINKING=true
 HOST="127.0.0.1"
@@ -318,6 +318,8 @@ python3 -m pettingllms.evaluate.evaluate \
     resource.n_gpus_per_node=$TP_SIZE \
     agent_policy_configs.agent_configs.agent_0.enable_thinking=$ENABLE_THINKING \
     agent_policy_configs.agent_configs.agent_1.enable_thinking=$ENABLE_THINKING \
+    agent_policy_configs.agent_configs.agent_0.val_temperature=$EVAL_TEMPERATURE \
+    agent_policy_configs.agent_configs.agent_1.val_temperature=$EVAL_TEMPERATURE \
     resource.nnodes=1 \
     models.model_0.ppo_trainer_config.actor_rollout_ref.rollout.tensor_model_parallel_size=$TP_SIZE \
     models.model_0.ppo_trainer_config.actor_rollout_ref.trainer.n_gpus_per_node=$TP_SIZE \

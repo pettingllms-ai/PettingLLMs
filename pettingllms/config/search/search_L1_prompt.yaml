@@ -53,7 +53,7 @@ multi_agent_interaction:
   turn_order: ["search_reasoning_agent", "web_search_agent"]
   # Number of agents that interact per episode
   num_interacting_agents: 2
-  parallel: true
+  parallel: false
 
 
 training:
@@ -66,11 +66,10 @@ training:
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
   train_sample_num: 8
-  validate_sample_num: 5
+  validate_sample_num: 1
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}

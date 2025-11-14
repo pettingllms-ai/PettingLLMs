@@ -69,7 +69,7 @@ def prompt_blocksworld(turn_idx: int, state: Any) -> str:
             "[ {\"move\": [\"B\",\"table\"]}, {\"move\": [\"C\",\"B\"]} ]\n"
         )
 
-def prompt_sudoku4x4(turn_idx: int, state: Any) -> str:
+def prompt_suduku(turn_idx: int, state: Any) -> str:
     puzzle = getattr(state, "puzzle", None) or getattr(state, "init_grid", None)
     size = getattr(state, "size", 4)  # Dynamically get sudoku size
     
@@ -108,8 +108,6 @@ def prompt_sokoban(turn_idx: int, state: Any) -> str:
     method_hints = (
         "Hints: \n"
         "- Enumerate pushable moves: to push a box at (br,bc) by (dr,dc), ensure player can reach (br-dr,bc-dc) and the destination (br+dr,bc+dc) is empty and not a wall/box.\n"
-        "- Use BFS/A* over (player_pos, boxes) with macro-actions as pushes; pathfind player to the push position using BFS (boxes as obstacles).\n"
-        "- Heuristics: sum of Manhattan distances from boxes to nearest goals; prefer moves that increase boxes-on-goals.\n"
         "- Deadlock avoidance: avoid pushing boxes into corners or along walls where no goal exists; avoid locking two boxes side-by-side against walls.\n"
         "- If cannot solve fully, return a short valid push sequence.\n\n"
     )
@@ -140,12 +138,9 @@ def prompt_code_sokoban(turn_idx: int, state: Any) -> str:
         f"{observation}\n"
         "```\n\n"
         "Your code must:\n"
-        "1) Be enclosed in a single ```python ... ``` block.\n"
-        "2) Define solve_sokoban(observation: str) -> List[str].\n"
-        "3) Compute the actions from the given observation.\n"
-        "4) Print the final result using EXACTLY one of these formats (prefer the first):\n"
-        "   - **Actions List**: [\"U\",\"R\",\"D\",\"L\"]\n"
-        "   - Actions: [\"U\",\"R\",\"D\",\"L\"]\n\n"
+        "1) print the final result.\n"
+        "2) Compute the actions from the given observation.\n"
+        "3) Print the final result using print() function.\n"
         "Rules:\n"
         "- The player moves U/D/L/R and cannot pass through walls; to push a box, you must move into it and the destination cell behind must be empty or a goal.\n"
         "- Success: all boxes are on goals.\n\n"
@@ -153,6 +148,10 @@ def prompt_code_sokoban(turn_idx: int, state: Any) -> str:
         "- If you cannot fully solve it, still print a short valid sequence that makes progress.\n\n"
         "template:\n"
         "```python\n"
+        "def solve_sokoban(observation: str) -> List[str]:\n"
+        "    # Your implementation here\n"
+        "    return []  # Replace with actual move list\n\n"
+        "print('**Actions List**:', solve_sokoban(observation))\n"
         "```\n"
     )
 
@@ -160,7 +159,7 @@ PROMPT_BUILDERS = {
     "plan_path": prompt_plan_path,
     "eight_queens": prompt_eight_queens,
     "blocksworld": prompt_blocksworld,
-    "sudoku4x4": prompt_sudoku4x4,
+    "suduku": prompt_suduku,
     "sokoban": prompt_sokoban,
 }
 
@@ -169,7 +168,7 @@ PROMPT_TOOL_CALL_BUILDERS = {
     "plan_path": prompt_plan_path,
     "eight_queens": prompt_eight_queens,
     "blocksworld": prompt_blocksworld,
-    "sudoku4x4": prompt_sudoku4x4,
+    "suduku": prompt_suduku,
     "sokoban": prompt_code_sokoban,
 }
 

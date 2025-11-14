@@ -64,6 +64,7 @@ class MultiAgentsPPOTrainer:
         if config.specialization == "lora" and len(config.models) == 1:
             self.lora_differ_mode = True
         self.agent_lora_mapping = {}  # Maps agent_name to lora_id
+        self.best_success_rate = -1.0  # Track best validation success rate
         # Initialize agent_policy_mapping from agent_policy_configs
         self.agent_policy_mapping = {}
         if hasattr(config, 'agent_policy_configs') and hasattr(config.agent_policy_configs, 'agent_configs'):
@@ -464,7 +465,7 @@ class MultiAgentsPPOTrainer:
                     self.agent_execution_engine.init_agents_and_envs(mode="train",step_idx=i)
                     for model_name,rollout_engine in self.rollout_engine_dict.items():
                         rollout_engine.wake_up()
-                    gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list,rollout_mode=self.config.get("sample_mode","no_tree")))
+                    gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list,rollout_mode=self.config.get("rollout_mode","no_tree")))
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         dp_world_size = trainer.actor_rollout_wg.world_size
                         batch_per_trainer_temp = self._pad_dataproto_to_world_size(
@@ -484,213 +485,64 @@ class MultiAgentsPPOTrainer:
                     for model_name,rollout_engine in self.rollout_engine_dict.items():
                         rollout_engine.sleep()
                 
-                # Sort trajectories by their idx, to ensure they are in order.
                 timing_raw = {}
                 with simple_timer("update_parameters", timing_raw):
-                    # Apply UID assignment and filtering for each model based on their config
+                    # Apply UID assignment and filtering for each model
                     sample_num = self.config.training.train_sample_num
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         if model_name in batch_per_trainer and batch_per_trainer[model_name].batch is not None:
                             filter_ratio = getattr(trainer.config, 'filter_ratio', 0.0)
                             filter_method = getattr(trainer.config, 'filter_method', 'uid')
-                            colorful_print(f"Model {model_name}: Applying filter ratio={filter_ratio}, method={filter_method}", "cyan")
                             batch_per_trainer[model_name] = self._assign_consistent_uids(
                                 batch_per_trainer[model_name], 
                                 filter_ratio=filter_ratio, 
                                 mode=filter_method, 
-                                sample_num=sample_num
+                                sample_num=sample_num,
+                                rollout_mode=self.config.get("rollout_mode","no_tree")
                             )
                     
-                    # Track metrics from all trainers
                     all_trainer_metrics = {}
                     
-                    def update_single_trainer(model_name, batch, trainer, agent_name=None):
-                        
+                    def update_single_trainer(model_name, batch, trainer):
                         try:
-                           
                             local_timing_raw = {}
-                         
                             self._update_parameters(batch, trainer, local_timing_raw)
                             
+                            trainer_metrics = batch.meta_info.get('metrics', {}) if hasattr(batch, 'meta_info') else {}
+                            agent_names = batch.non_tensor_batch.get('agent_name') if hasattr(batch, 'non_tensor_batch') else None
                             
-                            trainer_metrics = {}
-                            if hasattr(batch, 'meta_info') and 'metrics' in batch.meta_info:
-                                trainer_metrics = batch.meta_info['metrics']
-                            
-                           
-                            agent_names = None
-                            if hasattr(batch, 'non_tensor_batch') and 'agent_name' in batch.non_tensor_batch:
-                                agent_names = batch.non_tensor_batch['agent_name']
-                            
-                            return {
-                                "status": "success",
-                                "model_name": model_name,
-                                "agent_name": agent_name,
-                                "timing": local_timing_raw,
-                                "metrics": trainer_metrics,
-                                "agent_names": agent_names
-                            }
+                            return {"status": "success", "model_name": model_name, "timing": local_timing_raw, 
+                                    "metrics": trainer_metrics, "agent_names": agent_names}
                         except Exception as e:
                             import traceback
-                            return {
-                                "status": "error",
-                                "model_name": model_name,
-                                "agent_name": agent_name,
-                                "error": str(e),
-                                "traceback": traceback.format_exc()
-                            }
+                            return {"status": "error", "model_name": model_name, "error": str(e), 
+                                    "traceback": traceback.format_exc()}
                     
-              
-                    tasks_to_submit = []
-                    
-                    # Both LoRA differ mode and standard mode: one task per model
-                    # The _update_parameters function will handle agent splitting internally for LoRA differ mode
+                    # Update trainers
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         if model_name in gen_batch_output_per_policy:
-                            tasks_to_submit.append((model_name, batch_per_trainer[model_name], trainer, None))
-                            if self.lora_differ_mode:
-                                colorful_print(f"  Scheduled update for model {model_name} (LoRA differ mode - will update all agents)", "blue")
-                            else:
-                                colorful_print(f"  Scheduled update for model: {model_name}", "blue")
-                    
-                    if not tasks_to_submit:
-                        colorful_print("No trainers to update", "yellow")
-                    else:
-                        # For single model or to avoid threading issues with Ray, use sequential execution
-                        if len(tasks_to_submit) == 1:
-                            colorful_print(f"Starting sequential parameter update for {len(tasks_to_submit)} trainer...", "cyan")
-                            results = []
-                            for task in tasks_to_submit:
-                                model_name, batch, trainer, agent_name = task
-                                task_id = f"{model_name}" + (f"_agent_{agent_name}" if agent_name else "")
-                                colorful_print(f"  Updating: {task_id}", "blue")
-                                result = update_single_trainer(model_name, batch, trainer, agent_name)
-                                results.append(result)
-                                
-                                # Check for errors immediately and stop training
-                                if result["status"] == "error":
-                                    colorful_print(f"\n{'='*80}", "red")
-                                    colorful_print(f"✗ TRAINING STOPPED - Error in trainer: {result['model_name']}", "red")
-                                    if result.get('agent_name'):
-                                        colorful_print(f"  Agent: {result['agent_name']}", "red")
-                                    colorful_print(f"  Error: {result['error']}", "red")
-                                    colorful_print(f"{'='*80}", "red")
-                                    colorful_print(f"Traceback:", "red")
-                                    colorful_print(f"{result['traceback']}", "red")
-                                    colorful_print(f"{'='*80}\n", "red")
-                                    raise RuntimeError(f"Training failed for trainer '{result['model_name']}': {result['error']}")
-                                
-                                colorful_print(f"  ✓ Completed: {task_id}", "green")
-                        else:
-                            colorful_print(f"Starting parallel parameter updates for {len(tasks_to_submit)} trainers...", "cyan")
+                            result = update_single_trainer(model_name, batch_per_trainer[model_name], trainer)
                             
-                            with ThreadPoolExecutor(max_workers=len(tasks_to_submit)) as executor:
-                             
-                                futures = {}
-                                for task in tasks_to_submit:
-                                    model_name, batch, trainer, agent_name = task
-                                        
-                                    future = executor.submit(update_single_trainer, model_name, batch, trainer, agent_name)
-                                    task_id = f"{model_name}" + (f"_agent_{agent_name}" if agent_name else "")
-                                    futures[future] = task_id
-                                    colorful_print(f"  Submitted update task for: {task_id}", "blue")
-                                
-                          
-                                update_pbar = tqdm(total=len(futures), desc="Updating Parameters", position=2, leave=False)
-                    
-                                results = []
-                                for future in as_completed(futures):
-                                    result = future.result()
-                                    results.append(result)
-                                    
-                                    # Check for errors immediately and stop training
-                                    if result["status"] == "error":
-                                        update_pbar.close()
-                                        colorful_print(f"\n{'='*80}", "red")
-                                        colorful_print(f"✗ TRAINING STOPPED - Error in trainer: {result['model_name']}", "red")
-                                        if result.get('agent_name'):
-                                            colorful_print(f"  Agent: {result['agent_name']}", "red")
-                                        colorful_print(f"  Error: {result['error']}", "red")
-                                        colorful_print(f"{'='*80}", "red")
-                                        colorful_print(f"Traceback:", "red")
-                                        colorful_print(f"{result['traceback']}", "red")
-                                        colorful_print(f"{'='*80}\n", "red")
-                                        # Cancel remaining futures
-                                        for f in futures.keys():
-                                            if not f.done():
-                                                f.cancel()
-                                        raise RuntimeError(f"Training failed for trainer '{result['model_name']}': {result['error']}")
-                                    
-                                    update_pbar.update(1)
-                                    task_desc = result.get('model_name', 'unknown')
-                                    if result.get('agent_name'):
-                                        task_desc += f"_agent_{result['agent_name']}"
-                                    update_pbar.set_description(f"Updated {task_desc}")
-                                
-                                update_pbar.close()
-                        
-                      
-                        success_count = 0
-                        for result in results:
-                            if result["status"] == "success":
-                                model_name = result["model_name"]
-                                agent_name = result.get("agent_name")
-                                task_desc = model_name + (f" (agent: {agent_name})" if agent_name else "")
-                                colorful_print(f"✓ Updated parameters for: {task_desc}", "green")
-                                success_count += 1
-                                
-                               
-                                for key, value in result["timing"].items():
-                                    if key in timing_raw:
-                                        timing_raw[key] = max(timing_raw[key], value)
-                                    else:
-                                        timing_raw[key] = value
-                        
-                                trainer_metrics = result["metrics"]
-                                agent_names = result["agent_names"]
-                                
-                                # Check if we have agent_name information to split metrics by agent
-                                if agent_names is not None:
-                                    unique_agents = list(set(agent_names))
-                                    # Split metrics by agent
-                                    for agent_name in unique_agents:
-                                        for key, value in trainer_metrics.items():
-                                            prefixed_key = f"agent_{agent_name}/{key}"
-                                            all_trainer_metrics[prefixed_key] = value
-                                else:
-                                    # Fallback: use model name prefix (for backward compatibility)
+                            if result["status"] == "error":
+                                colorful_print(f"Training failed for {result['model_name']}: {result['error']}", "red")
+                                raise RuntimeError(f"Training failed: {result['error']}")
+                            
+                            # Merge timing metrics
+                            for key, value in result["timing"].items():
+                                timing_raw[key] = max(timing_raw.get(key, 0), value)
+                            
+                            # Merge trainer metrics by agent
+                            trainer_metrics = result["metrics"]
+                            agent_names = result["agent_names"]
+                            if agent_names is not None:
+                                for agent_name in set(agent_names):
                                     for key, value in trainer_metrics.items():
-                                        prefixed_key = f"model_{model_name}/{key}"
-                                        all_trainer_metrics[prefixed_key] = value
-                        
-                        colorful_print(f"All {success_count} trainers updated successfully!", "green")
+                                        all_trainer_metrics[f"agent_{agent_name}/{key}"] = value
+                            else:
+                                for key, value in trainer_metrics.items():
+                                    all_trainer_metrics[f"model_{model_name}/{key}"] = value
                     
-                    # Add trainer metrics to main metrics
                     metrics.update(all_trainer_metrics)
-                
-
-                #save checkpoint done
-                save_freq = self.config.training.get("save_freq", 0)
-                if save_freq > 0 and self.global_steps % save_freq == 0 and self.global_steps != 1:
-                    with simple_timer("save_checkpoint", timing_raw):
-                        from datetime import datetime
-                        import os
-                        
-                        # Generate checkpoint path: checkpoint/date/experiment_name/policy
-                        current_time = datetime.now()
-                        date_str = current_time.strftime("%Y%m%d")
-                        experiment_name = self.config.training.experiment_name
-                        
-                        for model_name, trainer in self.ppo_trainer_dict.items():
-                            # checkpoint/date/experiment_name/policy_name
-                            checkpoint_dir = getattr(self.config.training, 'checkpoint_dir', 'checkpoint')
-                            checkpoint_dir = os.path.join(checkpoint_dir, date_str, experiment_name, model_name)
-                            os.makedirs(checkpoint_dir, exist_ok=True)
-                            
-                            colorful_print(f"Saving checkpoint for trainer {model_name} to: {checkpoint_dir}", "cyan")
-                            
-                            
-                            trainer._save_checkpoint()
 
             # TODO: collect metrics
             # Use the first trainer's batch for metrics calculation
@@ -750,24 +602,33 @@ class MultiAgentsPPOTrainer:
         for _, rollout_engine in self.rollout_engine_dict.items():
             rollout_engine.wake_up()
             
-        gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list))
+        gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list, rollout_mode="no_tree"))
         for model_name,rollout_engine in self.rollout_engine_dict.items():
             rollout_engine.sleep()
         for model_name in self.ppo_trainer_dict.keys():
             if batch_per_trainer[model_name].batch is None:
-            # If empty, assi`gn directly
                 batch_per_trainer[model_name] = gen_batch_output_per_policy[model_name]
             else:
-                # Use concat instead of union, because each response content is different
                 batch_per_trainer[model_name] = DataProto.concat([
                     batch_per_trainer[model_name], 
                     gen_batch_output_per_policy[model_name]
                 ])
         for model_name,rollout_engine in self.rollout_engine_dict.items():
             rollout_engine.sleep()
+        
+        # Calculate success metrics from env state
         total_rollout_num = len(self.agent_execution_engine.rollout_idx_list)
         success_rollout_rate_dict: Dict[str, float] = {}
         success_turn_ave_dict: Dict[str, float] = {}
+        env_state_success_count = 0
+        
+        # Count success from env.state
+        for env in self.agent_execution_engine.envs:
+            if hasattr(env, 'state') and hasattr(env.state, 'success') and env.state.success:
+                env_state_success_count += 1
+        
+        env_success_rate = env_state_success_count / total_rollout_num if total_rollout_num > 0 else 0.0
+        
         for agent_name in self.agent_execution_engine.turn_order:
             success_rollout_num = len(
                 set(self.agent_execution_engine.success_rollout_idx_list_dict.get(agent_name, []))
@@ -780,6 +641,7 @@ class MultiAgentsPPOTrainer:
                 success_rollout_num / total_rollout_num if total_rollout_num > 0 else 0.0
             )
             success_turn_ave_dict[agent_name] = success_ave_turn
+        
         validation_metrics = {}
         for agent_name in self.agent_execution_engine.turn_order:
             success_rate = success_rollout_rate_dict.get(agent_name, 0.0)
@@ -787,12 +649,55 @@ class MultiAgentsPPOTrainer:
             
             validation_metrics[f"validation/agent_{agent_name}/success_rate"] = success_rate
             validation_metrics[f"validation/agent_{agent_name}/avg_turns"] = avg_turns
+        
         if success_rollout_rate_dict:
             success_rates = list(success_rollout_rate_dict.values())
             avg_turns_list = list(success_turn_ave_dict.values())
             
             validation_metrics["validation/average/success_rate"] = sum(success_rates) / len(success_rates)
             validation_metrics["validation/average/avg_turns"] = sum(avg_turns_list) / len(avg_turns_list)
+        
+        validation_metrics["validation/env_state_success_rate"] = env_success_rate
+        
+        # Save checkpoint if enabled and this is the best validation result
+        if_save = getattr(self.config.training, 'if_save', False)
+
+        if if_save:
+            if self.global_steps == 0:
+                colorful_print(f"Skip saving checkpoint at step 0. Current env success rate: {env_success_rate:.4f}", "yellow")
+            elif env_success_rate > self.best_success_rate:
+                self.best_success_rate = env_success_rate
+                colorful_print(f"New best env success rate: {env_success_rate:.4f}, saving checkpoint...", "green")
+
+                from datetime import datetime
+                import os
+                import shutil
+
+                current_time = datetime.now()
+                date_str = current_time.strftime("%Y%m%d")
+                experiment_name = self.config.training.experiment_name
+
+                for model_name, trainer in self.ppo_trainer_dict.items():
+                    checkpoint_dir = getattr(self.config.training, 'checkpoint_dir', 'checkpoint')
+                    checkpoint_dir = os.path.join(checkpoint_dir, date_str, experiment_name, model_name)
+
+                    # Delete old checkpoint directory if it exists to prevent OOM
+                    if os.path.exists(checkpoint_dir):
+                        try:
+                            colorful_print(f"Deleting old checkpoint directory: {checkpoint_dir}", "yellow")
+                            shutil.rmtree(checkpoint_dir)
+                            colorful_print(f"Old checkpoint deleted successfully", "green")
+                        except Exception as e:
+                            colorful_print(f"Warning: Failed to delete old checkpoint: {e}", "red")
+
+                    os.makedirs(checkpoint_dir, exist_ok=True)
+
+                    colorful_print(f"Saving best checkpoint for {model_name} to: {checkpoint_dir}", "cyan")
+                    trainer._save_checkpoint()
+            else:
+                colorful_print(f"Current env success rate: {env_success_rate:.4f} (best: {self.best_success_rate:.4f})", "yellow")
+        else:
+            colorful_print(f"Checkpoint saving disabled (if_save=False). Current env success rate: {env_success_rate:.4f}", "yellow")
             
         return validation_metrics
     
@@ -802,7 +707,7 @@ class MultiAgentsPPOTrainer:
         # for the padded dataproto, make the traj mask to 0. is_last_step also False
         return batch
     
-    def _assign_consistent_uids(self, data_proto, filter_ratio=0.0, mode="mean", sample_num=1):
+    def _assign_consistent_uids(self, data_proto, filter_ratio=0.0, mode="mean", sample_num=1, rollout_mode="no_tree"):
         """
         Assign consistent UIDs to data and optionally filter based on rewards.
         
@@ -839,7 +744,10 @@ class MultiAgentsPPOTrainer:
         
         uids = []
         for i in range(len(data_proto)):
-            key = (rollout_indices[i]//sample_num, turn_indices[i], agent_indices[i])
+            if rollout_mode == "no_tree":
+                key = (rollout_indices[i],)
+            else:
+                key = (rollout_indices[i]//sample_num, turn_indices[i], agent_indices[i])
             if key not in uid_mapping:
                 uid_mapping[key] = str(uuid.uuid4())
             uid = uid_mapping[key]
@@ -864,21 +772,41 @@ class MultiAgentsPPOTrainer:
             return np.var(rewards_in_group, ddof=0) / (rng ** 2)
         
         sample_to_remove = set()
-        if filter_ratio > 0:
-            # calculate the variance of each uid group
-            if mode == "dapo":
-                uids_to_remove = []
-                for uid, samples in uid_reward_groups.items():
-                    rewards_in_group = [s[1] for s in samples]
-                    variance = range_normalized_variance(rewards_in_group)
-                    if variance==0:
-                        uids_to_remove.append(uid)
-                for uid in uids_to_remove:
-                    if uid in uid_reward_groups:
-                        for sample_idx, reward_val in uid_reward_groups[uid]:
-                            sample_to_remove.add(sample_idx)
+        if rollout_mode == "no_tree":
+            # For no_tree mode, keep only samples with maximum turn_indices for each env
+            env_max_turn = {}
+            for i in range(len(data_proto)):
+                env_id = rollout_indices[i]
+                turn_id = turn_indices[i]
+                if env_id not in env_max_turn:
+                    env_max_turn[env_id] = turn_id
+                else:
+                    env_max_turn[env_id] = max(env_max_turn[env_id], turn_id)
+            
+            # Mark samples with non-maximum turn_indices for removal
+            for i in range(len(data_proto)):
+                env_id = rollout_indices[i]
+                turn_id = turn_indices[i]
+                if turn_id < env_max_turn[env_id]:
+                    sample_to_remove.add(i)
+            
+            colorful_print(f"no_tree mode: keeping only max turn_indices samples, removing {len(sample_to_remove)} samples", "yellow")
+        elif mode == "dapo":
+            uids_to_remove = []
+            for uid, samples in uid_reward_groups.items():
+                rewards_in_group = [s[1] for s in samples]
+                variance = range_normalized_variance(rewards_in_group)
+                if variance==0:
+                    uids_to_remove.append(uid)
+            for uid in uids_to_remove:
+                if uid in uid_reward_groups:
+                    for sample_idx, reward_val in uid_reward_groups[uid]:
+                        sample_to_remove.add(sample_idx)
 
-            elif mode == "std":
+        elif filter_ratio > 0:
+            # calculate the variance of each uid group
+            
+            if mode == "std":
                 uid_variances = {}
                 for uid, samples in uid_reward_groups.items():
                     if len(samples) > 1:
@@ -957,7 +885,7 @@ class MultiAgentsPPOTrainer:
         return data_proto
     
     def _cleanup_llm_servers(self, servers):
-        """清理 LLM servers"""
+       
         for server in servers:
             try:
                 ray.kill(server)
@@ -966,25 +894,57 @@ class MultiAgentsPPOTrainer:
                 colorful_print(f"Error killing LLM server {server}: {e}", "red")
     
     def cleanup(self):
-        """清理所有资源"""
+        """Clean up all resources including trainers and resource pools"""
         try:
-            # 清理 LLM servers
+            colorful_print("Starting MultiAgentsPPOTrainer cleanup...", "yellow")
+
+            # Clean up execution engine
+            if hasattr(self, 'agent_execution_engine') and self.agent_execution_engine is not None:
+                try:
+                    if hasattr(self.agent_execution_engine, 'cleanup'):
+                        self.agent_execution_engine.cleanup()
+                    colorful_print("Cleaned up agent_execution_engine", "yellow")
+                except Exception as e:
+                    colorful_print(f"Error cleaning up agent_execution_engine: {e}", "red")
+
+            # Clean up LLM servers
             if hasattr(self, 'llm_servers') and self.llm_servers:
                 colorful_print("Cleaning up LLM servers...", "yellow")
                 self._cleanup_llm_servers(self.llm_servers)
                 self.llm_servers.clear()
-            
-            # 清理 PPO trainers
+
+            # Clean up PPO trainers
             if hasattr(self, 'ppo_trainer_dict'):
+                colorful_print(f"Cleaning up {len(self.ppo_trainer_dict)} PPO trainers...", "yellow")
                 for model_name, trainer in self.ppo_trainer_dict.items():
                     try:
-                        # 如果 trainer 有清理方法，调用它
+                        # Call the trainer's cleanup method
                         if hasattr(trainer, 'cleanup'):
                             trainer.cleanup()
                         colorful_print(f"Cleaned up trainer for model: {model_name}", "yellow")
                     except Exception as e:
                         colorful_print(f"Error cleaning up trainer for {model_name}: {e}", "red")
-            
+                self.ppo_trainer_dict.clear()
+
+            # Clean up resource pool managers
+            if hasattr(self, 'resource_pool_manager') and self.resource_pool_manager is not None:
+                try:
+                    if isinstance(self.resource_pool_manager, list):
+                        colorful_print(f"Cleaning up {len(self.resource_pool_manager)} resource pool managers...", "yellow")
+                        for i, manager in enumerate(self.resource_pool_manager):
+                            try:
+                                if hasattr(manager, 'cleanup'):
+                                    manager.cleanup()
+                                colorful_print(f"Cleaned up resource pool manager {i}", "yellow")
+                            except Exception as e:
+                                colorful_print(f"Error cleaning up resource pool manager {i}: {e}", "red")
+                    else:
+                        if hasattr(self.resource_pool_manager, 'cleanup'):
+                            self.resource_pool_manager.cleanup()
+                        colorful_print("Cleaned up resource_pool_manager", "yellow")
+                except Exception as e:
+                    colorful_print(f"Error cleaning up resource_pool_manager: {e}", "red")
+
             colorful_print("Multi-agent trainer cleanup completed", "green")
         except Exception as e:
             colorful_print(f"Error during cleanup: {e}", "red")
