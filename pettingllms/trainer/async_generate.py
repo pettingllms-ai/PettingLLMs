@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from openai.types.completion import Completion
 from datetime import datetime, timedelta
 import aiohttp
+import atexit
 
 _shared_session = None
 _session_lock = None
@@ -75,66 +76,114 @@ def reset_event_loop_resources():
 
 
 async def get_shared_session() -> aiohttp.ClientSession:
+    """Get or create a shared aiohttp session (thread-safe, event loop safe)"""
+    global _shared_session
 
-    global _shared_session, _session_lock
-    
-    # Ensure lock is created in current event loop
-    if _session_lock is None:
-        _session_lock = asyncio.Lock()
-    
-    async with _session_lock:
+    # Quick check without lock
+    if _shared_session is not None and not _shared_session.closed:
+        return _shared_session
+
+    # Import threading for thread-safe initialization
+    import threading
+    if not hasattr(get_shared_session, '_init_lock'):
+        get_shared_session._init_lock = threading.Lock()
+
+    # Thread-safe session creation
+    with get_shared_session._init_lock:
+        # Double-check after acquiring lock
         if _shared_session is None or _shared_session.closed:
             connector = aiohttp.TCPConnector(
-                limit=200,  
-                limit_per_host=100,  
-                ttl_dns_cache=300,  
-                force_close=False,  
-                enable_cleanup_closed=True  
+                limit=200,
+                limit_per_host=100,
+                ttl_dns_cache=300,
+                force_close=False,
+                enable_cleanup_closed=True
             )
-            
+
             timeout = aiohttp.ClientTimeout(
-                total=300,  
-                connect=30,  
-                sock_read=300  
+                total=300,
+                connect=30,
+                sock_read=300
             )
-            
+
             _shared_session = aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout
             )
-            print(f"[Session] Created shared aiohttp session with connection pool (limit=200, per_host=100)")
-    
+            print(f"[Session] Created shared aiohttp session (pid={os.getpid()}) with connection pool (limit=200, per_host=100)")
+
     return _shared_session
 
 
 async def get_llm_semaphore(max_concurrent: int = 50) -> asyncio.Semaphore:
+    """Get or create a semaphore (thread-safe, event loop safe)"""
+    global _llm_request_semaphore
 
-    global _llm_request_semaphore, _semaphore_lock
-    
-    # Ensure lock is created in current event loop
-    if _semaphore_lock is None:
-        _semaphore_lock = asyncio.Lock()
-    
-    async with _semaphore_lock:
+    # Quick check without lock
+    if _llm_request_semaphore is not None:
+        return _llm_request_semaphore
+
+    # Import threading for thread-safe initialization
+    import threading
+    if not hasattr(get_llm_semaphore, '_init_lock'):
+        get_llm_semaphore._init_lock = threading.Lock()
+
+    # Thread-safe semaphore creation
+    with get_llm_semaphore._init_lock:
+        # Double-check after acquiring lock
         if _llm_request_semaphore is None:
             _llm_request_semaphore = asyncio.Semaphore(max_concurrent)
-            print(f"[Semaphore] Created global LLM request semaphore with max_concurrent={max_concurrent}")
+            print(f"[Semaphore] Created LLM request semaphore (pid={os.getpid()}) with max_concurrent={max_concurrent}")
     
     return _llm_request_semaphore
 
 
 async def cleanup_shared_session():
-    
+    """Async cleanup of shared aiohttp session"""
     global _shared_session, _session_lock
-    
+
     if _session_lock is None:
         _session_lock = asyncio.Lock()
-    
+
     async with _session_lock:
         if _shared_session is not None and not _shared_session.closed:
             await _shared_session.close()
             _shared_session = None
             print("[Session] Closed shared aiohttp session")
+
+
+def cleanup_shared_session_sync():
+    """Synchronous cleanup for atexit handler"""
+    global _shared_session
+
+    if _shared_session is not None and not _shared_session.closed:
+        try:
+            # Try to get event loop and run cleanup
+            try:
+                loop = asyncio.get_event_loop()
+                if not loop.is_closed():
+                    loop.run_until_complete(_shared_session.close())
+                    print("[Session] Closed shared aiohttp session on exit")
+            except RuntimeError:
+                # No event loop, try to close synchronously
+                # This will trigger warnings but is better than leaving connections open
+                try:
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        # Force close without event loop (will show deprecation warning in aiohttp 4.0+)
+                        if hasattr(_shared_session, '_connector'):
+                            _shared_session._connector._close()
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[Session] Error during exit cleanup: {e}")
+        finally:
+            _shared_session = None
+
+
+# Register cleanup on process exit
+atexit.register(cleanup_shared_session_sync)
 
 
 

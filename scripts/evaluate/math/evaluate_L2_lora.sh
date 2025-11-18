@@ -35,7 +35,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "your model path"
+    "/home/nvidia/data/models/Qwen3-8B"
 )
 
 # LoRA Configuration
@@ -54,12 +54,11 @@ CONFIG_PATH="${REPO_ROOT}/pettingllms/config/math"
 CONFIG_NAME="math_L2_lora"  # 使用 LoRA 配置文件
 BENCHMARK="AIME24"
 MAX_TURNS=5
-EVAL_TEMPERATURE=0
+EVAL_TEMPERATURE=0.6
 BASE_VLLM_PORT=8001
 BASE_PROXY_PORT=8020
 MAX_PROMPT_LENGTH=8192
 MAX_RESPONSE_LENGTH=8192
-eval_temperature=0.6
 GPU_START_ID=0
 ENABLE_THINKING=false
 HOST="127.0.0.1"

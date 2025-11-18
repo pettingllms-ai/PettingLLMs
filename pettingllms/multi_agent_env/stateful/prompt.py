@@ -139,10 +139,8 @@ def prompt_code_sokoban(turn_idx: int, state: Any) -> str:
         "```\n\n"
         "Your code must:\n"
         "1) print the final result.\n"
-        "2) Define solve_sokoban(observation: str) -> List[str].\n"
-        "3) Compute the actions from the given observation.\n"
-        "4) Print the final result using EXACTLY one of these formats:\n"
-        "   - **Actions List**: [\"U\",\"R\",\"D\",\"L\"]\n"
+        "2) Compute the actions from the given observation.\n"
+        "3) Print the final result using print() function.\n"
         "Rules:\n"
         "- The player moves U/D/L/R and cannot pass through walls; to push a box, you must move into it and the destination cell behind must be empty or a goal.\n"
         "- Success: all boxes are on goals.\n\n"
@@ -150,6 +148,10 @@ def prompt_code_sokoban(turn_idx: int, state: Any) -> str:
         "- If you cannot fully solve it, still print a short valid sequence that makes progress.\n\n"
         "template:\n"
         "```python\n"
+        "def solve_sokoban(observation: str) -> List[str]:\n"
+        "    # Your implementation here\n"
+        "    return []  # Replace with actual move list\n\n"
+        "print('**Actions List**:', solve_sokoban(observation))\n"
         "```\n"
     )
 

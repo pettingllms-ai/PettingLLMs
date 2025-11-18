@@ -28,6 +28,37 @@ class MathEnvState:
     aggregation_answer: str = None
     aggregation_is_correct: bool = False
     ground_truth_answer: str = None
+    
+    def to_dict(self):
+        """Convert state to dictionary for logging."""
+        return {
+            'problem': self.problem,
+            'reasoning_generated_solution': self.reasoning_generated_solution,
+            'code_generated_solution': self.code_generated_solution,
+            'reasoning_extracted_answer': self.reasoning_extracted_answer,
+            'code_extracted_answer': self.code_extracted_answer,
+            'reasoning_is_correct': self.reasoning_is_correct,
+            'code_is_correct': self.code_is_correct,
+            'code_reasoning_aligned': self.code_reasoning_aligned,
+            'aggregation_answer': self.aggregation_answer,
+            'aggregation_is_correct': self.aggregation_is_correct,
+            'ground_truth_answer': self.ground_truth_answer,
+            'reasoning_solution_count': len(self.reasoning_generated_solution_list),
+            'code_solution_count': len(self.code_generated_solution_list),
+        }
+    
+    def to_dict_compact(self, agent_name: str = None):
+        """Convert state to compact dictionary for reduced logging."""
+        return {
+            'reasoning_correct': self.reasoning_is_correct,
+            'code_correct': self.code_is_correct,
+            'aligned': self.code_reasoning_aligned,
+            'aggregation_correct': self.aggregation_is_correct,
+            'solutions_count': {
+                'reasoning': len(self.reasoning_generated_solution_list),
+                'code': len(self.code_generated_solution_list)
+            }
+        }
 class MathEnv(Env):
     """
     Environment for mathematical problem solving tasks with single-agent interaction.

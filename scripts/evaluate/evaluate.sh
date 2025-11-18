@@ -20,7 +20,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "your model path"
+    "/home/nvidia/data/models/Qwen3-8B"
 )
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

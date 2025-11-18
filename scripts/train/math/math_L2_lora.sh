@@ -28,7 +28,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_L2_lora \
     $model_0_resource \
-    base_models.policy_0.path="your base model path"\
+    base_models.policy_0.path="/home/lah003/models/Qwen3-1.7B"\
     training.experiment_name=math_1.7B_lora\
     training.total_training_steps=200\
     training.epoch_size=20\

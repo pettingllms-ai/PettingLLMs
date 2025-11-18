@@ -35,7 +35,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "your base model path"
+    "/home/nvidia/data/models/Qwen3-8B"
 )
 EXPERIMENT_NAME="code_L1_prompt"
 # Assuming execution from repository root

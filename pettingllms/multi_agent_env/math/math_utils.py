@@ -83,7 +83,7 @@ def load_math_problem_batch(
     
 
     if not parquet_file.exists():
-        raise print(f"Dataset file not found: {parquet_file}")
+        raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
     
     print(f"Loading dataset from: {parquet_file}")
     ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
