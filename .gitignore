@@ -5,7 +5,7 @@ pettingllms_venv/*
 __pycache__/
 *.py[cod]
 *$py.class
-#scripts/train/
+scripts/train/
 data/
 requiements_venv_cu128.txt
 default/

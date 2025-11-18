@@ -462,7 +462,7 @@ class SudukuEnvState(EnvStateBase):
         json_file_path = os.path.join(
             os.path.dirname(__file__), 
             "..", "..", "..", 
-            "datasets", "sudoku_environments", 
+            "data", "sudoku_environments", 
             f"sudoku_{size}x{size}.json"
         )
         

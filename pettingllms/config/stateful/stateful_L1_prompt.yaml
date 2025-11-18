@@ -40,7 +40,7 @@ agent_policy_configs:
       name: "plan_agent"
       policy_name: "shared_model"
       enable_thinking: false
-      train_temperature: 1.5
+      train_temperature: 1
       val_temperature: 0
 
       
@@ -48,7 +48,7 @@ agent_policy_configs:
       name: "tool_call_agent"
       policy_name: "shared_model"
       enable_thinking: false
-      train_temperature: 1.5
+      train_temperature: 1
       val_temperature: 0
 
 

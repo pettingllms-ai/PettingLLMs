@@ -1,6 +1,6 @@
 set -x
 
-export CUDA_VISIBLE_DEVICES=6
+export CUDA_VISIBLE_DEVICES=4,5
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -19,7 +19,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 
 
-GPU_num=1
+GPU_num=2
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
@@ -29,10 +29,9 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 python3 -m pettingllms.trainer.train --config-path ../config/stateful --config-name stateful_L1_prompt \
     $model_0_resource \
     lora_rank=0\
-    +rollout_mode=tree\
     env.max_turns=4\
-    base_models.policy_0.path="/home/lah003/models/Qwen3-1.7B"\
-    training.experiment_name=sokoban_1.7B_prompt_at_grpo\
+    base_models.policy_0.path="/home/nvidia/data/models/Qwen3-1.7B"\
+    training.experiment_name=plan_path_1.7B_grpo\
     training.total_training_steps=200\
     training.train_batch_size=32\
     training.train_sample_num=8\
@@ -40,5 +39,5 @@ python3 -m pettingllms.trainer.train --config-path ../config/stateful --config-n
     training.max_prompt_length=8192\
     training.max_response_length=4096\
     training.val_freq=10\
-    +env.map_size=6\
-    env.benchmark=sokoban\
+    +env.map_size=10\
+    env.benchmark=plan_path\

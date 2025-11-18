@@ -907,6 +907,27 @@ class MultiAgentsPPOTrainer:
                 except Exception as e:
                     colorful_print(f"Error cleaning up agent_execution_engine: {e}", "red")
 
+            # Clean up aiohttp sessions
+            try:
+                import asyncio
+                from pettingllms.trainer.async_generate import cleanup_shared_session
+
+                # Try to get the current event loop, or create a new one if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                # Run the cleanup coroutine
+                loop.run_until_complete(cleanup_shared_session())
+                colorful_print("Cleaned up aiohttp shared session", "yellow")
+            except Exception as e:
+                colorful_print(f"Error cleaning up aiohttp session: {e}", "yellow")
+
             # Clean up LLM servers
             if hasattr(self, 'llm_servers') and self.llm_servers:
                 colorful_print("Cleaning up LLM servers...", "yellow")
