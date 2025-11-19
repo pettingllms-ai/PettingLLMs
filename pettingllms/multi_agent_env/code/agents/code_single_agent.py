@@ -171,24 +171,21 @@ class CodeGenerationAgent(Agent):
         # Check if agent has produced the termination token <TERMINATE>
         has_terminate_token = "<TERMINATE>" in self.current_action or "<TERMINATE>" in getattr(self, 'current_response', '')
         
-        if has_terminate_token:
-            # Agent has explicitly signaled completion with <TERMINATE>
-            env_data.done = True
+        
             
-            # Evaluate success based on test pass ratio
-            if passed_ratio >= 1.0 and len(ground_truth_test_input) > 0:
-                self.success = True
-                env_data.state.success = True
-                env_data.state.code_is_correct = True
-            else:
-                self.success = False
-                env_data.state.success = False
-                env_data.state.code_is_correct = False
+        # Evaluate success based on test pass ratio
+        if passed_ratio >= 1.0 and len(ground_truth_test_input) > 0:
+            self.success = True
+            env_data.state.success = True
+            env_data.state.code_is_correct = True
         else:
-            # No termination token found, episode continues
             self.success = False
             env_data.state.success = False
             env_data.state.code_is_correct = False
+
+        if has_terminate_token:
+            # Agent has explicitly signaled completion with <TERMINATE>
+            env_data.done = True
 
         
     
@@ -212,4 +209,5 @@ class CodeGenerationAgent(Agent):
         self.current_action = None
         self.current_prompt = None
         self.current_response = None
+
 

@@ -392,6 +392,8 @@ class MultiAgentsPPOTrainer:
                     reward_extra_infos_dict=reward_extra_infos_dict,
                     dump_path=rollout_data_dir,
                 )
+        
+        return batch
 
     
 
@@ -506,13 +508,13 @@ class MultiAgentsPPOTrainer:
                     def update_single_trainer(model_name, batch, trainer):
                         try:
                             local_timing_raw = {}
-                            self._update_parameters(batch, trainer, local_timing_raw)
+                            updated_batch = self._update_parameters(batch, trainer, local_timing_raw)
                             
-                            trainer_metrics = batch.meta_info.get('metrics', {}) if hasattr(batch, 'meta_info') else {}
-                            agent_names = batch.non_tensor_batch.get('agent_name') if hasattr(batch, 'non_tensor_batch') else None
+                            trainer_metrics = updated_batch.meta_info.get('metrics', {}) if hasattr(updated_batch, 'meta_info') else {}
+                            agent_names = updated_batch.non_tensor_batch.get('agent_name') if hasattr(updated_batch, 'non_tensor_batch') else None
                             
                             return {"status": "success", "model_name": model_name, "timing": local_timing_raw, 
-                                    "metrics": trainer_metrics, "agent_names": agent_names}
+                                    "metrics": trainer_metrics, "agent_names": agent_names, "batch": updated_batch}
                         except Exception as e:
                             import traceback
                             return {"status": "error", "model_name": model_name, "error": str(e), 
@@ -526,6 +528,9 @@ class MultiAgentsPPOTrainer:
                             if result["status"] == "error":
                                 colorful_print(f"Training failed for {result['model_name']}: {result['error']}", "red")
                                 raise RuntimeError(f"Training failed: {result['error']}")
+                            
+                            # Update batch_per_trainer with the modified batch that includes advantages and returns
+                            batch_per_trainer[model_name] = result["batch"]
                             
                             # Merge timing metrics
                             for key, value in result["timing"].items():

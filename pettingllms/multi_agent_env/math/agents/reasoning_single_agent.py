@@ -49,10 +49,9 @@ class ReasoningAgent(Agent):
             formatted_prompt = (
                 f"Problem:\n{problem}\n\n"
                 f"Please think step by step and solve this problem.\n"
-                f"You can continue reasoning in multiple turns. In each turn, either:\n"
-                f"1. Continue your reasoning and thinking process, OR\n"
-                f"2. When you are confident about your final answer, output it in \\boxed{{}} format and then output <TERMINATE> to end.\n"
-                f"Example: \\boxed{{123}}\n<TERMINATE>\n\n"
+                f"You can continue reasoning in multiple turns.\n"
+                f"When you have your answer, output it in \\boxed{{}} format.\n"
+                f"Example: \\boxed{{123}}\n\n"
             )
         else:
             # Subsequent turns: show previous attempts and ask to continue or refine
@@ -67,10 +66,9 @@ class ReasoningAgent(Agent):
                 f"Problem:\n{problem}\n\n"
                 f"{prompt_for_history}\n"
                 f"--- Current Turn ---\n"
-                f"Based on your previous reasoning above, you can now:\n"
-                f"1. Continue reasoning and refining your solution, OR\n"
-                f"2. If you are confident about your answer, output it in \\boxed{{}} format and then output <TERMINATE> to end.\n"
-                f"Example: \\boxed{{123}}\n<TERMINATE>\n\n"
+                f"Based on your previous reasoning above, continue reasoning and refining your solution.\n"
+                f"When you have your answer, output it in \\boxed{{}} format.\n"
+                f"Example: \\boxed{{123}}\n\n"
             )
         
         self.current_prompt = {"text": formatted_prompt, "image": None}
@@ -83,8 +81,8 @@ class ReasoningAgent(Agent):
 
     async def step(self, env_data: Env, env_worker: Any = None):
         """
-        Process the generated reasoning solution and check for termination token.
-        The agent terminates when it outputs <TERMINATE> token.
+        Process the generated reasoning solution and check for termination condition.
+        The agent terminates when the extracted answer is the same as the previous turn.
         """
         # Store the full solution
         env_data.state.reasoning_generated_solution = truncatefn(self.current_action)
@@ -94,14 +92,18 @@ class ReasoningAgent(Agent):
         # Try to extract answer from the current action
         extracted_answer = parse(self.current_action)
         env_data.state.reasoning_extracted_answer = extracted_answer
+        
+        # Check if answer is the same as previous turn (termination condition)
+        should_terminate = False
+        if len(env_data.state.reasoning_extracted_answer_history) > 0:
+            previous_answer = env_data.state.reasoning_extracted_answer_history[-1]
+            if extracted_answer is not None and previous_answer is not None:
+                if extracted_answer == previous_answer:
+                    should_terminate = True
+        
         env_data.state.reasoning_extracted_answer_history.append(extracted_answer)
         self.answer_history.append(extracted_answer)
         
-        # Check if agent has produced the termination token <TERMINATE>
-        has_terminate_token = "<TERMINATE>" in self.current_action
-        
-        
-            
         # Evaluate correctness against ground truth if an answer was extracted
         if extracted_answer is not None:
             ground_truth_answer = env_data.state.ground_truth_answer
@@ -116,18 +118,14 @@ class ReasoningAgent(Agent):
                 env_data.state.success = False
                 self.success = False
         else:
-            # Terminated but no valid answer extracted
+            # No valid answer extracted
             env_data.state.reasoning_is_correct = False
             env_data.state.success = False
             self.success = False
-        if has_terminate_token:
-            # Agent has explicitly signaled completion with <TERMINATE>
+        
+        # Terminate if answer is same as previous turn
+        if should_terminate:
             env_data.done = True
-        else:
-            # No termination token found, episode continues
-            env_data.state.reasoning_is_correct = False
-            env_data.state.success = False
-            self.success = False
 
         
     
