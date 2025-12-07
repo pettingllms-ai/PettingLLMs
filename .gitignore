@@ -294,7 +294,8 @@ local_config.py
 local_settings.py
 .local/
 config.local.*
-pettingllms_venv/
+pettingllms_venv/*
+tmp/
 .claude/
 .github/
 .gitattributes
