@@ -2,9 +2,7 @@
 
 <div align="center">
 <img src="figs/logo.png" alt="PettingLLMs Logo" width="400">
-<a href="figs/wechat.jpg">
-  <img src="https://img.shields.io/badge/Wechat-PettingLLMs-07C160.svg?logo=wechat" alt="Wechat PettingLLMs">
-</a>
+
 </div>
 
 # PETTINGLLMS
@@ -19,7 +17,10 @@
   <a href="https://pettingllms-ai.github.io/">🌐 Website</a> •
   <a href="https://www.youtube.com/watch?v=8WM-gVTrSBc">🎮 Demo</a> •
   <a href="https://pettingllms-docs.readthedocs.io/en/latest/">📖 Documentation</a> •
-  <a href="https://pettingllms-docs.readthedocs.io/en/latest/About_us/">👥 About Us</a>
+  <a href="https://pettingllms-docs.readthedocs.io/en/latest/About_us/">👥 About Us</a>•
+  <a href="figs/wechat.jpg">
+  <img src="https://img.shields.io/badge/Wechat-PettingLLMs-07C160.svg?logo=wechat" alt="Wechat PettingLLMs">
+</a>
   
 </p>
 
