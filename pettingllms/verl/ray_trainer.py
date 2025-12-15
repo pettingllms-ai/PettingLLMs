@@ -799,7 +799,7 @@ class RayPPOTrainer:
 
     def _save_checkpoint(self, save_base=True):
         # path: checkpoints/{experiment_name}/{model_name}/global_step_{global_steps}/actor
-        experiment_name = getattr(self.config, 'experiment_name', 'default_experiment')
+        experiment_name = getattr(self.config.trainer, 'experiment_name', 'default_experiment')
         checkpoint_base = getattr(self.config, 'checkpoint_dir', 'checkpoints')
         experiment_folder = os.path.join(checkpoint_base, experiment_name)
         
