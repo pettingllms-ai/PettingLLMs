@@ -275,6 +275,7 @@ python3 -m pettingllms.evaluate.evaluate \
     $MODEL_ARGS \
     training.max_prompt_length=$MAX_PROMPT_LENGTH \
     training.max_response_length=$MAX_RESPONSE_LENGTH \
+    training.experiment_name="$EXPERIMENT_NAME" \
     resource.n_gpus_per_node=$TP_SIZE \
     resource.nnodes=1 \
     models.model_0.ppo_trainer_config.actor_rollout_ref.rollout.tensor_model_parallel_size=$TP_SIZE \

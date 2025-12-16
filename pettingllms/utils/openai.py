@@ -15,11 +15,23 @@ import numpy as np
 def _create_autogen_client(policy_name: str, address: str, **kwargs):
     """Create AutoGen OpenAIChatCompletionClient."""
     from autogen_ext.models.openai import OpenAIChatCompletionClient
-    return OpenAIChatCompletionClient(
+    from autogen_core.models import ModelInfo, ModelFamily
+
+    model_info = ModelInfo(
+        vision=False,
+        function_calling=True,
+        json_output=True,
+        family=ModelFamily.UNKNOWN,
+        structured_output=False  # Add this to avoid warning
+    )
+
+    client = OpenAIChatCompletionClient(
         model=policy_name,
         api_key="dummy",
         base_url=address,
+        model_info=model_info,
     )
+    return client
 
 
 def _create_ag2_client(policy_name: str, address: str, **kwargs):
@@ -118,29 +130,44 @@ def build_agent_address_mapping(
 ) -> Dict[str, str]:
     """
     Build agent to vLLM address mapping.
-    
+
     Args:
         agent_names: List of agent names
         agent_policy_mapping: {agent_name: policy_name}
         server_address_dict: {policy_name: address or [addresses]}
-        
+
     Returns:
         Dict mapping agent_name to vLLM address
     """
+    print(f"[build_agent_address_mapping] agent_names: {agent_names}")
+    print(f"[build_agent_address_mapping] agent_policy_mapping: {agent_policy_mapping}")
+    print(f"[build_agent_address_mapping] server_address_dict: {server_address_dict}")
+
     agent_address_mapping = {}
     for agent_name in agent_names:
         policy_name = agent_policy_mapping.get(agent_name)
+        print(f"[build_agent_address_mapping] agent_name={agent_name} -> policy_name={policy_name}")
+
         if policy_name is None:
+            print(f"[build_agent_address_mapping] WARNING: No policy_name found for agent '{agent_name}', skipping")
             continue
-        
+
         _addresses = server_address_dict.get(policy_name)
+        print(f"[build_agent_address_mapping] policy_name={policy_name} -> addresses={_addresses}")
+
+        if _addresses is None:
+            print(f"[build_agent_address_mapping] WARNING: No address found for policy '{policy_name}', skipping agent '{agent_name}'")
+            continue
+
         if isinstance(_addresses, (list, tuple)):
             _address = random.choice(_addresses) if len(_addresses) > 0 else _addresses[0]
         else:
             _address = _addresses
-        
+
         agent_address_mapping[agent_name] = _address
-    
+        print(f"[build_agent_address_mapping] Mapped agent '{agent_name}' to address '{_address}'")
+
+    print(f"[build_agent_address_mapping] Final mapping: {agent_address_mapping}")
     return agent_address_mapping
 
 
@@ -260,7 +287,7 @@ async def _patched_generate(
     messages: List[Dict[str, str]],
     agent_name: Optional[str] = None,
     **kwargs
-) -> str:
+) -> tuple[str, int, int]:
     """
     Core patched generate function that calls llm_async_generate.
     Each call to this function represents one "hop" in the agent graph.
@@ -274,7 +301,7 @@ async def _patched_generate(
         **kwargs: Additional generation parameters
 
     Returns:
-        Generated text response
+        Tuple of (response_text, prompt_tokens, completion_tokens)
     """
     from pettingllms.trainer.async_generate import llm_async_generate, convert_prompt_to_dpr
 
@@ -285,16 +312,13 @@ async def _patched_generate(
         policy_name = list(_server_address_dict.keys())[0]
         print(f"[Patch] Warning: agent_name '{agent_name}' not in agent_policy_mapping, using fallback policy '{policy_name}'")
 
-    # Resolve address from agent_address_mapping or policy
-    if agent_name and agent_name in _agent_address_mapping:
-        address = _agent_address_mapping[agent_name]
-        print(f"[Patch] Using agent_address_mapping: agent={agent_name} -> address={address}")
-    else:
-        address = get_server_address(policy_name)
-        print(f"[Patch] Using policy address: policy={policy_name} -> address={address}")
+    address = _agent_address_mapping[agent_name]
+    print(f"[Patch] Using agent_address_mapping: agent={agent_name} -> address={address}")
 
+    lora_id = None
     # Resolve lora_id from agent_lora_mapping
-    lora_id = _agent_lora_mapping.get(agent_name)
+    if _agent_lora_mapping:
+        lora_id = _agent_lora_mapping.get(agent_name)
     if lora_id is not None:
         print(f"[Patch] Using lora_id={lora_id} for agent={agent_name}")
 
@@ -365,6 +389,32 @@ async def _patched_generate(
         agent_config=agent_config,
     )
 
+    # Calculate token counts from output_dpr
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    if output_dpr is not None and hasattr(output_dpr, 'batch'):
+        # Extract prompt and response lengths
+        # Note: TensorDict requires using .keys() for membership checks
+        batch_keys = output_dpr.batch.keys() if hasattr(output_dpr.batch, 'keys') else []
+
+        if 'input_ids' in batch_keys:
+            # Count non-padding tokens in prompts
+            prompt_ids = output_dpr.batch['input_ids']
+            if hasattr(prompt_ids, 'shape'):
+                # Assuming padding tokens are excluded or minimal
+                prompt_tokens = int(prompt_ids.shape[-1]) if len(prompt_ids.shape) > 0 else 0
+
+        if 'responses' in batch_keys:
+            # Count non-padding tokens in responses
+            response_ids = output_dpr.batch['responses']
+            if hasattr(response_ids, 'shape'):
+                # Count actual tokens (excluding padding)
+                if len(response_ids.shape) > 1:
+                    completion_tokens = int(response_ids.shape[-1])
+                elif len(response_ids.shape) > 0:
+                    completion_tokens = int(response_ids.shape[0])
+
     # Store trajectory with agent_name for later reward attribution
     # Note: reward will be added later by the environment step
     if output_dpr is not None:
@@ -376,12 +426,12 @@ async def _patched_generate(
         global _trajectory_store
         key = (rollout_idx, hop_idx, policy_name)
         _trajectory_store[key] = (output_dpr, response)
-        print(f"[Patch] Stored trajectory for key={key}, hop_idx={hop_idx}")
+        print(f"[Patch] Stored trajectory for key={key}, hop_idx={hop_idx}, prompt_tokens={prompt_tokens}, completion_tokens={completion_tokens}")
 
     # Increment hop index after generation (this represents completing one hop)
     increment_hop_idx()
 
-    return response
+    return response, prompt_tokens, completion_tokens
 
 
 def patch_autogen():
@@ -399,28 +449,21 @@ def patch_autogen():
 
     @functools.wraps(original_create)
     async def patched_create(self, messages, **kwargs):
-        # Infer agent_name from model name via policy mapping
-        model_name = kwargs.get('model') or self._model_id
-
-        # Try to infer agent_name from model_name
-        agent_name = None
-        for a_name, p_name in _agent_policy_mapping.items():
-            if p_name == model_name:
-                agent_name = a_name
-                break
+        # Try to get agent_name directly from the client (set during model_client_dict creation)
+        agent_name = getattr(self, '_agent_name', None)
 
         # Call patched generate with only messages and agent_name
-        response_text = await _patched_generate(
+        response_text, prompt_tokens, completion_tokens = await _patched_generate(
             messages=messages,
             agent_name=agent_name,
             **kwargs
         )
-        
+
         # Return in autogen format
-        from autogen_core.models import CreateResult, LLMMessage
+        from autogen_core.models import CreateResult, RequestUsage
         return CreateResult(
             content=response_text,
-            usage={},
+            usage=RequestUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
             finish_reason="stop",
             cached=False,
         )
@@ -459,17 +502,17 @@ def patch_ag2():
                 break
 
         # Call patched generate with only messages and agent_name
-        response_text = await _patched_generate(
+        response_text, prompt_tokens, completion_tokens = await _patched_generate(
             messages=messages,
             agent_name=agent_name,
             **kwargs
         )
-        
+
         # Return in ag2 format (same as autogen)
-        from ag2.models import CreateResult
+        from ag2.models import CreateResult, RequestUsage
         return CreateResult(
             content=response_text,
-            usage={},
+            usage=RequestUsage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens),
             finish_reason="stop",
             cached=False,
         )
@@ -511,18 +554,21 @@ def patch_langchain():
                 break
 
         # Call patched generate with only messages and agent_name
-        response_text = await _patched_generate(
+        response_text, prompt_tokens, completion_tokens = await _patched_generate(
             messages=msg_dicts,
             agent_name=agent_name,
             **kwargs
         )
-        
+
         # Return in langchain format
         from langchain_core.outputs import ChatGeneration, ChatResult
         from langchain_core.messages import AIMessage
-        
+
         message = AIMessage(content=response_text)
-        generation = ChatGeneration(message=message)
+        generation = ChatGeneration(
+            message=message,
+            generation_info={"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
+        )
         return ChatResult(generations=[generation])
     
     ChatOpenAI._agenerate = patched_agenerate
@@ -575,16 +621,20 @@ def patch_llamaindex():
                 break
 
         # Call patched generate with only messages and agent_name
-        response_text = await _patched_generate(
+        response_text, prompt_tokens, completion_tokens = await _patched_generate(
             messages=msg_dicts,
             agent_name=agent_name,
             **kwargs
         )
-        
+
         # Return in llamaindex format
         from llama_index.core.base.llms.types import ChatResponse, ChatMessage
         message = ChatMessage(role="assistant", content=response_text)
-        return ChatResponse(message=message)
+        # LlamaIndex ChatResponse supports raw field for additional metadata
+        return ChatResponse(
+            message=message,
+            raw={"usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}}
+        )
     
     OpenAI.achat = patched_achat
     _patched = True

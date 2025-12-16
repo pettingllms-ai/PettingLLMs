@@ -1,114 +1,70 @@
-# **Environment State**
+# Environment State
 
-The **Environment State** (`env_data.state`) is the central storage and communication hub for multi-agent coordination.
+`env_data.state` is the single source of truth that every agent reads from and writes to. This page aligns the documentation with the base environment definitions in `pettingllms/multi_agent_env/base` and highlights how the state fields feed the **local + team** reward design in the code and math environments.
 
----
-
-## **What Environment State Contains**
-
-Environment state consists of two main categories of information:
-
-### **1. Shared Agent Information**
-
-Information that agents write and share with each other through the environment:
-
-- **Agent outputs**: Generated code, test cases, reasoning steps, plans, etc.
-- **Interaction history**: Previous attempts, actions, and results from all agents
-- **Evaluation results**: Test pass ratios, correctness scores, match/mismatch cases
-- **Coordination data**: Feedback between agents for iterative improvement
-
-**Example (Code Environment)**:
-```python
-state.generated_code              # Written by CodeGenerationAgent
-state.generated_test_input        # Written by UnitTestGenerationAgent
-state.generated_code_history      # Accumulated by multiple agents
-state.generated_test_vs_generated_code_mismatch_cases  # Shared feedback
-```
-
-### **2. Current Environment Information**
-
-Task-specific data that defines the current problem and environment status:
-
-- **Task definition**: Problem description, question, constraints
-- **Ground truth**: Expected outputs, golden solutions, correct answers
-- **Environment status**: Current turn, completion status, success flags
-- **Task-specific data**: Domain-specific information (e.g., game state, web search results)
-
-**Example (Code Environment)**:
-```python
-state.problem                     # Task: programming problem description
-state.ground_truth_test_input     # Task: test inputs
-state.ground_truth_test_output    # Task: expected outputs
-state.golden_code                 # Task: reference solution (if available)
-```
-
----
-
-## **Design Principles**
-
-1. **Single Source of Truth**: All shared information flows through environment state
-2. **No Direct Agent Communication**: Agents only interact via `env_data.state`
-3. **Persistent History**: State preserves complete interaction history
-4. **Task-Specific Structure**: Each environment defines its own state dataclass
-
----
-
-## **Environment Batch (EnvBatch)**
-
-### **Purpose**
-
-`EnvBatch` manages multiple environment instances for **parallel execution** during training and evaluation.
-
-### **What It Does**
+## Base Container (pettingllms/multi_agent_env/base/env.py)
 
 ```python
-# From: pettingllms/multi_agent_env/code/code_env.py
-class CodeEnvBatch:
-    def __init__(self, env_idx_list, env_indices, rollout_idx_list, samples, ...):
-        self.env_list = []  # List of independent Env instances
-        
-        # Load multiple problems from dataset
-        self.problem_list = load_problem_batch(env_indices, ...)
-        
-        # Create one environment per problem (with multiple samples)
-        for i, problem in enumerate(self.problem_list):
-            for s in range(samples):
-                env = CodeEnv(env_idx=i, rollout_idx=..., ...)
-                env.state = CodeEnvState(problem=problem["question"], ...)
-                self.env_list.append(env)
+from dataclasses import dataclass
+from typing import Any, Optional
+
+@dataclass
+class Env:
+    def __init__(self, env_idx: int, rollout_idx: int, max_turns: int, config: dict | None = None):
+        self.config = config
+        self.history = []
+        self.task = None
+        self.current_turn = 0
+        self.done = False
+        self.state: Optional[Any] = None   # domain-specific dataclass
+        self.success = False
+
+    @abstractmethod
+    def step(self, action):
+        ...
 ```
 
-### **Key Features**
+- `state` is a **domain-specific dataclass** (see below). All agent coordination happens through this object.
+- `history`, `done`, and `success` are base fields every environment shares; agent implementations extend these with domain signals.
 
-1. **Parallel Execution**: Multiple environments run simultaneously for efficient training
-2. **Independent States**: Each `Env` in `env_list` has its own isolated `state`
-3. **Batch Processing**: Process multiple problems/tasks at once
-4. **Sampling Support**: Create multiple rollouts per problem for exploration
+## Domain State Shapes
 
-### **Usage in Training**
+### Code Environment (`CodeEnvState`)
 
-- **Training**: Batch processes many problems simultaneously for faster learning
-- **Evaluation**: Runs entire test sets in parallel
-- **Each environment**: Has separate agents, separate state, separate rollout
+Defined in `pettingllms/multi_agent_env/code/code_env.py`. Key fields that agents read/write:
 
-**Example**:
-```python
-# Create batch with 100 problems, 4 samples each = 400 environments
-env_batch = CodeEnvBatch(
-    env_indices=range(100),      # 100 different problems
-    samples=4,                    # 4 attempts per problem
-    ...
-)
-# Result: env_batch.env_list contains 400 CodeEnv instances
-# Each has independent state for parallel execution
-```
+- Problem: `problem`, optional `golden_code`
+- Generated artifacts: `generated_code`, `generated_test_input/output`, `generated_code_history`
+- Execution traces: `exe_code_generated_test_output`, `exe_code_ground_truth_test_output`
+- Evaluation (local & team rewards):
+  - `ground_truth_test_vs_generated_code_match_ratio` and match/mismatch cases (set by `CodeGenerationAgent.step`)
+  - `generated_test_vs_golden_code_match_ratio` and cases (set by `UnitTestGenerationAgent.step`)
+  - `generated_test_vs_generated_code_match_ratio` and history (shared feedback loop)
 
----
+### Math Environment (`MathEnvState`)
 
-## **Next Steps**
+Defined in `pettingllms/multi_agent_env/math/math_env.py`. Key fields:
 
-Continue exploring environment setup:
+- Problem and answers: `problem`, `ground_truth_answer`
+- Agent outputs: `reasoning_generated_solution`, `code_generated_solution`
+- Extracted answers: `reasoning_extracted_answer`, `code_extracted_answer`
+- Evaluation flags: `reasoning_is_correct`, `code_is_correct`, `code_reasoning_aligned`
+- Histories: `reasoning_generated_solution_history`, `code_generated_solution_history`, corresponding extracted-answer histories
 
-- Learn how agents interact with state: [Agent Functions](agent-functions.md)
-- Configure environment settings: [Configuration](configuration.md)
-- Understand component registration: [Registration](registration.md)
+## Reward Signals from State (Local + Team)
+
+Agents compute rewards in `calculate_reward(env_data)` by combining their own performance with a teammate’s signal stored in `env_data.state`.
+
+- **Code environment**
+  - `UnitTestGenerationAgent.calculate_reward`  
+    `agent_reward = generated_test_vs_golden_code_match_ratio (local) + ground_truth_test_vs_generated_code_match_ratio (team from code agent)`
+  - `CodeGenerationAgent.calculate_reward`  
+    Adds `ground_truth_test_vs_generated_code_match_ratio` twice (self + team) to keep the cooperative reward additive.
+
+- **Math environment**
+  - `ToolAgent.calculate_reward`  
+    Starts with the local reward set in `step` (code correctness), then adds `int(env_data.state.reasoning_is_correct)` as the team bonus from the reasoning agent.
+  - `ReasoningAgent.calculate_reward`  
+    Sums `int(env_data.state.reasoning_is_correct)` twice to reflect self + team contribution from the same correctness flag.
+
+These patterns make every agent’s return depend on both its own output and shared team success, encouraging coordinated policies.

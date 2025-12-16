@@ -2,13 +2,8 @@ import asyncio
 import re
 from typing import Optional
 
-from autogen_agentchat.agents import AssistantAgent
-from autogen_agentchat.conditions import MaxMessageTermination
-from autogen_agentchat.teams import DiGraphBuilder, GraphFlow
-from autogen_agentchat.ui import Console
-
-from autogen_agentchat.messages import BaseChatMessage
-from autogen_ext.models.openai import OpenAIChatCompletionClient
+from autogen import AssistantAgent, ConversableAgent
+from ag2.models.openai import OpenAIChatCompletionClient
 
 from pettingllms.mas_graph.math_graph.math_env import MathEnv, MathEnvBatch
 from pettingllms.multi_agent_env.math.math_utils import extract_code
@@ -128,7 +123,7 @@ def check_answer_correctness(generated_answer: str, ground_truth_answer: str) ->
 
 async def math_graph(env: Optional[MathEnv] = None, model_client_dict: dict = None, model_client: OpenAIChatCompletionClient = None):
     """
-    Main function for math problem solving workflow using autogen.
+    Main function for math problem solving workflow using AG2.
 
     This workflow:
     1. Math solver generates a step-by-step solution
@@ -148,10 +143,10 @@ async def math_graph(env: Optional[MathEnv] = None, model_client_dict: dict = No
 
     task = env.state.problem
 
-    # Define solver agent
+    # Define solver agent using AG2's AssistantAgent
     solver = AssistantAgent(
-        "reasoning_generator",
-        model_client=model_client_dict.get("reasoning_generator"),
+        name="reasoning_generator",
+        llm_config={"config_list": [{"model": "gpt-4", "api_key": "dummy"}]},
         system_message=(
             "You are an expert mathematician. "
             "Given a mathematical problem, provide a detailed step-by-step solution. "
@@ -161,10 +156,10 @@ async def math_graph(env: Optional[MathEnv] = None, model_client_dict: dict = No
         ),
     )
 
-    # Define verifier agent
+    # Define verifier agent using AG2's AssistantAgent
     verifier = AssistantAgent(
-        "tool_generator",
-        model_client=model_client_dict.get("tool_generator"),
+        name="tool_generator",
+        llm_config={"config_list": [{"model": "gpt-4", "api_key": "dummy"}]},
         system_message=(
             "You are a strict mathematics verifier. "
             "Review the solution provided and check for logical errors, calculation mistakes, or unclear reasoning. "
@@ -176,65 +171,34 @@ async def math_graph(env: Optional[MathEnv] = None, model_client_dict: dict = No
         ),
     )
 
-    # Define a simple end agent to mark completion
-    end_agent = AssistantAgent(
-        "end",
-        model_client=model_client_dict.get("reasoning_generator"),
-        system_message="You are a completion marker. Just acknowledge the approved solution.",
-    )
-
-    # Build graph: solver -> verifier -> (solver [if needs revision] or end [if approved])
-    builder = DiGraphBuilder()
-
-    # Add nodes
-    builder.add_node(solver)
-    builder.add_node(verifier)
-    builder.add_node(end_agent)
-
-    # Set solver as the entry point (required for graphs with cycles)
-    builder.set_entry_point(solver)
-
-    # Add edge from solver to verifier (unconditional)
-    builder.add_edge(solver, verifier)
-
-    # Define condition functions that accept BaseChatMessage
-    def needs_revision(msg) -> bool:
-        """Check if verifier requests revision"""
-        try:
-            return "NEEDS_REVISION" in msg.to_model_text()
-        except Exception:
-            return False
-
-    def approved(msg) -> bool:
-        """Check if verifier approves the solution"""
-        try:
-            return "APPROVE" in msg.to_model_text()
-        except Exception:
-            return False
-
-    # Add conditional edges from verifier:
-    # - If needs revision -> back to solver (creates a loop)
-    # - If approved -> to end_agent (exit the loop)
-    builder.add_edge(verifier, solver, condition=needs_revision)
-    builder.add_edge(verifier, end_agent, condition=approved)
-
-    # Build the graph
-    graph = builder.build()
-    
-    team = GraphFlow(
-        participants=builder.get_participants(),
-        graph=graph,
-        termination_condition=MaxMessageTermination(15),
-    )
-    
-    # Run the workflow and capture the autogen TaskResult (holds all messages)
-    run_result = await Console(team.run_stream(task=task))
-    
-    # Extract the final solution from the solver's last recorded message
+    # AG2 uses sequential chat instead of graph flow
+    max_rounds = 15
     final_solution: Optional[str] = None
-    for msg in reversed(getattr(run_result, "messages", []) or []):
-        if isinstance(msg, BaseChatMessage) and msg.source == solver.name:
-            final_solution = msg.to_model_text()
+
+    for round_num in range(max_rounds):
+        # Solver generates solution
+        solver_response = await solver.a_generate_reply(
+            messages=[{"role": "user", "content": task}]
+        )
+
+        if solver_response:
+            final_solution = solver_response.get("content", "")
+
+        # Verifier checks solution
+        verifier_response = await verifier.a_generate_reply(
+            messages=[{"role": "user", "content": final_solution}]
+        )
+
+        verifier_content = verifier_response.get("content", "") if verifier_response else ""
+
+        # Check if approved
+        if "APPROVE" in verifier_content:
+            break
+
+        # If needs revision, continue loop with feedback
+        if "NEEDS_REVISION" in verifier_content:
+            task = f"{task}\n\nPrevious attempt:\n{final_solution}\n\nFeedback:\n{verifier_content}"
+        else:
             break
     
     # If env is provided, evaluate the solution

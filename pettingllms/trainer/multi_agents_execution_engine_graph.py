@@ -116,22 +116,29 @@ class MultiAgentsExecutionEngineGraph:
         Returns:
             Wrapped callable
         """
-        patch_all(
-            server_address_dict=self.server_address_dict,
-            tokenizer_dict=self.tokenizer_dict,
-            ppo_trainer_config_dict=self.ppo_trainer_config_dict,
-            agent_policy_mapping=self.agent_policy_mapping,
-            agent_framework=self.agent_framework,
-            agent_lora_mapping=self.agent_lora_mapping,
-            agent_config_dict=self.agent_config_dict,
-            processor_dict=self.processor_dict
-        )
-        
+        # Only apply patch once (the first time this is called)
+        # The patch context (_agent_address_mapping etc) is already set by init_patch_context
+        # in generate_single_rollout, so we don't need to call patch_all here
+        if not hasattr(self, '_patch_applied'):
+            from pettingllms.utils.openai import patch_all
+            patch_all(
+                server_address_dict=self.server_address_dict,
+                tokenizer_dict=self.tokenizer_dict,
+                ppo_trainer_config_dict=self.ppo_trainer_config_dict,
+                agent_policy_mapping=self.agent_policy_mapping,
+                agent_framework=self.agent_framework,
+                agent_address_mapping={},  # Will be set by init_patch_context before each rollout
+                agent_lora_mapping=self.agent_lora_mapping,
+                agent_config_dict=self.agent_config_dict,
+                processor_dict=self.processor_dict
+            )
+            self._patch_applied = True
+
         if callable(graph_module_or_callable):
             graph_func = graph_module_or_callable
         else:
             graph_func = graph_module_or_callable.main
-        
+
         wrapped = wrap_autogen_graph(graph_func)
         
         # If CPU resources specified, set environment hint for agent framework tools
@@ -268,36 +275,18 @@ class MultiAgentsExecutionEngineGraph:
         # Build model_client_dict with dummy clients (will be intercepted by patch)
         model_client_dict = {}
         for agent_name in self.agent_names:
-            if agent_name not in agent_address_mapping:
-                self.multi_logger.log_env_agent_info(
-                    self.mode, env_idx, rollout_idx, 0, agent_name,
-                    f"No address mapping found for agent {agent_name}",
-                    {"error": "missing_address"}
-                )
-                continue
-            
-            try:
-                model_client = create_dummy_model_client(self.agent_framework)
-            except ValueError as e:
-                self.multi_logger.log_env_agent_info(
-                    self.mode, env_idx, rollout_idx, 0, agent_name,
-                    f"Failed to create model client: {e}",
-                    {"error": str(e)}
-                )
-                continue
-            
+            agent_config = self.agent_config_dict.get(agent_name)
+            policy_name = getattr(agent_config, 'policy_name', None)
+            model_client = create_dummy_model_client(self.agent_framework)
+            # Update the model in _create_args which is where it's actually stored
+            model_client._create_args['model'] = policy_name
+            # Store agent_name directly on the client so we can retrieve it later
+            model_client._agent_name = agent_name
+
             model_client_dict[agent_name] = model_client
         
         # Get the autogen graph workflow function from registry using config.workflow_function
-        try:
-            graph_func = self.get_graph_function()
-        except ValueError as e:
-            self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 0, "system",
-                f"Failed to get graph function: {e}",
-                {"error": str(e), "traceback": traceback.format_exc()}
-            )
-            return trajectory_per_task_dict
+        graph_func = self.get_graph_function()
         
         # Execute the patched autogen graph
         # The patch will intercept OpenAIChatCompletionClient.create() calls

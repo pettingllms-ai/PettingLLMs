@@ -16,6 +16,44 @@
 
 It implements **AT-GRPO** (Agent- and Turn-wise Group Relative Policy Optimization), a novel algorithm and system design for training collaborative LLM agents across **planning, coding, and mathematical reasoning tasks**.
 
+## 📚 Documentation Directory
+
+- [Home](https://pettingllms-docs.readthedocs.io/en/latest/)
+- **Getting Started**
+  - [Installation](https://pettingllms-docs.readthedocs.io/en/latest/getting-started/installation/)
+  - [Quick Start](https://pettingllms-docs.readthedocs.io/en/latest/getting-started/quick-start/)
+  - [Datasets](https://pettingllms-docs.readthedocs.io/en/latest/getting-started/datasets/)
+  - [Training](https://pettingllms-docs.readthedocs.io/en/latest/getting-started/training/)
+  - [Evaluation](https://pettingllms-docs.readthedocs.io/en/latest/getting-started/evaluation/)
+- **Environment Setup**
+  - [Overview](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/index/)
+  - [Data Preparation](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/data-preparation/)
+  - [Core Architecture](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/core-architecture/)
+  - [Agent Functions](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/agent-functions/)
+  - [Environment State](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/environment-state/)
+  - [Configuration](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/configuration/)
+  - [Registration](https://pettingllms-docs.readthedocs.io/en/latest/environment_setup/registration/)
+- **Core Concepts**
+  - [Overview](https://pettingllms-docs.readthedocs.io/en/latest/core-concepts/overview/)
+  - [AT-GRPO Algorithm](https://pettingllms-docs.readthedocs.io/en/latest/core-concepts/at-grpo/)
+  - [Three-Level Specialization](https://pettingllms-docs.readthedocs.io/en/latest/core-concepts/three-level-specialization/)
+  - [Training System](https://pettingllms-docs.readthedocs.io/en/latest/core-concepts/training-system/)
+- **Training Guides**
+  - [Overview](https://pettingllms-docs.readthedocs.io/en/latest/training/overview/)
+  - [Games](https://pettingllms-docs.readthedocs.io/en/latest/training/games/)
+  - [Planning](https://pettingllms-docs.readthedocs.io/en/latest/training/planning/)
+  - [Code](https://pettingllms-docs.readthedocs.io/en/latest/training/code/)
+  - [Math](https://pettingllms-docs.readthedocs.io/en/latest/training/math/)
+- **Evaluation**
+  - [Evaluation Guide](https://pettingllms-docs.readthedocs.io/en/latest/evaluation/guide/)
+- **Results**
+  - [Benchmarks](https://pettingllms-docs.readthedocs.io/en/latest/results/benchmarks/)
+  - [Ablation Studies](https://pettingllms-docs.readthedocs.io/en/latest/results/ablations/)
+- **API Reference**
+  - [Python API](https://pettingllms-docs.readthedocs.io/en/latest/api/)
+- **About Us**
+  - [Team](https://pettingllms-docs.readthedocs.io/en/latest/About_us/)
+
 ## Supported Training Modes
 
 This framework supports:
@@ -157,4 +195,3 @@ This work was primarily conducted by Yujie Zhao during her summer internship at 
 
 Released under the MIT license.
 See LICENSE for details.
-

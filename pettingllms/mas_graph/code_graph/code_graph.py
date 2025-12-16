@@ -27,19 +27,13 @@ async def code_graph(env: Optional[CodeEnv] = None, model_client_dict: dict = No
         model_client_dict: Dictionary of model clients for each agent {agent_name: client}
         model_client: Single model client (fallback for backward compatibility)
     """
-    # Handle both model_client_dict and model_client parameters
-    # Prefer model_client_dict if provided (graph-based execution)
-    if model_client_dict:
-        # Use the first available client from dict (all agents use same model in this graph)
-        model_client = next(iter(model_client_dict.values()))
-    elif model_client is None:
-        raise ValueError("Either model_client_dict or model_client must be provided")
 
-    # Get problem from env or use provided problem
     task = env.state.problem
-    if not task:
-        raise ValueError("Environment provided but no problem found in env.state.problem")
-   
+
+    # Get agent names from model_client_dict
+    agent_names = list(model_client_dict.keys())
+    coder_name = agent_names[0] if len(agent_names) > 0 else "coder"
+    reviewer_name = agent_names[1] if len(agent_names) > 1 else agent_names[0]
 
     # 1. Docker code executor
     code_executor = DockerCommandLineCodeExecutor(work_dir="code_workdir")
@@ -47,8 +41,8 @@ async def code_graph(env: Optional[CodeEnv] = None, model_client_dict: dict = No
 
     # 2. 定义 Coder / Executor / Reviewer
     coder = AssistantAgent(
-        "code_coder",
-        model_client=model_client,
+        coder_name,
+        model_client=model_client_dict.get(coder_name),
         system_message=(
             "You are a senior Python engineer. "
             "Given a feature request and review feedback, "
@@ -59,14 +53,14 @@ async def code_graph(env: Optional[CodeEnv] = None, model_client_dict: dict = No
 
     executor = CodeExecutorAgent(
         "code_executor",
-        model_client=model_client,
+        model_client=model_client_dict.get(coder_name),
         code_executor=code_executor,
-        sources=["code_coder"],  # 只执行 coder 的 code
+        sources=[coder_name],
     )
 
     reviewer = AssistantAgent(
-        "code_reviewer",
-        model_client=model_client,
+        reviewer_name,
+        model_client=model_client_dict.get(reviewer_name),
         system_message=(
             "You are a strict code reviewer and tester. "
             "Read the latest code and execution output. "

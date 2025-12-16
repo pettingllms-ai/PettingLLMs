@@ -25,13 +25,13 @@ env:
 agent_policy_configs:
   # Number of agents to train
   num_agents: 2
-  policy_list: ["math_solver"]
+  policy_list: ["math_solver_model"]
   agent_configs:
     agent_0:
-      name: "math_solver"
+      name: "tool_generator"
       policy_name: "math_solver_model"
     agent_1:
-      name: "math_solver"
+      name: "reasoning_generator"
       policy_name: "math_solver_model"
 
 
