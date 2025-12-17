@@ -51,7 +51,7 @@ actor_rollout_ref:
     trust_remote_code: False
   actor:
     _target_: verl.workers.config.FSDPActorConfig
-    strategy: fsdp  # [fsdp, fsdp2], This is for backward-compatibility
+    strategy: fsdp2  # [fsdp, fsdp2], This is for backward-compatibility
     ppo_mini_batch_size: 16  # 减小PPO mini batch大小以节省内存
     use_dynamic_bsz: True
     use_dynamic_mini_batch: False
