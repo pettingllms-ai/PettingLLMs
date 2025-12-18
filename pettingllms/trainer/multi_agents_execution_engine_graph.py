@@ -29,8 +29,7 @@ from pettingllms.utils.openai import (
     init_patch_context,
     patch_all,
     wrap_autogen_graph,
-    get_trajectory_store,
-    start_new_flow_context,
+    get_trajectory_store
 )
 from pettingllms.trainer.core_algo import calculate_reward
 
@@ -112,51 +111,7 @@ class MultiAgentsExecutionEngineGraph:
 
         
 
-    
-    def patch_and_run_autogen_graph(self, graph_module_or_callable, cpu_resources=None):
-        """
-        Patch and run agent graph with local vLLM.
 
-        Args:
-            graph_module_or_callable: Module with main() or callable
-            cpu_resources: Optional CPU resources to allocate (for Ray scheduling hints)
-
-        Returns:
-            Wrapped callable
-        """
-        # Only apply patch once (the first time this is called)
-        # The patch context (_agent_address_mapping etc) is already set by init_patch_context
-        # in generate_single_rollout, so we don't need to call patch_all here
-        if not hasattr(self, '_patch_applied'):
-            from pettingllms.utils.openai import patch_all
-            patch_all(
-                server_address_dict=self.server_address_dict,
-                tokenizer_dict=self.tokenizer_dict,
-                ppo_trainer_config_dict=self.ppo_trainer_config_dict,
-                agent_policy_mapping=self.agent_policy_mapping,
-                agent_framework=self.agent_framework,
-                agent_address_mapping={},  # Will be set by init_patch_context before each rollout
-                agent_lora_mapping=self.agent_lora_mapping,
-                agent_config_dict=self.agent_config_dict,
-                processor_dict=self.processor_dict
-            )
-            self._patch_applied = True
-
-        if callable(graph_module_or_callable):
-            graph_func = graph_module_or_callable
-        else:
-            graph_func = graph_module_or_callable.main
-
-        wrapped = wrap_autogen_graph(graph_func)
-        
-        # If CPU resources specified, set environment hint for agent framework tools
-        # This helps Ray schedule tool execution appropriately
-        if cpu_resources is not None:
-            import os
-            os.environ['AUTOGEN_TOOL_CPU_LIMIT'] = str(cpu_resources)
-        
-        return wrapped
-    
     def get_graph_function(self):
         """
         Get the appropriate graph function from config.training.workflow_function.
@@ -184,20 +139,76 @@ class MultiAgentsExecutionEngineGraph:
         graph_func = AGENT_WORKER_FLOW_FUNCTIONS_MAPPING[workflow_function_name]
         return graph_func
     
-    async def run_autogen_graph_async(self, graph_module_or_callable):
-        """Run autogen graph asynchronously."""
-        wrapped = self.patch_and_run_autogen_graph(graph_module_or_callable)
-        return await wrapped()
+
     
     def calculate_cpu_per_rollout(self, num_concurrent_rollouts):
         total_cpu = self.n_cpu
         max_cpu_usage = total_cpu * 0.6  # Use at most 60% of CPUs
-        
+
         # Calculate CPU per rollout
         cpu_per_rollout = max_cpu_usage / num_concurrent_rollouts
         cpu_per_rollout = max(0.1, cpu_per_rollout)
 
         return cpu_per_rollout
+
+    def _log_rollout_tracking(self, rollout_tracking_dict):
+        """
+        Log rollout tracking information for each rollout.
+
+        Args:
+            rollout_tracking_dict: Dictionary containing tracking data for all rollouts
+                Structure: {rollout_idx: {'hops': [...], 'env_idx': int, 'rollout_idx': int}}
+        """
+        print("\n" + "="*80)
+        print("ROLLOUT TRACKING SUMMARY")
+        print("="*80)
+
+        for rollout_idx, tracking_data in sorted(rollout_tracking_dict.items()):
+            env_idx = tracking_data['env_idx']
+            hops = tracking_data['hops']
+
+            print(f"\nRollout {rollout_idx} (Env {env_idx}):")
+            print(f"  Total hops: {len(hops)}")
+
+            for hop_data in hops:
+                hop_idx = hop_data['hop_idx']
+                agent_name = hop_data['agent_name']
+                policy_name = hop_data['policy_name']
+                dataproto_uuid = hop_data['dataproto_uuid']
+                response_preview = hop_data['response'][:100] if len(hop_data['response']) > 100 else hop_data['response']
+
+                print(f"    Hop {hop_idx}:")
+                print(f"      Agent: {agent_name}")
+                print(f"      Policy: {policy_name}")
+                print(f"      DataProto UUID: {dataproto_uuid}")
+                print(f"      Response preview: {response_preview}...")
+
+        # Log to multi_logger for structured logging
+        self.multi_logger.log_async_event(
+            self.mode, -1, -1, "rollout_tracking_summary",
+            "Rollout tracking data collected",
+            {
+                "total_rollouts": len(rollout_tracking_dict),
+                "rollout_tracking": {
+                    str(rollout_idx): {
+                        'env_idx': data['env_idx'],
+                        'total_hops': len(data['hops']),
+                        'hops': [
+                            {
+                                'hop_idx': hop['hop_idx'],
+                                'agent_name': hop['agent_name'],
+                                'policy_name': hop['policy_name'],
+                                'dataproto_uuid': hop['dataproto_uuid']
+                            }
+                            for hop in data['hops']
+                        ]
+                    }
+                    for rollout_idx, data in rollout_tracking_dict.items()
+                }
+            }
+        )
+
+        print("="*80 + "\n")
 
     def init_agents_and_envs(self,mode="train",step_idx=0):
         self.multi_logger = get_multi_logger(experiment_name=self.experiment_name)
@@ -252,57 +263,43 @@ class MultiAgentsExecutionEngineGraph:
             self.env_rollout_mapping[env_idx] = [_ for _ in range(env_idx*self.sample_num, (env_idx+1)*self.sample_num)]
         self.timer.checkpoint("Starting batched env initialization")
  
-    async def generate_single_rollout(self, rollout_idx, cpu_per_rollout=None):
+    async def generate_single_rollout(self, rollout_idx, model_client_dict, rollout_tracking_dict, cpu_per_rollout=None):
+        """
+        Generate a single rollout with tracking.
 
-        
+        Args:
+            rollout_idx: Index of the rollout
+            model_client_dict: Dictionary of model clients shared across rollouts
+            rollout_tracking_dict: Dictionary to track rollout data (agent, hop, uuid)
+            cpu_per_rollout: CPU allocation per rollout
+
+        Returns:
+            trajectory_per_task_dict: Dictionary of trajectories per policy
+        """
+
         trajectory_per_task_dict = {p: DataProto() for p in self.tokenizer_dict.keys()}
         env_idx = rollout_idx // self.sample_num
         env = self.envs[rollout_idx]
-        start_new_flow_context(rollout_idx=rollout_idx, env_idx=env_idx)
 
-        agent_address_mapping = build_agent_address_mapping(
-            agent_names=self.agent_names,
-            agent_policy_mapping=self.agent_policy_mapping,
-            server_address_dict=self.server_address_dict
-        )
-        
-        for agent_name, address in agent_address_mapping.items():
-            print(f"[Engine] Agent '{agent_name}' mapped to address: {address}")
-        
-        # Update patch context with all necessary mappings
-        init_patch_context(
-            server_address_dict=self.server_address_dict,
-            tokenizer_dict=self.tokenizer_dict,
-            ppo_trainer_config_dict=self.ppo_trainer_config_dict,
-            agent_policy_mapping=self.agent_policy_mapping,
-            agent_address_mapping=agent_address_mapping,
-            agent_lora_mapping=self.agent_lora_mapping,
-            agent_config_dict=self.agent_config_dict,
-            processor_dict=self.processor_dict
-        )
-        
-        # Build model_client_dict with dummy clients (will be intercepted by patch)
-        model_client_dict = {}
-        for agent_name in self.agent_names:
-            agent_config = self.agent_config_dict.get(agent_name)
-            policy_name = getattr(agent_config, 'policy_name', None)
-            model_client = create_dummy_model_client(self.agent_framework)
-            # Update the model in _create_args which is where it's actually stored
-            model_client._create_args['model'] = policy_name
-            # Store agent_name directly on the client so we can retrieve it later
-            model_client._agent_name = agent_name
+        # Initialize tracking for this rollout
+        if rollout_idx not in rollout_tracking_dict:
+            rollout_tracking_dict[rollout_idx] = {
+                'hops': [],  # List of {hop_idx, agent_name, dataproto_uuid, policy_name}
+                'env_idx': env_idx,
+                'rollout_idx': rollout_idx
+            }
 
-            model_client_dict[agent_name] = model_client
-        
         # Get the autogen graph workflow function from registry using config.workflow_function
         graph_func = self.get_graph_function()
-        
+
+        # Wrap the graph function to track execution
+        wrapped_graph = wrap_autogen_graph(graph_func)
+
         # Execute the patched autogen graph
         # The patch will intercept OpenAIChatCompletionClient.create() calls
         # and route them to llm_async_generate, collecting trajectories
 
         # Wrap and run the graph with CPU resource hint
-        wrapped_graph = self.patch_and_run_autogen_graph(graph_func, cpu_resources=cpu_per_rollout)
         result_env = await wrapped_graph(env=env, model_client_dict=model_client_dict)
         # After graph execution, collect trajectories from the patch context
         trajectory_store = get_trajectory_store()
@@ -320,16 +317,28 @@ class MultiAgentsExecutionEngineGraph:
 
             # Mark env_final_reward in non_tensor_batch for later reward calculation
             output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward])
-            
+
             # Handle LoRA if enabled
             agent_name = output_dpr.non_tensor_batch.get("agent_name", [None])[0]
             if self.lora_differ_mode and agent_name in self.agent_lora_mapping:
                 batch_size = output_dpr.batch.batch_size[0] if hasattr(output_dpr.batch, 'batch_size') else len(output_dpr.batch)
                 output_dpr.non_tensor_batch["lora_ids"] = np.array(
-                    [self.agent_lora_mapping[agent_name]] * batch_size, 
+                    [self.agent_lora_mapping[agent_name]] * batch_size,
                     dtype=object
                 )
-            
+
+            # Track this hop's information
+            dataproto_uuid = str(uuid.uuid4())
+            output_dpr.non_tensor_batch["dataproto_uuid"] = np.array([dataproto_uuid], dtype=object)
+
+            rollout_tracking_dict[rollout_idx]['hops'].append({
+                'hop_idx': h_idx,
+                'agent_name': agent_name,
+                'policy_name': policy_name,
+                'dataproto_uuid': dataproto_uuid,
+                'response': response
+            })
+
             collected_trajectories.append((policy_name, output_dpr))
         
         # Now calculate rewards using the reward calculation function from core_algo
@@ -367,21 +376,73 @@ class MultiAgentsExecutionEngineGraph:
             rollout_indices.extend(self.env_rollout_mapping[env_idx])
         concurrent_timer = create_timer("ConcurrentRollouts")
         concurrent_timer.start(f"Starting concurrent rollouts for {len(rollout_indices)} rollouts")
-        
+
+        concurrent_timer.checkpoint("Building agent address mapping")
+
+        # Build agent address mapping before creating clients
+        agent_address_mapping = build_agent_address_mapping(
+            agent_names=self.agent_names,
+            agent_policy_mapping=self.agent_policy_mapping,
+            server_address_dict=self.server_address_dict
+        )
+
+        for agent_name, address in agent_address_mapping.items():
+            print(f"[Engine] Agent '{agent_name}' mapped to address: {address}")
+
+        concurrent_timer.checkpoint("Creating model clients")
+
+        # Build model_client_dict with dummy clients (will be intercepted by patch)
+        model_client_dict = {}
+        for agent_name in self.agent_names:
+            agent_config = self.agent_config_dict.get(agent_name)
+            policy_name = getattr(agent_config, 'policy_name', None)
+            model_client = create_dummy_model_client(self.agent_framework)
+            # Update the model in _create_args which is where it's actually stored
+            model_client._create_args['model'] = policy_name
+            # Store agent_name directly on the client so we can retrieve it later
+            model_client._agent_name = agent_name
+
+            model_client_dict[agent_name] = model_client
+
+        concurrent_timer.checkpoint("Applying patches")
+
+        # Apply patch_all with all necessary mappings
+        patch_all(
+            server_address_dict=self.server_address_dict,
+            tokenizer_dict=self.tokenizer_dict,
+            ppo_trainer_config_dict=self.ppo_trainer_config_dict,
+            agent_policy_mapping=self.agent_policy_mapping,
+            agent_framework=self.agent_framework,
+            agent_address_mapping=agent_address_mapping,
+            agent_lora_mapping=self.agent_lora_mapping,
+            agent_config_dict=self.agent_config_dict,
+            processor_dict=self.processor_dict
+        )
+
+        concurrent_timer.checkpoint("Initializing rollout tracking dictionary")
+
+        # Create rollout tracking dictionary to track each rollout's hop/agent/uuid data
+        rollout_tracking_dict = {}
+
         concurrent_timer.checkpoint("Creating async tasks")
-        
+
         # Calculate CPU allocation per rollout
         num_concurrent_rollouts = self.gen_batch_size * self.sample_num
         cpu_per_rollout = self.calculate_cpu_per_rollout(num_concurrent_rollouts)
-        
+
         tasks = [
             asyncio.create_task(
-                self.generate_single_rollout(rollout_idx, cpu_per_rollout=cpu_per_rollout), 
+                self.generate_single_rollout(
+                    rollout_idx,
+                    model_client_dict=model_client_dict,
+                    rollout_tracking_dict=rollout_tracking_dict,
+                    cpu_per_rollout=cpu_per_rollout
+                ),
                 name=f"env_{rollout_idx}_rollouts"
             )
             for rollout_idx in range(self.gen_batch_size*self.sample_num)
         ]
-        
+
         concurrent_timer.checkpoint(f"Created {len(tasks)} async tasks")
         
         aggregated_results = {}
@@ -451,18 +512,23 @@ class MultiAgentsExecutionEngineGraph:
             raise
 
         task_pbar.close()
-        
+
         concurrent_timer.checkpoint("All tasks completed")
+
+        # Log rollout tracking information
+        concurrent_timer.checkpoint("Logging rollout tracking data")
+        self._log_rollout_tracking(rollout_tracking_dict)
+
         if self.mode=="validate":
             for agent_name in self.agent_names:
                 success_rate = len(self.success_rollout_idx_list_dict.get(agent_name, [])) / len(tasks)
                 self.multi_logger.log_rollout_summary(
-                    self.mode, -1, -1, 
-                    {agent_name: success_rate}, 
+                    self.mode, -1, -1,
+                    {agent_name: success_rate},
                     "validate_finished",
                     extra_data={"success_rate": success_rate}
                 )
-            
+
         self.multi_logger.log_async_event(
             self.mode, -1, -1, "concurrent_batch_complete",
             "Concurrent execution completed",
@@ -475,10 +541,14 @@ class MultiAgentsExecutionEngineGraph:
                 "aggregated_policies": list(aggregated_results.keys()),
             }
         )
-        
+
         # Log Ray status after concurrent execution
         self.multi_logger.log_ray_status(mode=self.mode, context="after_concurrent_batch")
-        
+
         concurrent_timer.end("Concurrent rollouts completed successfully")
+
+        # Store rollout tracking dict for later access
+        self.rollout_tracking_dict = rollout_tracking_dict
+
         return aggregated_results
 

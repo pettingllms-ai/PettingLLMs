@@ -1,0 +1,90 @@
+
+defaults:
+  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+  - _self_
+
+
+specialization: "prompt" # prompt, lora, full
+
+resource:
+  nnodes: 1
+  n_gpus_per_node: 8
+  trust_remote_code: true
+
+# Environment configuration (shared by all agents)
+env:
+  name: stateful_env
+  dataset: "polaris"
+  benchmark: "plan_path"  # Supported benchmarks: plan_path, sokoban, EightQueens, Blocksworld, suduku
+  max_turns: 5
+  resolve: false
+  multi_modal: false
+  batched_init: true
+
+
+
+
+# Multi-agent configuration for single agent
+agent_policy_configs:
+  # Number of agents to train
+  num_agents: 1
+  policy_list: ["plan_agent"]
+  agent_configs:
+    agent_0:
+      name: "plan_agent"
+      policy_name: "plan_agent_model"
+
+
+# Multi-agent interaction configuration
+multi_agent_interaction:
+
+  # Turn order for agents (list of agent names)
+  turn_order: ["plan_agent"]
+
+  # Number of agents that interact per episode
+  num_interacting_agents: 1
+
+
+# Shared model configurations
+models:
+  model_0:
+    path: "your model path"
+    name: "plan_agent_model"
+    ppo_trainer_config:
+      filter_method: mean
+      filter_ratio: 0.5
+      data:
+        max_prompt_length: ${data.max_prompt_length}
+        max_response_length: ${data.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${models.model_0.path}
+        rollout:
+          temperature: ${data.sample_temperature}
+          prompt_length: ${data.max_prompt_length}
+          response_length: ${data.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}
+          default_local_dir: ${trainer.default_local_dir}
+
+
+training:
+  device: cuda
+  total_training_steps: 200
+  project_name: pettingllms
+  experiment_name: stateful_single_agent
+  logger: [ 'console', 'wandb' ]
+  model_checkpoints_dir: checkpoints
+  ray_wait_register_center_timeout: 300
+  train_batch_size: 32
+  train_sample_num: 8
+  validate_sample_num: 1
+  sample_temperature: 1
+  val_freq: 10
+  resample_freq: 3
+  epoch_size: 20
+  val_batch_size: 32
+  max_prompt_length: 4096
+  max_response_length: 2048

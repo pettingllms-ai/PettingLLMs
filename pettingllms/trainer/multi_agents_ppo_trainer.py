@@ -33,6 +33,7 @@ from pettingllms.verl.ray_trainer import RayPPOTrainer
 from verl.utils.torch_functional import pad_sequence_to_length
 from typing import Dict
 from pettingllms.utils.performance import simple_timer,colorful_print
+from pettingllms.utils.clean_up import cleanup_old_image_folders
 import ray
 
 
@@ -68,6 +69,13 @@ class MultiAgentsPPOTrainer:
         self.lora_num = 1
         # Control variable: whether to use LoRA for generation (False initially for base model)
         self.use_lora_for_generation = False
+
+        # Read agent_untrained configuration
+        self.agent_untrained = []
+        if hasattr(config, 'multi_agent_interaction') and hasattr(config.multi_agent_interaction, 'agent_untrained'):
+            self.agent_untrained = config.multi_agent_interaction.agent_untrained
+            colorful_print(f"Agents excluded from training: {self.agent_untrained}", "yellow")
+
         if config.specialization =="lora":
             self.lora_num = len(self.agent_policy_mapping)
             self.lora_differ_mode = True
@@ -228,13 +236,29 @@ class MultiAgentsPPOTrainer:
 
 
     def _update_parameters(self, batch, ppo_trainer, timing_raw):
-       
+
 
         # Initialize metrics dictionary if not exists
         if not hasattr(batch, 'meta_info'):
             batch.meta_info = {}
         if 'metrics' not in batch.meta_info:
             batch.meta_info['metrics'] = {}
+
+        # Filter out data from untrained agents
+        if self.agent_untrained and len(self.agent_untrained) > 0:
+            if 'agent_name' in batch.non_tensor_batch:
+                agent_names = batch.non_tensor_batch['agent_name']
+                # Keep only samples from agents that are not in agent_untrained list
+                keep_indices = [i for i, name in enumerate(agent_names) if name not in self.agent_untrained]
+
+                if len(keep_indices) < len(agent_names):
+                    colorful_print(f"Filtering training data: keeping {len(keep_indices)}/{len(agent_names)} samples (excluding agents: {self.agent_untrained})", "yellow")
+                    batch = batch.select_idxs(keep_indices)
+
+                    # If all samples are filtered out, return early
+                    if len(keep_indices) == 0:
+                        colorful_print("Warning: All samples filtered out, skipping parameter update", "red")
+                        return batch
 
         # prompts: left padding
         prompts_batch = torch.nn.utils.rnn.pad_sequence(
@@ -378,7 +402,13 @@ class MultiAgentsPPOTrainer:
             if self.lora_differ_mode:
                 agent_names = batch.non_tensor_batch['agent_name']
                 unique_agents = sorted(set(agent_names))
-                
+
+                # Filter out untrained agents from unique_agents list
+                if self.agent_untrained:
+                    unique_agents = [agent for agent in unique_agents if agent not in self.agent_untrained]
+                    if len(unique_agents) < len(set(agent_names)):
+                        colorful_print(f"LoRA mode: Excluding untrained agents {self.agent_untrained} from training", "yellow")
+
                 agent_batch_dict = {}
                 for agent_name in unique_agents:
                     agent_mask = np.array([name == agent_name for name in agent_names])
@@ -392,7 +422,7 @@ class MultiAgentsPPOTrainer:
                     if dp_world_size > 1:
                         sub_batch, _ = pad_dataproto_to_divisor(sub_batch, dp_world_size)
                     agent_batch_dict[agent_name] = sub_batch
-                    colorful_print(f"Agent {agent_name}: {len(agent_indices)} samples", "cyan")
+                    colorful_print(f"Agent {agent_name}: {len(agent_indices)} samples (training enabled)", "cyan")
                 
                 # Collect metrics from all agents
                 all_actor_metrics_list = []
@@ -665,6 +695,30 @@ class MultiAgentsPPOTrainer:
             except Exception as e:
                 pprint(f"Warning: Failed to log metrics to logger: {type(e).__name__}: {e}")
                 pprint(f"Metrics that failed to log: {list(metrics.keys())}")
+
+            # Clean up old image folders if multimodal is enabled
+            enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
+            if enable_multimodal:
+                try:
+                    # Get image save directory from config
+                    image_save_dir = "tmp_image"  # default
+                    if hasattr(self.config, 'env') and hasattr(self.config.env, 'image_save_dir'):
+                        image_save_dir = self.config.env.image_save_dir
+                    elif hasattr(self.config.training, 'image_save_dir'):
+                        image_save_dir = self.config.training.image_save_dir
+
+                    # Get max subfolders from config (default: 20)
+                    max_image_steps = getattr(self.config.training, 'max_image_steps', 20)
+
+                    # Clean up old image folders
+                    cleanup_old_image_folders(
+                        base_dir=image_save_dir,
+                        max_subfolders=max_image_steps,
+                        verbose=True
+                    )
+                except Exception as e:
+                    pprint(f"Warning: Failed to clean up image folders: {type(e).__name__}: {e}")
+
             # Check if any trainer has reached its total training steps
             if self.global_steps >= self.total_training_steps:
                 progress_bar.close()

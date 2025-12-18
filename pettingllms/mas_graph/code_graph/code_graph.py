@@ -10,7 +10,7 @@ from autogen_agentchat.ui import Console
 from autogen_ext.code_executors.docker import DockerCommandLineCodeExecutor
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
-from pettingllms.multi_agent_env.autogen_graph.code_graph.code_env import CodeEnv, CodeEnvBatch
+from pettingllms.mas_graph.code_graph.code_env import CodeEnv, CodeEnvBatch
 from pettingllms.multi_agent_env.code.code_utils import (
     extract_code_from_response,
     evaluate_code_against_tests,

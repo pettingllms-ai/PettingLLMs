@@ -1,112 +1,69 @@
 <div align="center">
+  <img src="figs/logo.png" alt="PettingLLMs Logo" width="360">
+  <h1>PETTINGLLMS</h1>
+  <p>🚀 RL framework for training collaborative LLM agents with AT-GRPO.</p>
+  <p>
+    <a href="https://arxiv.org/pdf/2510.11062">📄 Paper</a> •
+    <a href="https://pettingllms-ai.github.io/">🌐 Website</a> •
+    <a href="https://www.youtube.com/watch?v=8WM-gVTrSBc">🎮 Demo</a> •
+    <a href="https://pettingllms-docs.readthedocs.io/en/latest/">📖 Documentation</a> •
+    <a href="https://pettingllms-docs.readthedocs.io/en/latest/About_us/">👥 About Us</a> •
+    <a href="figs/wechat.jpg"><img src="https://img.shields.io/badge/Wechat-07C160.svg?logo=wechat" alt="Wechat"> PettingLLMs</a>
+  </p>
+</div>
+
+PettingLLMs is an open-source framework for on-policy reinforcement learning with multi-agent large language models. It implements AT-GRPO (Agent- and Turn-wise Group Relative Policy Optimization) to train collaborative LLM agents across diverse tasks.
+
+## Highlights
+- AT-GRPO algorithm for fine-grained agent and turn-wise credit assignment.
+- Agent-specific policies via LoRA or fully independent models.
+- Multi-level rewards: process, agent, and global/team signals.
+- Multimodal examples (e.g., Qwen2.5VL) for vision + language tasks.
+- Seamless switch between single-agent and multi-agent training flows.
+
+## Feature Snapshot
+
+| Capability | PettingLLMs | AgentLightning / VERL (typical) |
+| --- | ---: | ---: |
+| Agent-specific LoRA & models (per-agent adapters or different base models) | ✅ | ❌ (one shared model) |
+| Multi-level rewards (process + agent + global/team) | ✅ | ❌ (mostly global only) |
+| Fine-grained grouping (turn/phase/role/tool-call) | ✅ | ❌ (often one-task = one-group) |
+| Multimodal (see Qwen2.5VL examples) | ✅ | ❌ |
 
 <div align="center">
-<img src="figs/logo.png" alt="PettingLLMs Logo" width="400">
-
+  <img src="figs/plm_overview.png" alt="PettingLLMs Overview" width="820">
 </div>
 
-# PETTINGLLMS
-
-<div>
-🚀 RL Framework for training Multi Agentic LLMs.🌟
-</div>
-
-<p align="center">
- 
-  <a href="https://arxiv.org/pdf/2510.11062">📄 Paper</a> •
-  <a href="https://pettingllms-ai.github.io/">🌐 Website</a> •
-  <a href="https://www.youtube.com/watch?v=8WM-gVTrSBc">🎮 Demo</a> •
-  <a href="https://pettingllms-docs.readthedocs.io/en/latest/">📖 Documentation</a> •
-  <a href="https://pettingllms-docs.readthedocs.io/en/latest/About_us/">👥 About Us</a>•
-  <a href="figs/wechat.jpg">
-  <img src="https://img.shields.io/badge/Wechat-07C160.svg?logo=wechat" alt="Wechat "> PettingLLMs
-</a>
-  
-</p>
-
-</div>
-<div>
-<br>
-
-
-<div align="center">
-<img src="figs/pettingllms.svg" alt="PettingLLMs Logo" width="800">
-</div>
-
-</div>
-PettingLLMs is an open-source framework for on-policy reinforcement learning (RL) with multi-agent large language models (LLMs).  It implements AT-GRPO (Agent- and Turn-wise Group Relative Policy Optimization), a novel algorithm and system design for training collaborative LLM agents across **planning, coding, and mathematical reasoning tasks**. 
-
-This repo supports:
-- ✅ Single-agent(SA) RL training  
-- ✅ Multi-agent RL training (one role-sharing policy)  
-- ✅ Multi-agent RL training (role-specialized policies using different lora adaptor or different LLMs)
-
----
+**Supported modes**
+- ✅ Single-agent RL training
+- ✅ Multi-agent RL training (one role-sharing policy)
+- ✅ Multi-agent RL training (role-specialized policies using different LoRA adapters or different LLMs)
 
 ## 📰 News
-- **[2025.10]** 🚀 GitHub repository open-sourced and publicly available
-
-- **[2025.10]** 🎉 Paper released! Check out our [arxiv preprint](hhttps://arxiv.org/pdf/2510.11062)
-
-- **[2025.10]** 🔥 Support for different LoRA adapters per agent role - enabling efficient role-specialized training
-- **[2025.09]** 🌍 Multi-environment support added: Game (Sudoku, Sokoban), Code (APPS, CodeContests), and Math (AIME, OlympiadBench)
-- **[2025.08]** 🤖 Multi-agent framework implementation: support for both shared single model and role-specific models
----  
-
-
-## 🚀 Key Features
-
--   **Multi-Level Agent Specialization**: Train and specialize agents at any level, from lightweight prompt adjustments to full model fine-tuning with LoRA or reinforcement learning.
--   **Novel RL Algorithm**: Implements Agent- and turn wise GRPO- **AT-GRPO** for efficient and stable multi-agent training.
--   **Built-in Multi-Turn MAS Workflows**: Comes with predefined, reproducible benchmarks and environments for a variety of domains:
-    -   🎮 **Games**: Sudoku (4x4), Sokoban (6x6)
-    -   📐 **Planning**: Plan-Path (10x10 grid)
-    -   💻 **Coding**: APPS, CodeContests, LiveCodeBench
-    -   🔢 **Math**: AIME24/25, OlympiadBench
-
----
-
-## 🚩 Roadmap
-
-- [ ] **More Environments**: Verilog design, web search, robotics, database query, scientific discovery
-- [ ] **Multi-Modal Support**: Vision-language models, audio processing, mixed-modal tasks
-- [ ] **Agentic Framework Integration**: AutoGen, LangGraph, CrewAI, and custom framework APIs
+- **[2025.12]** ✅ Roadmap milestone delivered: more environments (Verilog design, web search, robotics, database query, scientific discovery), multimodal support , and agentic framework integrations (AutoGen, LangGraph, LLamaIndex).
+- **[2025.10]** 🚀 GitHub repository open-sourced and publicly available.
+- **[2025.10]** 🎉 Paper released! Check out our [arXiv preprint](https://arxiv.org/pdf/2510.11062).
+- **[2025.10]** 🔥 Support for different LoRA adapters per agent role—efficient role-specialized training.
+- **[2025.09]** 🌍 Multi-environment support added: Game (Sudoku, Sokoban), Code (APPS, CodeContests), Math (AIME, OlympiadBench).
+- **[2025.08]** 🤖 Multi-agent framework implementation: supports both shared single model and role-specific models.
 
 
 
+## Agent Specification Levels
 
-## 📊 Key Results
+| Level | Specification Type | Architecture Components | Trajectory Flow | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **L1** | Shared Policy (agent-specific prompt) | 1 base model + distinct prompts | Shared trajectory | All agents share the same base model; roles are defined via different system prompts. |
+| **L2** | Agent-specific Policy (agent-specific LoRA) | 1 base model + LoRA adapters | Per-agent trajectory | Agents share a base model but use lightweight, role-specific LoRA adapters for specialization. |
+| **L3** | Agent-specific Model (full weights) | Independent models (Model 1, Model 2, Model 3...) | Per-agent trajectory | Each agent runs a separate model instance for maximal specialization. |
 
-<div align="center">
-<img src="figs/pettingllms_performance_comparison.png" alt="PettingLLMs performance" width="800">
-</div>
+## MAS Design Options
 
-Table 3 · Ablation on Plan-Path (Qwen3-1.7B)
----
-| Method                                       | Acc.(%) |      Δ |
-| -------------------------------------------- | ------: | -----: |
-| Single agent                                 |    5.00 |      – |
-| Training tool agent in SA, eval in SA        |   11.00 |  +6.00 |
-| Training code agent in SA, eval in SA        |   14.50 |  +9.50 |
-| Training in SA, eval in MAS                  |   16.00 | +11.00 |
-| MAS RL (role specific policies), eval in MAS |   96.00 | +91.00 |
-| w/ Swapped Policies                          |    6.00 |  +1.00 |
-
-
-
-
-
-
-
-## 🔁 Environment Workflows (MA vs. SA)
-
-<div align="center">
-<img src="figs/workflow.png" alt="PettingLLMs worker" width="800">
-</div>
-
-
-
-
+| Category | Design Paradigm | Key Features & Support | Best For |
+| :--- | :--- | :--- | :--- |
+| **A** | Graph-based agent | Flexible topology; integrates with frameworks like AutoGen, Ag2, LangChain. | Complex, non-linear workflows needing external agent ecosystems. |
+| **B** | Turn-based agent (finite-state machine) | Fine-grained control; customizable sequential execution. | Scenarios requiring precise operation order and state transitions. |
+| **C** | AFlow Co-Evolve [experiment] | Automated design via a lightweight MAS-designer. | Experimental setups where the system self-optimizes agent structures. |
 
 ## 📦 Installation
 
@@ -116,13 +73,9 @@ cd PettingLLMs
 bash setup.bash
 ```
 
----
-
 ## 🎯 Quick Start
 
-### 1. Dataset Preparation
-
-Prepare datasets for different tasks:
+### 1) Dataset preparation
 
 ```bash
 # Code tasks (APPS, CodeContests, LiveCodeBench)
@@ -135,50 +88,35 @@ python scripts/dataprocess/load_math.py
 python scripts/dataprocess/load_sokoban.py
 ```
 
-Datasets will be saved to `datasets/code/`, `datasets/math/`, and `datasets/sudoku_environments/`.
+Datasets are saved to `datasets/code/`, `datasets/math/`, and `datasets/sudoku_environments/`.
 
-### 2. Training
+### 2) Training
 
-**Example: Train multi-agent system on math tasks**
+Example: train a multi-agent system on math tasks.
 
 ```bash
 bash scripts/train/math/math_L1_prompt.sh
 ```
 
-Other training scripts available in `scripts/train/`:
-- `code_single_policy.sh`, `code_two_policy.sh` - Code domain
-- `plan_path_single.sh`, `plan_path_two_policy.sh` - Planning domain
-- `sokoban_two_policy.sh`, `sokodu_single.sh` - Game domain
+Other training scripts live in `scripts/train/`:
+- `code_single_policy.sh`, `code_two_policy.sh` (code)
+- `plan_path_single.sh`, `plan_path_two_policy.sh` (planning)
+- `sokoban_two_policy.sh`, `sokodu_single.sh` (games)
 
-### 3. Evaluation
-
-**Example: Evaluate trained model**
+### 3) Evaluation
 
 Edit `scripts/evaluate/evaluate.sh` to set your model path and config:
+
 ```bash
 MODEL_PATHS=("/path/to/your/model")
 CONFIG_NAME="math_single_policy"
 ```
 
 Then run:
+
 ```bash
 bash scripts/evaluate/evaluate.sh
 ```
-
----
-Of course, here is a more concise version focusing on how agent roles are differentiated at each level.
-
-***
-
-### 🧱 Three Levels of Agent Specialization
-
-PettingLLMs uses a tiered approach to define agent roles, ranging from simple instructions to deep model specialization.
-
-| Level | Role Specialization Method | Description |
-| :--- | :--- | :--- |
-| **L0** | **Shared model** | Roles are defined *solely through instructions* in the prompt. The base model is identical for all agents, offering a flexible but performance-limited baseline. |
-| **L1** | **Role-specific LoRA** | Each role is specialized using a unique, lightweight **LoRA adapter**. This creates distinct, cost-effective agent "personalities" on top of a shared base model. |
-| **L2** | **Role-specific Model** | The **entire model's weights** are optimized for a specific role using reinforcement learning. This creates a highly specialized expert agent for maximum performance on complex tasks. |
 
 ## 📚 Citation
 
@@ -193,18 +131,13 @@ If you find PettingLLMs useful for your research or projects, please cite:
 }
 ```
 
-
 ## 🔗 Acknowledgements
 
-This work was primarily conducted by Yujie Zhao during her summer internship at **Intel Corporation**. We gratefully acknowledge Intel's support and resources that made this research possible.
+This work was primarily conducted by Yujie Zhao during her summer internship at **Intel Corporation**. We gratefully acknowledge Intel's support and resources.
 
-
-- **VERL**: [VERL: Efficient RL Training for LLMs](https://github.com/volcengine/verl) - For efficient distributed RL training infrastructure
-- **RLLM**: [RLLM: Reinforcement Learning with Language Models](https://github.com/rllm-org/rllm) - For foundational RL algorithms for LLMs
-
----
+- **VERL**: [VERL: Efficient RL Training for LLMs](https://github.com/volcengine/verl) — efficient distributed RL training infrastructure.
+- **RLLM**: [RLLM: Reinforcement Learning with Language Models](https://github.com/rllm-org/rllm) — foundational RL algorithms for LLMs.
 
 ## 📌 License
 
-Released under the MIT license.
-See LICENSE for details.
+Released under the MIT license. See `LICENSE` for details.

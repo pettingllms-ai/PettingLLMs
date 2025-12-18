@@ -159,15 +159,23 @@ def apply_monkey_patch(
     # TODO: VLM models only, unify monkey patch to LLM models.
     if model.config.model_type == "qwen2_5_vl":
         from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
-            Qwen2_5_VLFlashAttention2,
             Qwen2_5_VLForConditionalGeneration,
         )
 
         if use_remove_padding or ulysses_sp_size > 1:
             from verl.models.transformers.qwen2_vl import ulysses_flash_attn_forward
 
-            Qwen2_5_VLFlashAttention2.forward = ulysses_flash_attn_forward
-            print("Monkey patch FlashAttention2.forward in Qwen2.5VL")
+            # For newer transformers versions (>=4.52.0), use Qwen2_5_VLAttention instead of Qwen2_5_VLFlashAttention2
+            try:
+                from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLFlashAttention2
+                Qwen2_5_VLFlashAttention2.forward = ulysses_flash_attn_forward
+                print("Monkey patch FlashAttention2.forward in Qwen2.5VL (legacy)")
+            except ImportError:
+                # transformers >= 4.52.0 uses unified attention class
+                from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention
+                # Only patch if flash_attention_2 is being used
+                Qwen2_5_VLAttention.forward = ulysses_flash_attn_forward
+                print("Monkey patch Qwen2_5_VLAttention.forward in Qwen2.5VL (new transformers)")
 
         if ulysses_sp_size > 1:
             if is_transformers_version_in_range(min_version="4.52.0"):

@@ -120,43 +120,77 @@ async def _worker_docker(
     tmpdir = tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp")
     script_path = os.path.join(tmpdir, "script.py")
     stdout_path = os.path.join(tmpdir, "stdout.txt")
-    
+    stderr_path = os.path.join(tmpdir, "stderr.txt")
+
     proc = None
     stdout_file = None
+    stderr_file = None
     result = "timeout"
-    
+
     try:
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script)
-        
+
+        # Setup environment with PYTHONPATH for ag2_tools and ag2_tracer
+        env = os.environ.copy()
+
+        # Add autoevol directory to PYTHONPATH
+        autoevol_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../autoevol"))
+        if os.path.exists(autoevol_dir):
+            if 'PYTHONPATH' in env:
+                env['PYTHONPATH'] = f"{autoevol_dir}:{env['PYTHONPATH']}"
+            else:
+                env['PYTHONPATH'] = autoevol_dir
+
+        # Use virtual environment Python if available
+        workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+        venv_python = os.path.join(workspace_root, "pettingllms_venv/bin/python")
+        python_executable = venv_python if os.path.exists(venv_python) else "python"
+
         stdout_file = open(stdout_path, "wb")
+        stderr_file = open(stderr_path, "wb")
         proc = await asyncio.create_subprocess_exec(
-            "python",
+            python_executable,
             script_path,
             stdout=stdout_file,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=stderr_file,
             cwd=tmpdir,
+            env=env,
             start_new_session=True,
         )
-        
+
         await asyncio.wait_for(proc.wait(), timeout=timeout)
-        
+
         stdout_file.close()
+        stderr_file.close()
         stdout_file = None
-        
+        stderr_file = None
+
         with open(stdout_path, "rb") as f_out:
             out_bytes = f_out.read()
-        result = out_bytes.decode(errors="replace")
+        with open(stderr_path, "rb") as f_err:
+            err_bytes = f_err.read()
+
+        stdout_str = out_bytes.decode(errors="replace")
+        stderr_str = err_bytes.decode(errors="replace")
+
+        # Combine stdout and stderr for error reporting
+        if stderr_str.strip():
+            result = f"error: {stderr_str}\n\nSTDOUT:\n{stdout_str}"
+        else:
+            result = stdout_str
         
     except asyncio.TimeoutError:
         if proc and proc.pid:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         result = "timeout"
-        
+
     finally:
         if stdout_file and not stdout_file.closed:
             stdout_file.close()
-        
+        if stderr_file and not stderr_file.closed:
+            stderr_file.close()
+
         if proc and proc.returncode is None:
             if proc.pid:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)

@@ -1,5 +1,6 @@
 # python venv
 pettingllms_venv/*
+tmp_*/
 .claude/
 # Byte-compiled / optimized / DLL files
 __pycache__/

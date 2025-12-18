@@ -1,3 +1,21 @@
+#!/bin/bash
+# evaluate.sh - vLLM Launch and Evaluation Script for stateful_vision
+#
+# Usage: bash scripts/evaluate/stateful_vision/evaluate_L1.sh
+#
+# Multi-GPU Examples:
+#   Single GPU per model (default):
+#     TP_SIZE=1, GPU_START_ID=0, 2 models → uses GPU 0, 1
+#
+#   Two GPUs per model (Tensor Parallel):
+#     TP_SIZE=2, GPU_START_ID=0, 2 models → uses GPU 0-1, 2-3
+#
+#   Four GPUs per model:
+#     TP_SIZE=4, GPU_START_ID=0, 1 model → uses GPU 0-3
+#
+#   Start from GPU 2:
+#     TP_SIZE=1, GPU_START_ID=2, 2 models → uses GPU 2, 3
+#
 set -e
 
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
@@ -17,21 +35,21 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "your model path"
+    "your vlm path here"
 )
 
 # Assuming execution from repository root
 REPO_ROOT="$(pwd)"
-CONFIG_PATH="${REPO_ROOT}/pettingllms/config/stateful"
+CONFIG_PATH="${REPO_ROOT}/pettingllms/config/stateful_vision"
 CONFIG_NAME="stateful_L1_prompt"
-BENCHMARK="sokoban"
+BENCHMARK="plan_path"
 MAX_TURNS=3
 BASE_VLLM_PORT=8501
 BASE_PROXY_PORT=8520
 MAX_PROMPT_LENGTH=8192
 MAX_RESPONSE_LENGTH=8192
-GPU_START_ID=1
-ENABLE_THINKING=false
+GPU_START_ID=4
+ENABLE_THINKING=true
 HOST="127.0.0.1"
 GPU_MEM=0.8
 TP_SIZE=1  # Tensor parallel size (number of GPUs per model)
@@ -86,19 +104,19 @@ cleanup() {
         exit 1
     fi
     CLEANUP_DONE=1
-    
+
     # Always cleanup proxy processes
-    for pid in "${PROXY_PIDS[@]}"; do 
+    for pid in "${PROXY_PIDS[@]}"; do
         kill $pid 2>/dev/null || true
     done
     for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
         timeout 2 lsof -ti:$((BASE_PROXY_PORT + i)) 2>/dev/null | xargs -r kill -9 2>/dev/null || true
     done
-    
+
     # Only cleanup vLLM if VLLM_SHUTDOWN is true
     if [ "$VLLM_SHUTDOWN" = true ]; then
         echo "Shutting down vLLM..."
-        for pid in "${VLLM_PIDS[@]}"; do 
+        for pid in "${VLLM_PIDS[@]}"; do
             kill $pid 2>/dev/null || true
         done
         for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
@@ -114,7 +132,7 @@ wait_for_endpoint() {
     local port=$2
     local name=$3
     local max_wait=$4
-    
+
     echo -n "Waiting for $name at $host:$port"
     local elapsed=0
     while [ $elapsed -lt $max_wait ]; do
@@ -152,11 +170,11 @@ for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
     else
         SERVED_MODEL_NAME="$(echo "$MODEL_PATH" | rev | cut -d'/' -f1-2 | rev)"
     fi
-    
+
     # Calculate GPU IDs for this model
     FIRST_GPU=$((GPU_START_ID + i * TP_SIZE))
     LAST_GPU=$((FIRST_GPU + TP_SIZE - 1))
-    
+
     # Build CUDA_VISIBLE_DEVICES string
     if [ $TP_SIZE -eq 1 ]; then
         GPU_IDS="$FIRST_GPU"
@@ -166,7 +184,7 @@ for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
             GPU_IDS="$GPU_IDS,$((FIRST_GPU + g))"
         done
     fi
-    
+
     echo "Starting model$((i+1)): ${MODEL_PATH}"
     echo "  Served model name: ${SERVED_MODEL_NAME}"
     echo "  GPUs: $GPU_IDS (TP_SIZE=${TP_SIZE})"
@@ -181,10 +199,10 @@ for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
         --max-model-len $MAX_LEN > /tmp/vllm_model${i}.log 2>&1 &
     VLLM_PIDS[$i]=$!
     echo "  PID: ${VLLM_PIDS[$i]}, Port: $((BASE_VLLM_PORT + i))"
-    
+
     # Wait a moment for vLLM to start and output initial logs
     sleep 3
-    
+
     # Check if process is still running and show initial logs
     if ! kill -0 ${VLLM_PIDS[$i]} 2>/dev/null; then
         echo "  ✗ ERROR: vLLM process died immediately!"
@@ -215,7 +233,7 @@ for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
         echo "=========================="
         exit 1
     fi
-    
+
     # Wait for HTTP endpoint
     if ! wait_for_endpoint "$HOST" "$((BASE_VLLM_PORT + i))" "model$((i+1)) vLLM" "$MAX_WAIT"; then
         echo "Error: model$((i+1)) vLLM failed to start"
@@ -253,7 +271,7 @@ for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
         tail -n 20 /tmp/proxy_model${i}.log
         exit 1
     fi
-    
+
     # Wait for HTTP endpoint
     if ! wait_for_endpoint "$HOST" "$((BASE_PROXY_PORT + i))" "model$((i+1)) proxy" "60"; then
         echo "Error: model$((i+1)) proxy failed to start"
@@ -308,6 +326,7 @@ python3 -m pettingllms.evaluate.evaluate \
     agent_policy_configs.agent_configs.agent_1.enable_thinking=$ENABLE_THINKING \
     env.max_turns=$MAX_TURNS \
     resource.nnodes=1 \
+    env.multi_modal=true \
     models.model_0.ppo_trainer_config.actor_rollout_ref.rollout.tensor_model_parallel_size=$TP_SIZE \
     models.model_0.ppo_trainer_config.actor_rollout_ref.trainer.n_gpus_per_node=$TP_SIZE \
     models.model_0.ppo_trainer_config.actor_rollout_ref.trainer.n_training_gpus_per_node=$TP_SIZE

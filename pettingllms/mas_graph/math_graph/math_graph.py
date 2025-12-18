@@ -11,7 +11,6 @@ from autogen_agentchat.messages import BaseChatMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 from pettingllms.mas_graph.math_graph.math_env import MathEnv, MathEnvBatch
-from pettingllms.multi_agent_env.math.math_utils import extract_code
 
 
 def extract_answer(text: str) -> str:

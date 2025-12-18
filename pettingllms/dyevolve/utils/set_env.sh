@@ -1,6 +1,0 @@
-export OPENAI_API_KEY="${OPENAI_API_KEY:-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}"
-
-export SERPER_API_KEY='c0210085fdef2b98bd222f7b17f6262ca0ec92df'
-export CHAT_MODEL=gpt-4.1-mini
-export MAX_ANSWER_TOKENS=8192
-export ENVIRONMENT=search

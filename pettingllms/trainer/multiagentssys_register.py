@@ -22,6 +22,7 @@ ENV_CLASSES = {
     "math_aggretion_env": safe_import("pettingllms.multi_agent_env.math_aggretion.math_env", "MathEnv"),
     "search_env": safe_import("pettingllms.multi_agent_env.search.search_env", "SearchEnv"),
     "stateful_env": safe_import("pettingllms.multi_agent_env.stateful.stateful_env", "StatefulEnv"),
+    "stateful_vision_env": safe_import("pettingllms.multi_agent_env.stateful_vision.stateful_env", "StatefulEnv"),
     "pychecker_env": safe_import("pettingllms.multi_agent_env.pychecker_rl.pychecker_env", "PyCheckerEnv"),
 }
 
@@ -32,6 +33,7 @@ ENV_BATCH_CLASSES = {
     "math_aggretion_env": safe_import("pettingllms.multi_agent_env.math_aggretion.math_env", "MathEnvBatch"),
     "search_env": safe_import("pettingllms.multi_agent_env.search.search_env", "SearchEnvBatch"),
     "stateful_env": safe_import("pettingllms.multi_agent_env.stateful.stateful_env", "StatefulEnvBatch"),
+    "stateful_vision_env": safe_import("pettingllms.multi_agent_env.stateful_vision.stateful_env", "StatefulEnvBatch"),
     "pychecker_env": safe_import("pettingllms.multi_agent_env.pychecker_rl.pychecker_env", "PyCheckerEnvBatch"),
 }
 
@@ -67,6 +69,10 @@ AGENT_CLASSES = {
     "plan_agent": safe_import("pettingllms.multi_agent_env.stateful.agents.plan_agent", "PlanAgent"),
     "tool_call_agent": safe_import("pettingllms.multi_agent_env.stateful.agents.tool_agent", "ToolAgent"),
 
+    # Stateful Vision agents
+    "plan_agent_vision": safe_import("pettingllms.multi_agent_env.stateful_vision.agents.plan_agent", "PlanAgent"),
+    "tool_call_agent_vision": safe_import("pettingllms.multi_agent_env.stateful_vision.agents.tool_agent", "ToolAgent"),
+
     # PyChecker agents
     "pychecker_agent": safe_import("pettingllms.multi_agent_env.pychecker_rl.agents.pychecker_agent", "PyCheckerAgent"),
     "gen_tb_agent": safe_import("pettingllms.multi_agent_env.pychecker_rl.agents.gen_tb_agent", "GenTBAgent"),
@@ -81,6 +87,7 @@ ENV_WORKER_CLASSES = {
     "math_aggretion_env": safe_import("pettingllms.multi_agent_env.math.math_worker", "get_ray_docker_worker_cls"),
     "search_env": safe_import("pettingllms.multi_agent_env.math.math_worker", "get_ray_docker_worker_cls"),
     "stateful_env": safe_import("pettingllms.multi_agent_env.math.math_worker", "get_ray_docker_worker_cls"),
+    "stateful_vision_env": safe_import("pettingllms.multi_agent_env.math.math_worker", "get_ray_docker_worker_cls"),
     "pychecker_env": safe_import("pettingllms.multi_agent_env.pychecker_rl.pychecker_worker", "get_ray_docker_worker_cls"),
 }
 

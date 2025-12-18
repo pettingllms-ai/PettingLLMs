@@ -18,23 +18,23 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "/home/lah003/models/Qwen3-1.7B"
+    "/raid/lah003/mas_rl_cold_start"
 )
 EXPERIMENT_NAME="mas_graph_test"
 # Assuming execution from repository root
 REPO_ROOT="$(pwd)"
-CONFIG_PATH="${REPO_ROOT}/pettingllms/config/mas_graph"
-CONFIG_NAME="math_graph_L1_prompt"
+CONFIG_PATH="${REPO_ROOT}/pettingllms/config/autoevol"
+CONFIG_NAME="math_L1_prompt"
 BENCHMARK="AIME24"
-BASE_VLLM_PORT=8601
-BASE_PROXY_PORT=8620
-GPU_START_ID=7
+BASE_VLLM_PORT=8301
+BASE_PROXY_PORT=8320
+GPU_START_ID=3
 HOST="127.0.0.1"
 GPU_MEM=0.15  # Reduced from 0.8 to fit in available memory (33.38 GiB available)
 VLLM_SHUTDOWN=false  # If true, vLLM will be shut down when script exits; if false, vLLM will remain running
 TP_SIZE=1
 MAX_PROMPT_LENGTH=8192
-MAX_RESPONSE_LENGTH=1024
+MAX_RESPONSE_LENGTH=4096
 MAX_LEN=32768
 MAX_WAIT=180  # Maximum wait time in seconds
 CHECK_INTERVAL=2  # Check interval in seconds
@@ -175,7 +175,9 @@ if [ "$VLLM_ALREADY_RUNNING" = false ]; then
             --port $((BASE_VLLM_PORT + i)) \
             --gpu-memory-utilization $GPU_MEM \
             --tensor-parallel-size $TP_SIZE \
-            --max-model-len $MAX_LEN > /tmp/vllm_model${i}.log 2>&1 &
+            --max-model-len $MAX_LEN \
+            --enable-auto-tool-choice \
+            --tool-call-parser hermes > /tmp/vllm_model${i}.log 2>&1 &
         VLLM_PIDS[$i]=$!
 
         sleep 3
@@ -264,7 +266,8 @@ done
 
 # Run evaluation
 echo "Running evaluation..."
-VLLM_ADDRESS="${HOST}:${BASE_PROXY_PORT}"
+# Use BASE_VLLM_PORT instead of BASE_PROXY_PORT for chat/completions endpoint
+VLLM_ADDRESS="${HOST}:${BASE_VLLM_PORT}"
 
 python3 -m pettingllms.evaluate.evaluate \
     --config-path "$CONFIG_PATH" \
@@ -276,10 +279,12 @@ python3 -m pettingllms.evaluate.evaluate \
     training.max_prompt_length=$MAX_PROMPT_LENGTH \
     training.max_response_length=$MAX_RESPONSE_LENGTH \
     training.experiment_name="$EXPERIMENT_NAME" \
+    +traning.validate_sample_num=1 \
     resource.n_gpus_per_node=$TP_SIZE \
     resource.nnodes=1 \
     models.model_0.ppo_trainer_config.actor_rollout_ref.rollout.tensor_model_parallel_size=$TP_SIZE \
     models.model_0.ppo_trainer_config.actor_rollout_ref.trainer.n_gpus_per_node=$TP_SIZE \
     models.model_0.ppo_trainer_config.actor_rollout_ref.trainer.n_training_gpus_per_node=$TP_SIZE
+    
 
 echo "Evaluation completed"

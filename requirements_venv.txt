@@ -14,8 +14,7 @@ anyio==4.10.0
 # Agent Frameworks (compatible with Python 3.13)
 autogen-agentchat==0.7.5
 autogen-core==0.7.5
-autogen-ext==0.7.5
-ag2==0.8.1
+autogen-ext[docker]==0.7.5
 langchain==0.3.27
 langchain-core==0.3.72
 langchain-openai==0.3.10

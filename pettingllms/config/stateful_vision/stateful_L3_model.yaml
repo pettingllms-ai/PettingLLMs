@@ -1,0 +1,127 @@
+
+defaults:
+  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+  - ../ppo_trainer@models.model_1.ppo_trainer_config: eval
+  - _self_
+
+
+specialization: "model" # prompt, lora, full
+lora_rank: 16
+lora_alpha: 32
+resource:
+  nnodes: 1
+  n_gpus_per_node: 8
+  trust_remote_code: true
+
+# Environment configuration (shared by all agents)
+env:
+  name: stateful_env
+  dataset: "polaris"
+  benchmark: "plan_path"  # Supported benchmarks: plan_path, sokoban, EightQueens, Blocksworld, suduku
+  max_turns: 5
+  resolve: false
+  multi_modal: false
+  batched_init: true
+
+
+
+base_models:
+  policy_0:
+    path: "your base model path"
+    name: "plan_agent_model"
+  policy_1:
+    path: "your base model path"
+    name: "tool_call_agent_model"
+
+
+
+# Multi-agent configuration for two policies
+agent_policy_configs:
+  # Number of agents to train
+  num_agents: 2
+  policy_list: ["plan_agent", "tool_call_agent"]
+  agent_configs:
+    agent_0:
+      name: "plan_agent"
+      policy_name: "plan_agent_model"
+
+
+    agent_1:
+      name: "tool_call_agent"
+      policy_name: "tool_call_agent_model"
+
+
+# Multi-agent interaction configuration
+multi_agent_interaction:
+
+  # Turn order for agents (list of agent names)
+  turn_order: ["tool_call_agent", "plan_agent"]
+
+  # Number of agents that interact per episode
+  num_interacting_agents: 2
+
+
+
+
+training:
+  device: cuda
+  total_training_steps: 200
+  project_name: pettingllms
+  experiment_name: stateful_multi_model
+  logger: [ 'console', 'wandb' ]
+  model_checkpoints_dir: checkpoints
+  ray_wait_register_center_timeout: 300
+  train_batch_size: 32
+  train_sample_num: 8
+  validate_sample_num: 1
+  sample_temperature: 1
+  val_freq: 10
+  resample_freq: 3
+  epoch_size: 20
+  max_prompt_length: 4096
+  max_response_length: 2048
+  lora_rank: ${lora_rank}
+  lora_alpha: ${lora_alpha}
+
+
+models:
+  model_0:
+    path: ${base_models.policy_0.path}
+    name: ${base_models.policy_0.name}
+    ppo_trainer_config:
+      filter_method: mean
+      filter_ratio: 0.5
+      data:
+        max_prompt_length: ${training.max_prompt_length}
+        max_response_length: ${training.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${base_models.policy_0.path}
+        rollout:
+          temperature: ${training.sample_temperature}
+          prompt_length: ${training.max_prompt_length}
+          response_length: ${training.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}
+  model_1:
+    path: ${base_models.policy_1.path}
+    name: ${base_models.policy_1.name}
+    ppo_trainer_config:
+      filter_method: mean
+      filter_ratio: 0.5
+      data:
+        max_prompt_length: ${training.max_prompt_length}
+        max_response_length: ${training.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${base_models.policy_1.path}
+        rollout:
+          temperature: ${training.sample_temperature}
+          prompt_length: ${training.max_prompt_length}
+          response_length: ${training.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}

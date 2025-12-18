@@ -248,17 +248,16 @@ class MultiAgentsExecutionEngine:
             async def generate_agent_response(agent_idx, agent_name):
                 current_agent = agent_group[agent_idx]
                 current_agent.update_from_env(turn_idx, env)
+
+                # Check if agent should skip this turn
+                if hasattr(current_agent, 'skip_current_turn') and current_agent.skip_current_turn:
+                    print(f"[Engine] Skipping turn for agent {agent_name} at turn {turn_idx} (skip_current_turn=True)")
+                    return None
+
                 prompt = current_agent.current_prompt
                 policy_name = self.agent_policy_mapping.get(agent_name)
                 agent_enable_thinking = self.agent_enable_thinking.get(agent_name, False)
                 agent_enable_multimodal = self.agent_enable_multimodal.get(agent_name, False)
-
-                # Extract image data if multimodal is enabled
-                image_data = None
-                if agent_enable_multimodal and hasattr(current_agent, 'get_image_data'):
-                    image_data = current_agent.get_image_data()
-                elif agent_enable_multimodal and hasattr(env, 'get_image_data'):
-                    image_data = env.get_image_data()
 
                 format_prompt = convert_prompt_to_dpr(
                     self.tokenizer_dict[policy_name],
@@ -313,7 +312,6 @@ class MultiAgentsExecutionEngine:
                         model_name=model_name,
                         tokenizer=self.tokenizer_dict[policy_name],
                         enable_thinking=agent_enable_thinking,
-                        image_data=image_data,
                         application_id=str(uuid.uuid4()),
                         env_idx=rollout_idx // self.sample_num,
                         policy_name=policy_name,
@@ -446,16 +444,6 @@ class MultiAgentsExecutionEngine:
                 agent_enable_multimodal = self.agent_enable_multimodal.get(agent_name, False)
                 current_agent = agent_group[agent_idx]
                 image_info = None
-                if agent_enable_multimodal:
-                    if hasattr(current_agent, 'get_image_data'):
-                        img_data = current_agent.get_image_data()
-                        if img_data is not None:
-                            image_info = {"has_image": True, "type": type(img_data).__name__}
-                    elif hasattr(env, 'get_image_data'):
-                        img_data = env.get_image_data()
-                        if img_data is not None:
-                            image_info = {"has_image": True, "type": type(img_data).__name__}
-
                 self.multi_logger.log_env_agent_info(
                         self.mode, env_idx, rollout_idx, turn_idx + 1, agent_name,
                         "Trajectory information updated",
@@ -545,18 +533,17 @@ class MultiAgentsExecutionEngine:
                 env = envs_list[idx]
                 current_agent = agent_groups[idx][agent_idx]
                 current_agent.update_from_env(turn_idx, env)
+
+                # Check if agent should skip this turn
+                if hasattr(current_agent, 'skip_current_turn') and current_agent.skip_current_turn:
+                    print(f"[Engine] Skipping turn for agent {agent_name} at turn {turn_idx} in rollout {rollout_idx} (skip_current_turn=True)")
+                    return None
+
                 prompt = current_agent.current_prompt
                 policy_name = self.agent_policy_mapping.get(agent_name)
                 # Get enable_thinking for this specific agent
                 agent_enable_thinking = self.agent_enable_thinking.get(agent_name, False)
                 agent_enable_multimodal = self.agent_enable_multimodal.get(agent_name, False)
-
-                # Extract image data if multimodal is enabled
-                image_data = None
-                if agent_enable_multimodal and hasattr(current_agent, 'get_image_data'):
-                    image_data = current_agent.get_image_data()
-                elif agent_enable_multimodal and hasattr(env, 'get_image_data'):
-                    image_data = env.get_image_data()
 
                 format_prompt = convert_prompt_to_dpr(
                     self.tokenizer_dict[policy_name],
@@ -613,7 +600,6 @@ class MultiAgentsExecutionEngine:
                         model_name=server_name,
                         tokenizer=self.tokenizer_dict[policy_name],
                         enable_thinking=agent_enable_thinking,
-                        image_data=image_data,
                         application_id=str(uuid.uuid4()),
                         env_idx=env_idx,
                         policy_name=policy_name,
@@ -737,9 +723,14 @@ class MultiAgentsExecutionEngine:
             for agent_idx, agent_name, response_results in all_agents_results:
                 for idx in range(len(rollout_idx_list)):
                     result = response_results[idx]
+
+                    # Skip if agent skipped this turn (result is None)
+                    if result is None:
+                        continue
+
                     rollout_idx = result['rollout_idx']
                     response = result['response']
-                    
+
                     current_agent = agent_groups[idx][agent_idx]
                     if response is None:
                         response = ""
@@ -757,7 +748,7 @@ class MultiAgentsExecutionEngine:
                         )
                     except asyncio.TimeoutError:
                         pass
-                    
+
                     # Capture env state immediately after this agent's step
                     env_state_snapshot = envs_list[idx].state.to_dict_compact(agent_name=agent_name) if hasattr(envs_list[idx].state, 'to_dict_compact') else None
                     response_results[idx]['env_state_snapshot'] = env_state_snapshot
@@ -765,17 +756,24 @@ class MultiAgentsExecutionEngine:
             # After all agents have completed their step in this turn, calculate rewards
             for agent_idx, agent_name, response_results in all_agents_results:
                 for idx in range(len(rollout_idx_list)):
+                    result = response_results[idx]
+                    # Skip if agent skipped this turn
+                    if result is None:
+                        continue
                     current_agent = agent_groups[idx][agent_idx]
                     env = envs_list[idx]
                     current_agent.calculate_reward(env)
                 for idx in range(len(rollout_idx_list)):
                     result = response_results[idx]
+                    # Skip if agent skipped this turn
+                    if result is None:
+                        continue
                     rollout_idx = result['rollout_idx']
                     output_dpr = result['output_dpr']
                     response = result['response']
                     prompt = result['prompt']
                     policy_name = result['policy_name']
-                    
+
                     current_agent = agent_groups[idx][agent_idx]
                     env = envs_list[idx]
                     if output_dpr is not None:
@@ -798,6 +796,11 @@ class MultiAgentsExecutionEngine:
                 
                 rollout_score_idx = []
                 for idx in range(len(rollout_idx_list)):
+                    result = response_results[idx]
+                    # Skip if agent skipped this turn
+                    if result is None:
+                        rollout_score_idx.append(0)
+                        continue
                     current_agent = agent_groups[idx][agent_idx]
                     agent_reward = current_agent.agent_reward if current_agent.agent_reward is not None else 0
                     rollout_score_idx.append(agent_reward)

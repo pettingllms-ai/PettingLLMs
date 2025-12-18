@@ -16,6 +16,9 @@ class AgentData:
     answer_history: Optional[List[Any]] = field(default_factory=list)
     action_history: Optional[List[Any]] = field(default_factory=list)
     reward_history: Optional[List[float]] = field(default_factory=list)
+    if_trained: bool = True
+    skip_current_turn: bool = False
+    
     
 
 class Agent(AgentData):
