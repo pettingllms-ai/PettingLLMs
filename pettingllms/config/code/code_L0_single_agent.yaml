@@ -48,7 +48,10 @@ project_name: pettingllms
 experiment_name: code_test
 logger: [ 'console', 'wandb' ]
 
-
+base_models:
+  policy_0:
+    path: "your base model path"
+    name: "shared_model"
 # Shared model configurations
 models:
   model_0:
@@ -82,14 +85,13 @@ training:
   logger: [ 'console', 'wandb' ]
   model_checkpoints_dir: checkpoints
   ray_wait_register_center_timeout: 300
-  train_batch_size: 32
+  train_batch_size: 64
   train_sample_num: 8
   validate_sample_num: 1
   sample_temperature: 1
   val_freq: 10
   resample_freq: 3
   epoch_size: 20
-  train_batch_size: 64
   val_batch_size: 32
   max_prompt_length: 4096
   max_response_length: 2048

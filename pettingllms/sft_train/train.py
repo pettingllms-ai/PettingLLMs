@@ -19,7 +19,7 @@ from omegaconf import OmegaConf, DictConfig
 from typing import Dict, List
 from pathlib import Path
 from pettingllms.sft_train.data_collector import SFTDataCollector
-from pettingllms.trainer.mas_turn_order_register import ENV_CLASS_MAPPING, AGENT_CLASS_MAPPING, ENV_BATCH_CLASS_MAPPING
+from pettingllms.trainer.multiagentssys_register import ENV_CLASS_MAPPING, AGENT_CLASS_MAPPING, ENV_BATCH_CLASS_MAPPING
 from verl.utils import hf_tokenizer, hf_processor
 from verl.utils.fs import copy_local_path_from_hdfs
 
@@ -31,7 +31,14 @@ logger = logging.getLogger(__name__)
 
 
 class SFTDataGenerator:
-    """Generate SFT training data from multi-agent environments"""
+    """
+    Generate SFT training data from multi-agent environments
+
+    This class reuses the same environment initialization logic as multi_agents_execution_engine.py,
+    ensuring consistency in how data is loaded:
+    - In training mode: loads data from config.env.dataset (e.g., code_contests, apps)
+    - In validation/test mode: loads data from config.env.benchmark (e.g., code_contests, humaneval)
+    """
 
     def __init__(self, config: DictConfig):
         self.config = config
@@ -126,6 +133,7 @@ class SFTDataGenerator:
     async def generate_rollout(self, env_idx: int, rollout_idx: int):
         """
         Generate a single rollout and collect SFT data
+        Uses EnvBatch for consistency with PPO training
 
         Args:
             env_idx: Environment index
@@ -134,13 +142,25 @@ class SFTDataGenerator:
         Returns:
             True if successful (env.success == True), False otherwise
         """
-        # Create environment
-        env = self.env_class(
-            env_idx=env_idx,
-            rollout_idx=rollout_idx,
+        # Determine mode based on config
+        # This follows the same logic as multi_agents_execution_engine.py
+        sft_mode = getattr(self.config.training, 'sft_mode', 'train')
+
+        # Create environment batch with single environment
+        # This ensures consistency with PPO training's environment initialization
+        # The env batch will load data from config.env.dataset (train mode) or config.env.benchmark (validate/test mode)
+        env_batch = self.env_batch_class(
+            env_idx_list=[0],  # Single environment
+            env_indices=[env_idx],  # Actual data index
+            rollout_idx_list=[rollout_idx],
+            samples=1,
             max_turns=self.max_turns,
-            config=self.config
+            config=self.config,
+            mode=sft_mode  # Use mode from config to load from env.dataset or env.benchmark
         )
+
+        # Get the single environment from the batch
+        env = env_batch.env_list[0]
 
         # Create agents
         agents = []
@@ -363,6 +383,10 @@ def main(config: DictConfig):
     # Step 2: Train SFT model (optional, can be disabled)
     if getattr(config.training, 'run_sft_training', True):
         logger.info("Step 2: Training SFT model on collected data")
+        if train_data_path is None:
+            logger.error("No training data collected! Cannot proceed with SFT training.")
+            logger.error("Please ensure use_api=True and API credentials are configured.")
+            return
         train_sft_model(config, train_data_path)
     else:
         logger.info("Step 2: Skipping SFT training (run_sft_training=False)")

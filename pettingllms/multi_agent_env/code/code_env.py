@@ -97,7 +97,8 @@ class CodeEnvBatch:
         safe_env_indices = list(env_indices) if not isinstance(env_indices, list) else env_indices
         
         if mode=="train":
-            self.problem_list=load_problem_batch(safe_env_indices,benchmark_name="train",mode="train",difficulty=getattr(config.env,"difficulty") if hasattr(config,"env") and hasattr(config.env,"difficulty") else "difficult")
+            dataset_name = getattr(config.env, "dataset", "apps") if hasattr(config, "env") and hasattr(config.env, "dataset") else "apps"
+            self.problem_list=load_problem_batch(safe_env_indices, dataset_name=dataset_name, mode="train")
         else:
             benchmark_name=getattr(config.env,"benchmark") if hasattr(config,"env") and hasattr(config.env,"benchmark") else "test"
             #difficulty=getattr(config,"difficulty") if hasattr(config,"difficulty") else "difficult"

@@ -25,7 +25,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 
 # Configuration
 GPU_num=2
-MODEL_PATH="/home/nvidia/data/models/Qwen3-1.7B"
+MODEL_PATH="your trained model path here"  # Model for vLLM inference
 EXPERIMENT_NAME="code_sft_collection_only"
 OUTPUT_DIR="./sft_data_code"
 
@@ -71,16 +71,18 @@ python3 -m pettingllms.sft_train.train \
     --config-name code_L0_single_agent \
     $model_0_resource \
     base_models.policy_0.path="$MODEL_PATH" \
+    models.model_0.path="$MODEL_PATH" \
     training.experiment_name=$EXPERIMENT_NAME \
     training.max_prompt_length=4096 \
     training.max_response_length=2048 \
     env.dataset=code_contests \
     env.benchmark=code_contests \
     env.max_turns=3 \
-    training.sft_num_episodes=100 \
-    training.sft_data_dir="$OUTPUT_DIR" \
-    training.collect_mode=env \
-    training.run_sft_training=False \
+    +training.sft_mode=train \
+    +training.sft_num_episodes=100 \
+    +training.sft_data_dir="$OUTPUT_DIR" \
+    +training.collect_mode=env \
+    +training.run_sft_training=False \
     $API_ARGS
 
 echo "SFT data collection completed!"

@@ -18,7 +18,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 
 # Configuration
-MODEL_PATH="/home/nvidia/data/models/Qwen3-1.7B"
+MODEL_PATH="your trained model path here"  # Model for SFT training
 TRAIN_DATA_PATH="./sft_data_code/sft_data_20241203_000000.jsonl"  # Update with your actual data file
 SFT_MODEL_OUTPUT="./sft_model_code"
 

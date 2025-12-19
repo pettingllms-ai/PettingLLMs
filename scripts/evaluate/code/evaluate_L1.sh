@@ -1,20 +1,3 @@
-#!/bin/bash
-# evaluate.sh - vLLM Launch and Evaluation Script
-# 
-# Usage: bash scripts/evaluate/math/evaluate_L1.sh
-#
-# Multi-GPU Examples:
-#   Single GPU per model (default):
-#     TP_SIZE=1, GPU_START_ID=0, 2 models → uses GPU 0, 1
-#   
-#   Two GPUs per model (Tensor Parallel):
-#     TP_SIZE=2, GPU_START_ID=0, 2 models → uses GPU 0-1, 2-3
-#   
-#   Four GPUs per model:
-#     TP_SIZE=4, GPU_START_ID=0, 1 model → uses GPU 0-3
-#   
-#   Start from GPU 2:
-#     TP_SIZE=1, GPU_START_ID=2, 2 models → uses GPU 2, 3
 #
 set -e
 

@@ -207,7 +207,15 @@ def create_api_client(
         elif api_type_lower == "claude":
             api_key = os.getenv("ANTHROPIC_API_KEY")
 
-    if api_key is None:
+    # For local vLLM server (custom base_url), API key is not required
+    # Use a dummy key to bypass validation
+    if api_key is None and base_url is not None:
+        # Check if this is a local vLLM server (localhost or 127.0.0.1)
+        if "localhost" in base_url or "127.0.0.1" in base_url:
+            api_key = "dummy-key-for-local-vllm"
+        else:
+            raise ValueError(f"API key not provided for {api_type}. Set via argument or environment variable.")
+    elif api_key is None:
         raise ValueError(f"API key not provided for {api_type}. Set via argument or environment variable.")
 
     # Set default models if not provided
