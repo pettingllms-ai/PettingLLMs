@@ -6,7 +6,7 @@ This page reflects the current base contracts in `pettingllms/multi_agent_env/ba
 
 ```python
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from pettingllms.multi_agent_env.base.env import Env
 
 @dataclass
@@ -18,9 +18,7 @@ class AgentData:
     agent_reward: Optional[float] = 0.0
     success: bool = False
     done: bool = False
-    answer_history: Optional[List[Any]] = field(default_factory=list)
-    action_history: Optional[List[Any]] = field(default_factory=list)
-    reward_history: Optional[List[float]] = field(default_factory=list)
+    skip_current_turn: bool = False
 
 
 class Agent(AgentData):
@@ -34,8 +32,12 @@ class Agent(AgentData):
     def reset(self): ...
 ```
 
+**Key Changes from Previous Version:**
+- ✅ **Removed**: `answer_history`, `action_history`, `reward_history` - These are no longer maintained by agents. Reward tracking is now handled externally by the execution engine.
+- ✅ **Added**: `skip_current_turn` - Allows agents to skip turns when needed
+
 - `update_from_env` and `update_from_model` accept `**kwargs` so implementations can take extra parameters (e.g., `turn_idx` or a raw `response` string) while still aligning with the base signature.
-- `reset` in the base class clears prompts/actions, reward history, and success flags; derived agents typically call `super().reset()` then add any custom cleanup.
+- `reset` in the base class clears prompts/actions and success flags; derived agents typically call `super().reset()` then add any custom cleanup.
 
 ## Core Lifecycle
 
@@ -48,8 +50,8 @@ class Agent(AgentData):
 3) **step(env_data, env_worker=None)**  
    Execute the action, mutate `env_data.state`, and set `self.success` / `env_data.success` when a task is solved. This is where environment-specific side effects happen (running code, executing tools, etc.).
 
-4) **calculate_reward(env_data)**  
-   Aggregate the reward signal and append it to `self.reward_history`. In PettingLLMs, this is typically **local reward + team reward** so multi-agent cooperation is reflected in each agent’s return.
+4) **calculate_reward(env_data)**
+   Calculate the reward signal and store it in `self.agent_reward`. In PettingLLMs, this is typically **local reward + team reward** so multi-agent cooperation is reflected in each agent's return. The execution engine is responsible for tracking rewards across turns.
 
 5) **reset()**  
    Clear transient fields so the agent can start a fresh episode.
@@ -61,25 +63,23 @@ class Agent(AgentData):
 `UnitTestGenerationAgent` combines its own test quality with the code agent’s pass ratio:
 
 ```python
-# pettingllms/multi_agent_env/code/agents/unit_test_agent.py:200
+# pettingllms/multi_agent_env/code/agents/unit_test_agent.py
 def calculate_reward(self, env_data: Env):
     self.agent_reward = (
         env_data.state.generated_test_vs_golden_code_match_ratio   # local: how good the generated tests are
         + env_data.state.ground_truth_test_vs_generated_code_match_ratio  # team: how well the code agent passed the ground-truth tests
     )
-    self.reward_history.append(self.agent_reward)
 ```
 
 `CodeGenerationAgent` mirrors the same pattern by summing the code pass ratio twice (self + team) to keep the reward additive for cooperative training:
 
 ```python
-# pettingllms/multi_agent_env/code/agents/code_agent.py:163
+# pettingllms/multi_agent_env/code/agents/code_agent.py
 def calculate_reward(self, env_data: Env):
     self.agent_reward = (
         env_data.state.ground_truth_test_vs_generated_code_match_ratio
         + env_data.state.ground_truth_test_vs_generated_code_match_ratio
     )
-    self.reward_history.append(self.agent_reward)
 ```
 
 ### Math Environment
@@ -87,19 +87,17 @@ def calculate_reward(self, env_data: Env):
 `ToolAgent` first sets a local reward in `step` (1.0 for correct execution, 0.0 or -1 for errors), then adds the teammate’s reasoning correctness during `calculate_reward`:
 
 ```python
-# pettingllms/multi_agent_env/math/agents/tool_agent.py:139
+# pettingllms/multi_agent_env/math/agents/tool_agent.py
 def calculate_reward(self, env_data: Env):
     self.agent_reward = self.agent_reward + int(env_data.state.reasoning_is_correct)  # team bonus from reasoning agent
-    self.reward_history.append(self.agent_reward)
 ```
 
 `ReasoningAgent` follows the same additive pattern, counting reasoning correctness twice to reflect both self and team contributions:
 
 ```python
-# pettingllms/multi_agent_env/math/agents/reasoning_agent.py:131
+# pettingllms/multi_agent_env/math/agents/reasoning_agent.py
 def calculate_reward(self, env_data: Env):
     self.agent_reward = int(env_data.state.reasoning_is_correct) + int(env_data.state.reasoning_is_correct)
-    self.reward_history.append(self.agent_reward)
 ```
 
 ## Minimal Turn Loop

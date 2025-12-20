@@ -1,16 +1,7 @@
-from abc import ABC, abstractmethod
-from typing import Any
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    # For type checking only to avoid runtime circular imports
-    from pettingllms.multi_agent_env.base.agent import AgentData
+from abc import abstractmethod
+from typing import List
 
 
-
-
-@dataclass    
 class Env:
     """
     An environment for multi-turn interactions with LLMs.
@@ -18,31 +9,19 @@ class Env:
     The interaction terminates after reaching the maximum number of turns.
     """
 
-    def __init__(self, env_idx: int, rollout_idx: int, max_turns: int = None, config: dict | None = None):
+    def __init__(self, env_idx: int, rollout_idx: int, config: dict | None = None):
         """
-        Initialize the multi-agents environment using the dataclass EnvData.
+        Initialize the multi-agents environment.
 
         Args:
             env_idx: Environment index
             rollout_idx: Rollout index
-            max_turns: Maximum number of turns before terminating (optional, only for turn-based systems)
-            task: Dictionary containing the task information
             config: Configuration for the system
         """
-        env_idx: int
-        rollout_idx: int
-        max_turns: int = max_turns
-        turn: int = 0
-        state: Optional[Any] = None
-        is_pass: bool = False
-        
         # Save configuration
         self.config = config
-        
+
         # Initialize variables required by step method
-        self.history = []
-        self.task = None
-        self.current_turn = 0
         self.done = False
         self.state = None
         self.success = False
@@ -65,8 +44,8 @@ class Env:
 
 
 class EnvBatch:
-    def __init__(self, env_idx_list: List[int], rollout_idx: List[int], max_turns: int):
-        self.env_list=[]
-        for env_idx in env_idx_list:
-            env=Env(env_idx, max_turns)
+    def __init__(self, env_idx_list: List[int], rollout_idx_list: List[int]):
+        self.env_list = []
+        for env_idx, rollout_idx in zip(env_idx_list, rollout_idx_list):
+            env = Env(env_idx, rollout_idx)
             self.env_list.append(env)

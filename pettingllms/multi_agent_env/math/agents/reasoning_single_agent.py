@@ -87,7 +87,6 @@ class ReasoningAgent(Agent):
         # Store the full solution
         env_data.state.reasoning_generated_solution = truncatefn(self.current_action)
         env_data.state.reasoning_generated_solution_history.append(env_data.state.reasoning_generated_solution)
-        self.action_history.append(self.current_action)
         
         # Try to extract answer from the current action
         extracted_answer = parse(self.current_action)
@@ -102,7 +101,6 @@ class ReasoningAgent(Agent):
                     should_terminate = True
         
         env_data.state.reasoning_extracted_answer_history.append(extracted_answer)
-        self.answer_history.append(extracted_answer)
         
         # Evaluate correctness against ground truth if an answer was extracted
         if extracted_answer is not None:
@@ -140,7 +138,6 @@ class ReasoningAgent(Agent):
         else:
             self.agent_reward = 0.0
         
-        self.reward_history.append(self.agent_reward)
 
     def reset(self):
         """

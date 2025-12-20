@@ -25,7 +25,7 @@ class StatefulEnv(Env):
         max_turns: int,
         config: dict | None = None,
     ):
-        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, max_turns=max_turns, config=config)
+        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, config=config)
         self.state = None
         self.done = False  
     def reset(self):

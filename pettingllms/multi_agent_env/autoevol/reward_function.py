@@ -10,60 +10,54 @@ import logging
 from typing import Any
 from pettingllms.multi_agent_env.base.env import Env
 
+# Suppress AutoGen/AG2 logging warnings
+logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
+logging.getLogger("autogen").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 
 def extract_answer_from_summary(summary: str) -> str:
     """
-    Extract answer from MAS summary output.
+    Extract answer from MAS summary output between WORKFLOW_SUMMARY_START and WORKFLOW_SUMMARY_END.
 
-    Looks for common patterns like:
-    - "Exact Answer: ..."
-    - "Final Answer: ..."
-    - "Answer: ..."
-    - "... is <number>."
-    - "... is <number>"
+    This function simply extracts the last consecutive number string (including fractions and decimals)
+    from the summary section.
 
     Args:
-        summary: The summary text from MAS execution
+        summary: The summary text from MAS execution (could be full output or just the summary section)
 
     Returns:
-        Extracted answer string
+        Extracted answer string (the last number found in the summary)
     """
-    # Try to find "Exact Answer:" pattern
-    match = re.search(r"Output:\s*(.+?)(?:\n|$)", summary, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    # First, try to extract content between WORKFLOW_SUMMARY_START and WORKFLOW_SUMMARY_END markers
+    workflow_match = re.search(
+        r'WORKFLOW_SUMMARY_START\s*(.*?)\s*WORKFLOW_SUMMARY_END',
+        summary,
+        re.DOTALL | re.IGNORECASE
+    )
 
-    # Try "Final Answer:" pattern
-    match = re.search(r"Final Answer:\s*(.+?)(?:\n|$)", summary, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    if workflow_match:
+        # Use only the content between the markers
+        summary_content = workflow_match.group(1).strip()
+    else:
+        # If markers not found, use the entire summary
+        summary_content = summary
 
-    # Try "Answer:" pattern
-    match = re.search(r"Answer:\s*(.+?)(?:\n|$)", summary, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
+    # Find all consecutive number strings (including fractions and decimals)
+    # Pattern matches: "33", "3.14", "-5", "25/8"
+    number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+    numbers = re.findall(number_pattern, summary_content)
 
-    # Try to find pattern like "... is <number>." or "... is <number>"
-    # This matches sentences ending with "is <number>" (with optional period)
-    match = re.search(r'is\s+(-?\d+(?:\.\d+)?|\\boxed\{[^}]+\})\s*\.?\s*$', summary, re.MULTILINE | re.IGNORECASE)
-    if match:
-        answer = match.group(1).strip()
-        # If it's a boxed answer, extract the content
-        boxed_match = re.match(r'\\boxed\{([^}]+)\}', answer)
-        if boxed_match:
-            return boxed_match.group(1).strip()
-        return answer
+    if numbers:
+        # Return the last number found
+        last_number = numbers[-1]
+        logger.info(f"Extracted last number from summary: {last_number} (found {len(numbers)} total)")
+        return last_number
 
-    # Try to find \boxed{} anywhere in the text
-    match = re.search(r'\\boxed\{([^}]+)\}', summary)
-    if match:
-        return match.group(1).strip()
-
-    # Fallback: return the last line
-    lines = [line.strip() for line in summary.split('\n') if line.strip()]
-    return lines[-1] if lines else summary.strip()
+    # Fallback: return the last non-empty line
+    lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
+    return lines[-1] if lines else summary_content.strip()
 
 
 def math_reward_function(summary: str, env_data: Env) -> float:
@@ -77,38 +71,28 @@ def math_reward_function(summary: str, env_data: Env) -> float:
     Returns:
         Reward score (1.0 if correct, 0.0 if incorrect)
     """
-    try:
-        from math_verify import parse, verify
-    except ImportError:
-        logger.error("math_verify module not found. Please install it for math verification.")
-        return 0.0
+    from math_verify import parse, verify
 
     # Extract predicted answer from summary
     predicted_answer = extract_answer_from_summary(summary)
 
-    # Get ground truth answer from env_data
-    ground_truth = getattr(env_data, 'ground_truth_answer', None)
+    # Get ground truth answer from env_data.state
+    ground_truth = None
+    ground_truth = env_data.state.ground_truth_answer
+
     if ground_truth is None:
-        logger.warning("No ground truth answer found in env_data")
+        logger.warning(f"No ground truth answer found in env_data. env_data type: {type(env_data)}")
         return 0.0
 
-    try:
-        # Parse both answers
-        parsed_pred = parse(predicted_answer)
-        parsed_gt = parse(str(ground_truth))
+    # Parse both answers
+    parsed_gt = parse(str(ground_truth))
+    # Verify if they match
+    is_correct = verify(predicted_answer, parsed_gt)
 
-        # Verify if they match
-        is_correct = verify(parsed_pred, parsed_gt)
+    reward = 1.0 if is_correct else 0.0
+    logger.info(f"Math verification: pred={predicted_answer}, gt={ground_truth}, correct={is_correct}")
 
-        reward = 1.0 if is_correct else 0.0
-        logger.info(f"Math verification: pred={predicted_answer}, gt={ground_truth}, correct={is_correct}")
-
-        return reward
-
-    except Exception as e:
-        logger.error(f"Error in math verification: {e}")
-        # Fallback to simple string comparison
-        return 1.0 if predicted_answer.strip().lower() == str(ground_truth).strip().lower() else 0.0
+    return reward
 
 
 def code_reward_function(summary: str, env_data: Env) -> float:

@@ -1,76 +1,70 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - _self_
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- _self_
 lora_rank: 16
 lora_alpha: 32
-
-specialization: "prompt" # prompt, lora, full
+specialization: prompt
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-
-# Environment configuration (shared by all agents)
 env:
   name: stateful_vision_env
-  dataset: "polaris"
-  benchmark: "plan_path"  # Supported benchmarks: plan_path, sokoban
+  dataset: polaris
+  benchmark: plan_path
   max_turns: 5
   resolve: false
   multi_modal: true
   batched_init: true
-  image_save_dir: "tmp_image"  # Base directory for saving observation images
-
-
-
+  image_save_dir: tmp_image
 base_models:
   policy_0:
-    path: "your base model path"
-    name: "shared_model"
-  
- 
-
-# Multi-agent configuration for two policies
+    path: your base model path
+    name: shared_model
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 2
-  policy_list: ["plan_agent_vision", "tool_call_agent_vision"]
   agent_configs:
     agent_0:
-      name: "plan_agent_vision"
-      policy_name: "shared_model"
-      enable_thinking: false
-      train_temperature: 1.5
-      val_temperature: 0
-
-
+      name: plan_agent_vision
+      policy_name: shared_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.5
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_1:
-      name: "tool_call_agent_vision"
-      policy_name: "shared_model"
-      enable_thinking: false
-      train_temperature: 1.5
-      val_temperature: 0
-
-
-# Multi-agent interaction configuration
+      name: tool_call_agent_vision
+      policy_name: shared_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.5
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 multi_agent_interaction:
-
-  # Turn order for agents (list of agent names)
-  turn_order: ["tool_call_agent_vision", "plan_agent_vision"]
-
-  # Number of agents that interact per episode
-  num_interacting_agents: 2
-      
-
-
-
+  turn_order:
+  - tool_call_agent_vision
+  - plan_agent_vision
 training:
   device: cuda
   total_training_steps: 200
   project_name: pettingllms
   experiment_name: stateful_vision_L1_prompt
-  logger: [ 'console', 'wandb' ]
+  logger:
+  - console
+  - wandb
   model_checkpoints_dir: checkpoints
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
@@ -78,16 +72,12 @@ training:
   validate_sample_num: 5
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}
   lora_alpha: ${lora_alpha}
   enable_multimodal: true
-  max_image_steps: 20  # Maximum number of step folders to keep for image cleanup
-
-
+  max_image_steps: 20
 models:
   model_0:
     path: ${base_models.policy_0.path}
@@ -95,7 +85,7 @@ models:
     ppo_trainer_config:
       filter_method: mean
       filter_ratio: 0.5
-      data: 
+      data:
         max_prompt_length: ${training.max_prompt_length}
         max_response_length: ${training.max_response_length}
       actor_rollout_ref:

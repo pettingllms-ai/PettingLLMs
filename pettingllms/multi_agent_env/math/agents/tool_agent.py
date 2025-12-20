@@ -113,8 +113,6 @@ class ToolAgent(Agent):
             # Update history records
             env_data.state.code_generated_solution_history.append(env_data.state.code_generated_solution)
             env_data.state.code_extracted_answer_history.append(env_data.state.code_extracted_answer)
-            self.answer_history.append(env_data.state.code_extracted_answer)
-            self.action_history.append(self.current_action)
             if code_execution_output is None:
                 self.agent_reward = -1
                 return
@@ -138,7 +136,6 @@ class ToolAgent(Agent):
         
     def calculate_reward(self, env_data: Env):
         self.agent_reward = self.agent_reward+ int(env_data.state.reasoning_is_correct)
-        self.reward_history.append(self.agent_reward)
  
     def reset(self):
         """

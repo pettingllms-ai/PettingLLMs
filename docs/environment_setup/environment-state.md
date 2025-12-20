@@ -5,27 +5,44 @@
 ## Base Container (pettingllms/multi_agent_env/base/env.py)
 
 ```python
-from dataclasses import dataclass
-from typing import Any, Optional
+from abc import abstractmethod
 
-@dataclass
 class Env:
-    def __init__(self, env_idx: int, rollout_idx: int, max_turns: int, config: dict | None = None):
+    def __init__(self, env_idx: int, rollout_idx: int, config: dict | None = None):
+        """
+        Initialize the multi-agents environment.
+
+        Args:
+            env_idx: Environment index
+            rollout_idx: Rollout index
+            config: Configuration for the system
+        """
+        # Save configuration
         self.config = config
-        self.history = []
-        self.task = None
-        self.current_turn = 0
+
+        # Initialize variables required by step method
         self.done = False
-        self.state: Optional[Any] = None   # domain-specific dataclass
+        self.state = None  # domain-specific dataclass
         self.success = False
 
     @abstractmethod
     def step(self, action):
-        ...
+        """
+        Take a step in the environment based on the action.
+
+        Returns:
+            next_observation, reward, terminated, truncated, info
+        """
+        return NotImplementedError("Subclasses must implement this method")
 ```
 
+**Key Changes from Previous Version:**
+- ✅ **Removed**: `max_turns` parameter - Now read from `config.env.max_turns` instead
+- ✅ **Removed**: `history`, `task`, `current_turn` - These fields were not used by the execution engine
+- ✅ **Simplified**: Only 3 essential fields remain: `done`, `state`, `success`
+
 - `state` is a **domain-specific dataclass** (see below). All agent coordination happens through this object.
-- `history`, `done`, and `success` are base fields every environment shares; agent implementations extend these with domain signals.
+- `done` and `success` are base fields every environment shares; agent implementations extend these with domain signals.
 
 ## Domain State Shapes
 
@@ -56,15 +73,17 @@ Defined in `pettingllms/multi_agent_env/math/math_env.py`. Key fields:
 Agents compute rewards in `calculate_reward(env_data)` by combining their own performance with a teammate’s signal stored in `env_data.state`.
 
 - **Code environment**
-  - `UnitTestGenerationAgent.calculate_reward`  
+  - `UnitTestGenerationAgent.calculate_reward`
     `agent_reward = generated_test_vs_golden_code_match_ratio (local) + ground_truth_test_vs_generated_code_match_ratio (team from code agent)`
-  - `CodeGenerationAgent.calculate_reward`  
+  - `CodeGenerationAgent.calculate_reward`
     Adds `ground_truth_test_vs_generated_code_match_ratio` twice (self + team) to keep the cooperative reward additive.
 
 - **Math environment**
-  - `ToolAgent.calculate_reward`  
+  - `ToolAgent.calculate_reward`
     Starts with the local reward set in `step` (code correctness), then adds `int(env_data.state.reasoning_is_correct)` as the team bonus from the reasoning agent.
-  - `ReasoningAgent.calculate_reward`  
+  - `ReasoningAgent.calculate_reward`
     Sums `int(env_data.state.reasoning_is_correct)` twice to reflect self + team contribution from the same correctness flag.
 
-These patterns make every agent’s return depend on both its own output and shared team success, encouraging coordinated policies.
+These patterns make every agent's return depend on both its own output and shared team success, encouraging coordinated policies.
+
+**Note**: The execution engine now tracks rewards externally. Agents simply set `self.agent_reward` in `calculate_reward()`, and the engine reads this value for training.

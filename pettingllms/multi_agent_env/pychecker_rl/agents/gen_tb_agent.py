@@ -634,9 +634,6 @@ class GenTBAgent:
         self.success = False
         
         # History tracking
-        self.action_history = []
-        self.answer_history = []
-        self.reward_history = []
         self.env_data = None
         
         # Stimulus generation tracking
@@ -912,8 +909,6 @@ class GenTBAgent:
         self.success = (self.agent_reward >= 1.0)
 
         # Update history
-        self.action_history.append(self.current_action)
-        self.reward_history.append(self.agent_reward)
 
     def reset(self):
         """
@@ -924,9 +919,6 @@ class GenTBAgent:
         self.current_response = None
         self.agent_reward = 0.0
         self.success = False
-        self.action_history = []
-        self.answer_history = []
-        self.reward_history = []
         
         # Reset stimulus tracking
         self.task_folder = None

@@ -13,6 +13,11 @@ from verl.protocol import DataProto
 from verl.utils.torch_functional import pad_sequence_to_length
 from verl.utils.model import compute_position_id_with_mask
 from tensordict import TensorDict
+
+# Suppress AutoGen/AG2 logging warnings
+logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
+logging.getLogger("autogen").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 from pettingllms.multi_agent_env.autoevol.reward_function import REWARD_FUNCTIONS
 from pettingllms.multi_agent_env.autoevol.utils import load_and_tokenize_jsonl
@@ -222,6 +227,17 @@ class MASGenerator(Agent):
         # Use absolute path for trajectory file to avoid path resolution issues
         self.trajectory_json_path = os.path.abspath(os.path.join(output_dir, "traj.json"))
 
+        # Add logging suppression at the beginning of generated code
+        logging_suppression_code = """
+# Suppress AutoGen/AG2 logging warnings
+import logging
+logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
+logging.getLogger("autogen").setLevel(logging.ERROR)
+logging.getLogger("openai").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+
+"""
+
         trajectory_output_code = f"""
 # Automatically save executor conversations after workflow execution
 try:
@@ -244,7 +260,7 @@ except Exception as e:
     print(f"\\n[Warning: Failed to save executor conversations: {{e}}]")
     pass
 """
-        full_code = self.generated_code + "\n" + trajectory_output_code
+        full_code = logging_suppression_code + self.generated_code + "\n" + trajectory_output_code
 
         # Replace llm_config with actual LLM configuration
         if llm_config_for_mas is not None:
@@ -372,7 +388,8 @@ except Exception as e:
                 final_reward = 0.0
 
             self.agent_reward = final_reward
-            self.reward_history.append(final_reward)
+            if final_reward == 1.0:
+                env_data.success = True
 
             # Return tokenized trajectories and final reward
             return tokenized_trajectories, final_reward

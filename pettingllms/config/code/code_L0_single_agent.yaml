@@ -1,66 +1,57 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - _self_
-
-
-specialization: "prompt" # prompt, lora, full
-
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- _self_
+specialization: prompt
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-
-# Environment configuration (shared by all agents)
 env:
   name: code_env
-  dataset: "code_contests"
-  benchmark: "code_contests"
+  dataset: code_contests
+  benchmark: code_contests
   max_turns: 5
   resolve: false
   multi_modal: false
   batched_init: true
-
-  
-    
-
-# Multi-agent configuration for two policies
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 2
-  policy_list: ["code_generator"]
   agent_configs:
     agent_0:
-      name: "code_generator"
-      policy_name: "code_generator_model"
-
-
-# Multi-agent interaction configuration
+      name: code_generator
+      policy_name: code_generator_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 multi_agent_interaction:
-  
-  # Turn order for agents (list of agent names)
-  turn_order: ["code_generator"]
-  
-  # Number of agents that interact per episode
-  num_interacting_agents: 1
+  turn_order:
+  - code_generator
   parallel: true
 project_name: pettingllms
 experiment_name: code_test
-logger: [ 'console', 'wandb' ]
-
+logger:
+- console
+- wandb
 base_models:
   policy_0:
-    path: "your base model path"
-    name: "shared_model"
-# Shared model configurations
+    path: your base model path
+    name: shared_model
 models:
   model_0:
-    path: "your model path"
-    name: "code_generator_model"
+    path: your model path
+    name: code_generator_model
     ppo_trainer_config:
       filter_method: mean
       filter_ratio: 0.5
-      data: 
+      data:
         max_prompt_length: ${data.max_prompt_length}
         max_response_length: ${data.max_response_length}
       actor_rollout_ref:
@@ -75,14 +66,14 @@ models:
           n_gpus_per_node: ${resource.n_gpus_per_node}
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
           default_local_dir: ${trainer.default_local_dir}
-
-
 training:
   device: cuda
   total_training_steps: 200
   project_name: pettingllms
   experiment_name: code_eval
-  logger: [ 'console', 'wandb' ]
+  logger:
+  - console
+  - wandb
   model_checkpoints_dir: checkpoints
   ray_wait_register_center_timeout: 300
   train_batch_size: 64
@@ -90,8 +81,6 @@ training:
   validate_sample_num: 1
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
   val_batch_size: 32
   max_prompt_length: 4096
   max_response_length: 2048

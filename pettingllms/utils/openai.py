@@ -434,7 +434,15 @@ async def _patched_generate(
         prompt_text = str(messages)
 
     # Determine enable_thinking and enable_multimodal from agent_config
-    enable_thinking = getattr(agent_config, 'enable_thinking', False) if agent_config else False
+    enable_thinking = False
+    if agent_config:
+        # Read from train_llm_config (enable_thinking is same for train and val)
+        train_llm_config = getattr(agent_config, 'train_llm_config', None)
+        if train_llm_config:
+            enable_thinking = train_llm_config.get('enable_thinking', False)
+        else:
+            # Fallback to old format
+            enable_thinking = getattr(agent_config, 'enable_thinking', False)
     enable_multimodal = getattr(agent_config, 'enable_multimodal', False) if agent_config else False
 
     # Create prompt DataProto

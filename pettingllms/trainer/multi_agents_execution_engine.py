@@ -39,13 +39,11 @@ class MultiAgentsExecutionEngine:
         self.max_prompt_length = getattr(self.config.training, 'max_prompt_length', 1024)
         self.max_response_length = getattr(self.config.training, 'max_response_length', 1024)
         self.turn_order = self.config.multi_agent_interaction.turn_order
-        self.num_interacting_agents = self.config.multi_agent_interaction.num_interacting_agents
+        self.num_interacting_agents = len(self.turn_order)  # Computed from turn_order
         self.parallel = getattr(self.config.multi_agent_interaction, 'parallel', False)
         self.generate_timeout = getattr(self.config.training, 'generate_timeout', 300.0)
         # Multi-modal support configuration
         self.enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
-        if self.num_interacting_agents != len(self.turn_order):
-            raise ValueError("num_interacting_agents must be equal to the length of turn_order")
           
         
     def __init__(
@@ -161,12 +159,20 @@ class MultiAgentsExecutionEngine:
         for agent_name in self.turn_order:
             agent_config = self.agent_config_dict.get(agent_name, None)
             # Read enable_thinking from agent config, default to False
-            enable_thinking = getattr(agent_config, 'enable_thinking', False) if agent_config else False
-            self.agent_enable_thinking[agent_name] = enable_thinking
-            # Read enable_multimodal from agent config, fallback to global setting
-            enable_multimodal = getattr(agent_config, 'enable_multimodal', self.enable_multimodal) if agent_config else self.enable_multimodal
-            self.agent_enable_multimodal[agent_name] = enable_multimodal
-            print(f"Agent '{agent_name}' enable_thinking: {enable_thinking}, enable_multimodal: {enable_multimodal}")
+            enable_thinking = False
+            if agent_config:
+                # Read from train_llm_config (enable_thinking is same for train and val)
+                train_llm_config = getattr(agent_config, 'train_llm_config', None)
+                if train_llm_config:
+                    enable_thinking = train_llm_config.get('enable_thinking', False)
+                else:
+                    # Fallback to old format
+                    enable_thinking = getattr(agent_config, 'enable_thinking', False)
+                    self.agent_enable_thinking[agent_name] = enable_thinking
+                    # Read enable_multimodal from agent config, fallback to global setting
+                    enable_multimodal = getattr(agent_config, 'enable_multimodal', self.enable_multimodal) if agent_config else self.enable_multimodal
+                    self.agent_enable_multimodal[agent_name] = enable_multimodal
+                    print(f"Agent '{agent_name}' enable_thinking: {enable_thinking}, enable_multimodal: {enable_multimodal}")
         
         if mode=="validate":
             self.sample_num=self.config.training.validate_sample_num
@@ -408,10 +414,6 @@ class MultiAgentsExecutionEngine:
                 # Calculate reward using agent's calculate_reward method
                 if hasattr(current_agent, 'calculate_reward'):
                     current_agent.calculate_reward(env)
-                else:
-                    # Fallback: append current agent_reward to history
-                    if hasattr(current_agent, 'agent_reward'):
-                        current_agent.reward_history.append(current_agent.agent_reward)
                 
                 # Now assign reward to output_dpr and add to trajectory
                 if output_dpr is not None:
@@ -458,8 +460,8 @@ class MultiAgentsExecutionEngine:
             if env.done:
                 finish=True
             if finish:
-                agent_rewards={agent_name: agent.reward_history for agent_name, agent in zip(self.turn_order, agent_group)}
-                
+                agent_rewards={agent_name: agent.agent_reward for agent_name, agent in zip(self.turn_order, agent_group)}
+
                 self.multi_logger.log_rollout_summary(
                     self.mode, env_idx, rollout_idx, agent_rewards,
                     "success",
@@ -469,7 +471,7 @@ class MultiAgentsExecutionEngine:
                     }
                 )
                 break
-        agent_rewards={agent_name: agent.reward_history for agent_name, agent in zip(self.turn_order, agent_group)}
+        agent_rewards={agent_name: agent.agent_reward for agent_name, agent in zip(self.turn_order, agent_group)}
         self.multi_logger.log_rollout_summary(
                 self.mode, env_idx, rollout_idx, agent_rewards,
                 "rollout_complete",

@@ -1,53 +1,36 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - _self_
-
-
-specialization: "lora" # prompt, lora, full
-
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- _self_
+specialization: lora
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-
-# Environment configuration (shared by all agents)
 env:
   name: code_env
-  dataset: "code_contests"
-  benchmark: "code_contests"
+  dataset: code_contests
+  benchmark: code_contests
   max_turns: 5
   resolve: false
   multi_modal: false
   batched_init: true
-
-# Multi-agent interaction configuration
 multi_agent_interaction:
-  
-  # Turn order for agents (list of agent names)
-  turn_order: ["code_generator", "test_generator"]
-  
-  # Number of agents that interact per episode
-  num_interacting_agents: 2
-  
-  # Whether agents can see other agents' actions
+  turn_order:
+  - code_generator
+  - test_generator
   shared_observation: true
   parallel: true
-
-# Shared model configurations
 models:
   model_0:
-    path: "/home/lah003/models/Qwen3-4B-Instruct-2507"
-    name: "code_generator_model"
+    path: your model path
+    name: code_generator_model
     ppo_trainer_config:
-      data: 
+      data:
         max_prompt_length: ${data.max_prompt_length}
         max_response_length: ${data.max_response_length}
       actor_rollout_ref:
         model:
           path: ${models.model_0.path}
-          lora_rank: 16
-          lora_alpha: 32
         rollout:
           n: ${data.gen_n_samples}
           temperature: ${data.sample_temperature}
@@ -58,90 +41,75 @@ models:
           n_gpus_per_node: ${resource.n_gpus_per_node}
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
           default_local_dir: ${trainer.default_local_dir}
-          
-
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 2
-  policy_list: ["code_generator", "test_generator"]
   agent_configs:
     agent_0:
-      name: "code_generator"
-      policy_name: "code_generator_model"
-      train_temperature: 1.0
-      val_temperature: 0.2
-      
+      name: code_generator
+      policy_name: code_generator_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.2
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_1:
-      name: "test_generator"
-      policy_name: "code_generator_model"
-      train_temperature: 1.0
-      val_temperature: 0.6
-
+      name: test_generator
+      policy_name: code_generator_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 project_name: pettingllms
 experiment_name: code_test
-logger: [ 'console', 'wandb' ]
-      
-project_name: pettingllms
-experiment_name: code_test
-logger: [ 'console', 'wandb' ]
-
-
-# Shared model configurations
-models:
-  model_0:
-    path: "your model path"
-    name: "code_generator_model"
-    ppo_trainer_config:
-      data: 
-        max_prompt_length: ${data.max_prompt_length}
-        max_response_length: ${data.max_response_length}
-      actor_rollout_ref:
-        model:
-          path: ${models.model_0.path}
-        rollout:
-          n: ${data.gen_n_samples}
-          temperature: ${data.sample_temperature}
-          prompt_length: ${data.max_prompt_length}
-          response_length: ${data.max_response_length}
-          tensor_model_parallel_size: ${resource.n_gpus_per_node}
-        trainer:
-          n_gpus_per_node: ${resource.n_gpus_per_node}
-          n_training_gpus_per_node: ${resource.n_gpus_per_node}
-          default_local_dir: ${trainer.default_local_dir}
-
-
+logger:
+- console
+- wandb
 trainer:
   device: cuda
   n_gpus_per_node: ${resource.n_gpus_per_node}
   nnodes: 1
-  balance_batch: True
+  balance_batch: true
   total_epochs: 1
   total_training_steps: 200
   project_name: pettingllms
   experiment_name: code_eval
-  logger: [ 'console', 'wandb' ]
+  logger:
+  - console
+  - wandb
   log_val_generations: 0
   rollout_data_dir: null
   validation_data_dir: null
   save_freq: 40
   resume_mode: auto
   resume_from_path: null
-  val_before_train: True
+  val_before_train: true
   test_freq: -1
   critic_warmup: 0
   default_hdfs_dir: null
-  del_local_ckpt_after_load: False
+  del_local_ckpt_after_load: false
   default_local_dir: checkpoints
   max_actor_ckpt_to_keep: 3
   max_critic_ckpt_to_keep: null
   ray_wait_register_center_timeout: 300
   npu_profile:
     options: {}
-  rejection_sample: False
+  rejection_sample: false
   rejection_sample_multiplier: 2
   n_training_gpus_per_node: ${resource.n_gpus_per_node}
-
-
 data:
   filter_method: dapo
   filter_ratio: 0.5
@@ -149,8 +117,6 @@ data:
   gen_n_samples: 8
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
   train_batch_size: 64
   val_batch_size: 32
   max_prompt_length: 4096

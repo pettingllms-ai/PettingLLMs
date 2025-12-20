@@ -138,7 +138,6 @@ class CodeGenerationAgent(Agent):
             env_data.state.test_results_history = []
         
         env_data.state.generated_code_history.append(env_data.state.generated_code)
-        self.action_history.append(gen_code)
         
         # Evaluate generated code against ground truth tests (if exists)
         ground_truth_test_input = env_data.state.ground_truth_test_input or []
@@ -195,7 +194,6 @@ class CodeGenerationAgent(Agent):
         """
         # Reward is based on the test pass ratio
         self.agent_reward = env_data.state.ground_truth_test_vs_generated_code_match_ratio or 0.0
-        self.reward_history.append(self.agent_reward)
 
     def reset(self):
         """

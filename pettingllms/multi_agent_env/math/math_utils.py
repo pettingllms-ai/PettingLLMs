@@ -105,6 +105,7 @@ def load_math_problem_batch(
             if problem_dict:
                 batch_results.append(problem_dict)
     else:
+        # For validate mode, load all samples from the dataset
         for i, example in enumerate(ds):
             problem_dict = _format_math_problem(example, i, mode="validate")
             if problem_dict:

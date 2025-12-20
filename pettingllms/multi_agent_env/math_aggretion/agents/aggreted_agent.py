@@ -150,7 +150,6 @@ class AggregationAgent(Agent):
             env_data.state.aggregation_is_correct = False
             self.agent_reward = 0.0
 
-        self.reward_history.append(float(is_correct))
         
         # Mark as done after first attempt
         env_data.done = True

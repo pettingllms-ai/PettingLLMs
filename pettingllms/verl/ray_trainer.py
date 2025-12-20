@@ -916,7 +916,10 @@ class RayPPOTrainer:
         # load dataloader,
         # TODO: from remote not implemented yet
         #dataloader_local_path = os.path.join(global_step_folder, "data.pt")
-        
+
+        # Return the loaded global_steps
+        return self.global_steps
+
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen"):
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""
         attention_mask = batch.batch["attention_mask"]
