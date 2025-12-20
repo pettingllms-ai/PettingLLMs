@@ -1,56 +1,69 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - ../ppo_trainer@models.model_1.ppo_trainer_config: eval
-  - _self_
-
-workflow_type: "graph"
-workflow_function: "math_graph"
-specialization: "full" # prompt, lora, full
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- ../ppo_trainer@models.model_1.ppo_trainer_config: eval
+- _self_
+workflow_type: graph
+workflow_function: math_graph
+specialization: full
 lora_rank: 16
 lora_alpha: 32
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-
-# Environment configuration (shared by all agents)
 env:
   name: math_env
-  dataset: "polaris"
-  benchmark: "AIME24"
+  dataset: polaris
+  benchmark: AIME24
   multi_modal: false
   batched_init: true
-
-# Multi-agent configuration for two policies
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 2
-  policy_list: ["math_solver", "math_verifier"]
   agent_configs:
     agent_0:
-      name: "math_solver"
-      policy_name: "math_solver_model"
-
+      name: math_solver
+      policy_name: math_solver_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_1:
-      name: "math_verifier"
-      policy_name: "math_verifier_model"
-
+      name: math_verifier
+      policy_name: math_verifier_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 base_models:
   policy_0:
-    path: "your base model path"
-    name: "math_solver_model"
+    path: your base model path
+    name: math_solver_model
   policy_1:
-    path: "your base model path"
-    name: "math_verifier_model"
-
-
+    path: your base model path
+    name: math_verifier_model
 training:
   device: cuda
   total_training_steps: 200
   project_name: pettingllms
   experiment_name: math_eval_multi_model
-  logger: [ 'console', 'wandb' ]
+  logger:
+  - console
+  - wandb
   model_checkpoints_dir: checkpoints
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
@@ -58,15 +71,11 @@ training:
   validate_sample_num: 1
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}
   lora_alpha: ${lora_alpha}
   num_workers: 180
-
-
 models:
   model_0:
     path: ${base_models.policy_0.path}
@@ -108,5 +117,3 @@ models:
         trainer:
           n_gpus_per_node: ${resource.n_gpus_per_node}
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
-
-

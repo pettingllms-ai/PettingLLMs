@@ -238,11 +238,27 @@ def validate(config: DictConfig, address: str):
             ])
 
     total_rollout_num = len(agent_execution_engine.rollout_idx_list)
-    env_success_rollout_idxs = [
-        rollout_idx
-        for rollout_idx, env in zip(agent_execution_engine.rollout_idx_list, agent_execution_engine.envs)
-        if hasattr(env, "success") and env.success
-    ]
+
+    # Check success based on workflow type
+    # For autoevol workflow: check final_reward == 1.0
+    # For other workflows: check env.success attribute
+    workflow_type = getattr(config, 'workflow_type', 'turn')
+
+    if workflow_type == "autoevol":
+        # AutoEvol: success is when final_reward == 1.0
+        env_success_rollout_idxs = [
+            rollout_idx
+            for rollout_idx, env in zip(agent_execution_engine.rollout_idx_list, agent_execution_engine.envs)
+            if hasattr(env, "success") and env.success
+        ]
+    else:
+        # Traditional turn-based or graph workflow: check env.success
+        env_success_rollout_idxs = [
+            rollout_idx
+            for rollout_idx, env in zip(agent_execution_engine.rollout_idx_list, agent_execution_engine.envs)
+            if hasattr(env, "success") and env.success
+        ]
+
     env_success_rate = (
         len(env_success_rollout_idxs) / total_rollout_num if total_rollout_num > 0 else 0.0
     )
@@ -269,7 +285,15 @@ def main(config: DictConfig):
     # Collect enable_thinking configuration for each agent
     for agent_key, agent_config in config.agent_policy_configs.agent_configs.items():
         agent_name = agent_config.name
-        enable_thinking = getattr(agent_config, 'enable_thinking', False)
+        enable_thinking = False
+    if agent_config:
+        # Read from train_llm_config (enable_thinking is same for train and val)
+        train_llm_config = getattr(agent_config, 'train_llm_config', None)
+        if train_llm_config:
+            enable_thinking = train_llm_config.get('enable_thinking', False)
+        else:
+            # Fallback to old format
+            enable_thinking = getattr(agent_config, 'enable_thinking', False)
         evaluation_summary["agent_enable_thinking"][agent_name] = enable_thinking
     
     # Log to summary via multi_logger

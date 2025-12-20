@@ -224,7 +224,15 @@ class MultiAgentsExecutionEngineGraph:
         for agent_name in self.agent_names:
             agent_config = self.agent_config_dict.get(agent_name, None)
             # Read enable_thinking from agent config, default to False
-            enable_thinking = getattr(agent_config, 'enable_thinking', False) if agent_config else False
+            enable_thinking = False
+    if agent_config:
+        # Read from train_llm_config (enable_thinking is same for train and val)
+        train_llm_config = getattr(agent_config, 'train_llm_config', None)
+        if train_llm_config:
+            enable_thinking = train_llm_config.get('enable_thinking', False)
+        else:
+            # Fallback to old format
+            enable_thinking = getattr(agent_config, 'enable_thinking', False)
             self.agent_enable_thinking[agent_name] = enable_thinking
             # Read enable_multimodal from agent config, fallback to global setting
             enable_multimodal = getattr(agent_config, 'enable_multimodal', self.enable_multimodal) if agent_config else self.enable_multimodal

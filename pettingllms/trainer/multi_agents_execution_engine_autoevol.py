@@ -40,13 +40,11 @@ class MultiAgentsExecutionEngineAutoEvol:
         self.max_prompt_length = getattr(self.config.training, 'max_prompt_length', 1024)
         self.max_response_length = getattr(self.config.training, 'max_response_length', 1024)
         self.turn_order = self.config.multi_agent_interaction.turn_order
-        self.num_interacting_agents = self.config.multi_agent_interaction.num_interacting_agents
+        self.num_interacting_agents = len(self.turn_order)  # Computed from turn_order
         self.parallel = getattr(self.config.multi_agent_interaction, 'parallel', False)
         self.generate_timeout = getattr(self.config.training, 'generate_timeout', 300.0)
         # Multi-modal support configuration
         self.enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
-        if self.num_interacting_agents != len(self.turn_order):
-            raise ValueError("num_interacting_agents must be equal to the length of turn_order")
           
         
     def __init__(
@@ -144,12 +142,20 @@ class MultiAgentsExecutionEngineAutoEvol:
         for agent_name in self.turn_order:
             agent_config = self.agent_config_dict.get(agent_name, None)
             # Read enable_thinking from agent config, default to False
-            enable_thinking = getattr(agent_config, 'enable_thinking', False) if agent_config else False
-            self.agent_enable_thinking[agent_name] = enable_thinking
-            # Read enable_multimodal from agent config, fallback to global setting
-            enable_multimodal = getattr(agent_config, 'enable_multimodal', self.enable_multimodal) if agent_config else self.enable_multimodal
-            self.agent_enable_multimodal[agent_name] = enable_multimodal
-            print(f"Agent '{agent_name}' enable_thinking: {enable_thinking}, enable_multimodal: {enable_multimodal}")
+            enable_thinking = False
+            if agent_config:
+                # Read from train_llm_config (enable_thinking is same for train and val)
+                train_llm_config = getattr(agent_config, 'train_llm_config', None)
+                if train_llm_config:
+                    enable_thinking = train_llm_config.get('enable_thinking', False)
+                else:
+                    # Fallback to old format
+                    enable_thinking = getattr(agent_config, 'enable_thinking', False)
+                    self.agent_enable_thinking[agent_name] = enable_thinking
+                    # Read enable_multimodal from agent config, fallback to global setting
+                    enable_multimodal = getattr(agent_config, 'enable_multimodal', self.enable_multimodal) if agent_config else self.enable_multimodal
+                    self.agent_enable_multimodal[agent_name] = enable_multimodal
+                 
         
         if mode=="validate":
             self.sample_num=self.config.training.validate_sample_num
@@ -371,7 +377,6 @@ class MultiAgentsExecutionEngineAutoEvol:
                 {"error": "timeout", "timeout_seconds": self.step_timeout}
             )
             tokenized_trajectories = []
-            final_reward = 0.0
         except Exception as e:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
@@ -379,10 +384,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
             tokenized_trajectories = []
-            final_reward = 0.0
-
-        # Step 6: Use final_reward from step
-        reward = final_reward
+            
 
         # Step 7: Merge MAS generation DataProto with tokenized trajectories DataProtos
         all_dataprotos = []
@@ -437,7 +439,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         )
 
         # Step 9: Log rollout summary
-        agent_rewards = {agent_name: mas_generator.reward_history}
+        agent_rewards = {agent_name: mas_generator.agent_reward}
         self.multi_logger.log_rollout_summary(
             self.mode, env_idx, rollout_idx, agent_rewards,
             "rollout_complete",
@@ -479,17 +481,17 @@ class MultiAgentsExecutionEngineAutoEvol:
             rollout_indices.extend(self.env_rollout_mapping[env_idx])
         concurrent_timer = create_timer("ConcurrentRollouts")
         concurrent_timer.start(f"Starting concurrent rollouts for {len(rollout_indices)} rollouts")
-        
+
         concurrent_timer.checkpoint("Creating async tasks")
-        
+
         tasks = [
                 asyncio.create_task(
-                    self.generate_single_rollout(rollout_idx=env_idx)
+                    self.generate_single_rollout(rollout_idx=rollout_idx)
                 )
-                for env_idx in env_idx_list
+                for rollout_idx in rollout_indices
             ]
-        
-        
+
+
         concurrent_timer.checkpoint(f"Created {len(tasks)} async tasks")
         
         aggregated_results = {}

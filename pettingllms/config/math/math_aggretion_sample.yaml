@@ -1,80 +1,85 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - _self_
-
-
-specialization: "prompt" # prompt, lora, full
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- _self_
+specialization: prompt
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
 lora_rank: 16
 lora_alpha: 32
-# Environment configuration (shared by all agents)
 env:
   name: math_aggretion_env
-  dataset: "polaris"
-  benchmark: "AIME24"
+  dataset: polaris
+  benchmark: AIME24
   max_turns: 3
   resolve: false
   multi_modal: false
   batched_init: true
-
-
-
 base_models:
   policy_0:
-    path: "your base model path"
-    name: "shared_model"
-  
- 
-
-# Multi-agent configuration with sampling support
+    path: your base model path
+    name: shared_model
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 3
-  policy_list: ["sample_reasoning_agent", "sample_tool_agent", "aggregation_agent"]
   agent_configs:
     agent_0:
-      name: "sample_reasoning_agent"
-      policy_name: "shared_model"
-      enable_thinking: true
-      train_temperature: 1.0
-      val_temperature: 0.7
-      sample_num: 3  # Generate 3 different reasoning solutions per step
-
-      
+      name: sample_reasoning_agent
+      policy_name: shared_model
+      sample_num: 3
+      train_llm_config:
+        enable_thinking: true
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: true
+        temperature: 0.7
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_1:
-      name: "sample_tool_agent"
-      policy_name: "shared_model"
-      enable_thinking: true
-      train_temperature: 1.0
-      val_temperature: 0.7
-      sample_num: 3  # Generate 3 different code solutions per step
-
+      name: sample_tool_agent
+      policy_name: shared_model
+      sample_num: 3
+      train_llm_config:
+        enable_thinking: true
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: true
+        temperature: 0.7
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_2:
-      name: "aggregation_agent"
-      policy_name: "shared_model"
-      enable_thinking: true
-      train_temperature: 0.7
-      val_temperature: 0.6
-      sample_num: 1  # Aggregation agent only generates 1 response
-
-
-# Multi-agent interaction configuration
+      name: aggregation_agent
+      policy_name: shared_model
+      sample_num: 1
+      train_llm_config:
+        enable_thinking: true
+        temperature: 0.7
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: true
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 multi_agent_interaction:
-  num_interacting_agents: 3
-  turn_order: ["sample_reasoning_agent", "sample_tool_agent", "aggregation_agent"]
+  turn_order:
+  - sample_reasoning_agent
+  - sample_tool_agent
+  - aggregation_agent
   parallel: true
-
-
-# Training configuration
 training:
   total_epochs: 1
   num_workers: 1800
-  experiment_name: "math_sampling_experiment"
-  epoch_size: 200
+  experiment_name: math_sampling_experiment
   train_batch_size: 16
   train_sample_num: 1
   validate_sample_num: 1
@@ -82,12 +87,7 @@ training:
   max_response_length: 2048
   generate_timeout: 300.0
   step_timeout: 30.0
-
-
-# Model configurations for each policy
 models:
   model_0:
-    model_name: "shared_model"
-    tokenizer_name: "shared_model"
-    policy_list: ["sample_reasoning_agent", "sample_tool_agent", "aggregation_agent"]
-
+    model_name: shared_model
+    tokenizer_name: shared_model

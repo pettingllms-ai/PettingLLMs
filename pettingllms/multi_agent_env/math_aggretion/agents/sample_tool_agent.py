@@ -117,8 +117,6 @@ class SampleToolAgent(Agent):
             # Update history records
             env_data.state.code_generated_solution_history.append(env_data.state.code_generated_solution)
             env_data.state.code_extracted_answer_history.append(env_data.state.code_extracted_answer)
-            self.answer_history.append(env_data.state.code_extracted_answer)
-            self.action_history.append(self.current_action)
             
             if code_execution_output is None:
                 self.agent_reward = -1
@@ -143,7 +141,6 @@ class SampleToolAgent(Agent):
         Calculate reward based on code execution correctness.
         """
         self.agent_reward = self.agent_reward
-        self.reward_history.append(self.agent_reward)
  
     def reset(self):
         """

@@ -36,7 +36,6 @@ class PyCheckerAgent(Agent):
         self.current_response = None
         self.env_data = None
         self.agent_reward = 0.0
-        self.reward_history = []
         
         # Set any additional keyword arguments as attributes
         for key, value in kwargs.items():
@@ -326,7 +325,6 @@ class PyCheckerAgent(Agent):
         Calculate reward (already done in step)
         """
         self.agent_reward = self.agent_reward
-        self.reward_history.append(self.agent_reward)
         self.success = (self.agent_reward >= 1.0)
         
         

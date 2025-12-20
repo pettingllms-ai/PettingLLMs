@@ -102,8 +102,6 @@ class SampleReasoningAgent(Agent):
         env_data.state.reasoning_extracted_answer = parse(self.current_action)
         env_data.state.reasoning_generated_solution_history.append(env_data.state.reasoning_generated_solution)
         env_data.state.reasoning_extracted_answer_history.append(env_data.state.reasoning_extracted_answer)
-        self.answer_history.append(env_data.state.reasoning_extracted_answer)
-        self.action_history.append(self.current_action)
         
         extracted_answer = env_data.state.reasoning_extracted_answer
         ground_truth_answer = env_data.state.ground_truth_answer
@@ -132,7 +130,6 @@ class SampleReasoningAgent(Agent):
         Calculate reward based on correctness.
         """
         self.agent_reward = int(env_data.state.reasoning_is_correct)
-        self.reward_history.append(self.agent_reward)
 
     def reset(self):
         """

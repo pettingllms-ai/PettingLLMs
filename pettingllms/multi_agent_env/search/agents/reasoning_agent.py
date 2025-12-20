@@ -200,7 +200,6 @@ class ReasoningAgent(Agent):
             # Ensure agent_reward is not None before converting to float
             if self.agent_reward is None:
                 self.agent_reward = 0.0
-            self.reward_history.append(float(self.agent_reward))
 
     def reset(self):
         """Reset the agent's internal state for a new episode."""

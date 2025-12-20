@@ -6,6 +6,20 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 from dataclasses import is_dataclass, asdict
 
+# Suppress AutoGen/AG2 logging warnings
+def suppress_autogen_logging():
+    """Suppress verbose logging from AutoGen/AG2 library"""
+    # Suppress autogen.oai.client warnings
+    logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
+    # Suppress other autogen loggers
+    logging.getLogger("autogen").setLevel(logging.ERROR)
+    # Suppress openai library logs
+    logging.getLogger("openai").setLevel(logging.ERROR)
+    logging.getLogger("httpx").setLevel(logging.ERROR)
+
+# Call this function when module is imported
+suppress_autogen_logging()
+
 def safe_serialize(obj):
     """Safely serialize objects, handle OmegaConf, dataclasses and other non-serializable objects"""
     # First, try to handle OmegaConf objects (including ListConfig, DictConfig)

@@ -43,7 +43,7 @@ class MathEnv(Env):
         """
         Initialize the math test environment.
         """
-        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, max_turns=max_turns, config=config)
+        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, config=config)
         self.state = MathEnvState()
 
     def reset(self):
@@ -64,13 +64,23 @@ class MathEnvBatch:
     def __init__(self, env_idx_list: List[int],env_indices: List[int], rollout_idx_list: List[int], samples: int, max_turns: int, config: dict, mode="train", *, env_workers: List = None):
         # Convert env_indices to list for safety
         safe_env_indices = list(env_indices) if not isinstance(env_indices, list) else env_indices
-        
+
         benchmark_name=getattr(config.env,"benchmark") if hasattr(config,"env") and hasattr(config.env,"benchmark") else "AIME24"
-        self.problem_list = load_math_problem_batch(safe_env_indices, mode=mode, config=config,benchmark_name=benchmark_name)
+
+        # For validate mode, load all problems from the dataset
+        # For train mode, use the provided env_indices
+        if mode == "validate":
+            print(f"[MathEnvBatch] validate mode: ignoring env_indices={safe_env_indices}, loading all problems")
+            self.problem_list = load_math_problem_batch([], mode=mode, config=config, benchmark_name=benchmark_name)
+            print(f"[MathEnvBatch] Loaded {len(self.problem_list)} problems, samples={samples}")
+        else:
+            self.problem_list = load_math_problem_batch(safe_env_indices, mode=mode, config=config, benchmark_name=benchmark_name)
+
         self.env_list = []
         if mode == "validate":
             rollout_idx_list = range(len(self.problem_list) * samples)
-   
+            print(f"[MathEnvBatch] Overriding rollout_idx_list to {len(rollout_idx_list)} elements (problems={len(self.problem_list)} * samples={samples})")
+
         if not self.problem_list:
             raise ValueError(f"Failed to load problems from math dataset. Please check if the dataset is available and accessible.")
 
@@ -83,6 +93,6 @@ class MathEnvBatch:
                 env = MathEnv(env_idx=i, rollout_idx=rollout_idx_list[i*samples+s], max_turns=max_turns, config=None)
                 env.state = copy.deepcopy(state)
                 self.env_list.append(env)
-                
+
         if len(self.env_list) != len(rollout_idx_list):
             raise ValueError(f"len(self.env_list)!=len(rollout_idx_list), {len(self.env_list)}!={len(rollout_idx_list)}")

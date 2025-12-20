@@ -1,73 +1,68 @@
-
 defaults:
-  - ../ppo_trainer@models.model_0.ppo_trainer_config: eval
-  - _self_
-
-
-specialization: "prompt" # prompt, lora, full
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- _self_
+specialization: prompt
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-
-# Environment configuration (shared by all agents)
 env:
   name: code_env
-  dataset: "code_contests"
-  benchmark: "code_contests"
+  dataset: code_contests
+  benchmark: code_contests
   max_turns: 5
   resolve: false
   multi_modal: false
   batched_init: true
-
-
-
 base_models:
   policy_0:
-    path: "your base model path"
-    name: "shared_model"
-
-
-# Multi-agent configuration for two policies
+    path: your base model path
+    name: shared_model
 agent_policy_configs:
-  # Number of agents to train
-  num_agents: 2
-  policy_list: ["code_generator", "test_generator"]
   agent_configs:
     agent_0:
-      name: "code_generator"
-      policy_name: "shared_model"
-      enable_thinking: false
-      train_temperature: 1.0
-      val_temperature: 0.6
-
-
+      name: code_generator
+      policy_name: shared_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
     agent_1:
-      name: "test_generator"
-      policy_name: "shared_model"
-      enable_thinking: false
-      train_temperature: 1.0
-      val_temperature: 0.6
-
-
-# Multi-agent interaction configuration
+      name: test_generator
+      policy_name: shared_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 1.0
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
 multi_agent_interaction:
-
-  # Turn order for agents (list of agent names)
-  turn_order: ["code_generator", "test_generator"]
-
-  # Number of agents that interact per episode
-  num_interacting_agents: 2
+  turn_order:
+  - code_generator
+  - test_generator
   parallel: true
-
-
-
 training:
   device: cuda
   total_training_steps: 200
   project_name: pettingllms
   experiment_name: code_eval_single_policy
-  logger: [ 'console', 'wandb' ]
+  logger:
+  - console
+  - wandb
   model_checkpoints_dir: checkpoints
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
@@ -75,14 +70,10 @@ training:
   validate_sample_num: 5
   sample_temperature: 1
   val_freq: 10
-  resample_freq: 3
-  epoch_size: 20
   max_prompt_length: 4096
   max_response_length: 2048
   lora_rank: ${lora_rank}
   lora_alpha: ${lora_alpha}
-
-
 models:
   model_0:
     path: ${base_models.policy_0.path}

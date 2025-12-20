@@ -30,7 +30,7 @@ BASE_VLLM_PORT=8301
 BASE_PROXY_PORT=8320
 GPU_START_ID=3
 HOST="127.0.0.1"
-GPU_MEM=0.15  # Reduced from 0.8 to fit in available memory (33.38 GiB available)
+GPU_MEM=0.8
 VLLM_SHUTDOWN=false  # If true, vLLM will be shut down when script exits; if false, vLLM will remain running
 TP_SIZE=1
 MAX_PROMPT_LENGTH=8192
@@ -279,7 +279,7 @@ python3 -m pettingllms.evaluate.evaluate \
     training.max_prompt_length=$MAX_PROMPT_LENGTH \
     training.max_response_length=$MAX_RESPONSE_LENGTH \
     training.experiment_name="$EXPERIMENT_NAME" \
-    +traning.validate_sample_num=1 \
+    training.validate_sample_num=3 \
     resource.n_gpus_per_node=$TP_SIZE \
     resource.nnodes=1 \
     models.model_0.ppo_trainer_config.actor_rollout_ref.rollout.tensor_model_parallel_size=$TP_SIZE \

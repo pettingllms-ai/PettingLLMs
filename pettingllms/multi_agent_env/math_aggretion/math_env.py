@@ -46,7 +46,7 @@ class MathEnv(Env):
         """
         Initialize the math test environment.
         """
-        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, max_turns=max_turns, config=config)
+        super().__init__(env_idx=env_idx, rollout_idx=rollout_idx, config=config)
         self.state = MathEnvState()
 
     def reset(self):

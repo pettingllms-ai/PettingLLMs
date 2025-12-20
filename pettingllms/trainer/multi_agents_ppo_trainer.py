@@ -509,7 +509,18 @@ class MultiAgentsPPOTrainer:
         The training loop of PPO. Adapted to train the underlying model of agent.
         """
         logger = self._initialize_logger_safely()
-        self.global_steps = 0
+
+        # Load checkpoint if resume is enabled
+        # This must be done after init_workers() and before training loop
+        for trainer in self.ppo_trainer_dict.values():
+            loaded_step = trainer._load_checkpoint()
+            if loaded_step > 0:
+                colorful_print(f"Resumed training from global step {loaded_step}", "green")
+                self.global_steps = loaded_step
+                break  # All trainers should have the same global_steps
+        else:
+            self.global_steps = 0
+
         self.total_training_steps = self.config.training.total_training_steps
         progress_bar = tqdm(range(self.total_training_steps), desc="Training Progress", position=0, leave=True)
         self.max_steps_duration = 0

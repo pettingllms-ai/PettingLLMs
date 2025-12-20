@@ -9,6 +9,10 @@ from verl.utils.torch_functional import pad_sequence_to_length
 from verl.utils.model import compute_position_id_with_mask
 from tensordict import TensorDict
 
+# Suppress AutoGen/AG2 logging warnings
+logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
+logging.getLogger("autogen").setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +50,7 @@ def load_and_tokenize_jsonl(
                 has_token_ids = _check_has_token_ids(sharegpt_data)
 
                 if has_token_ids:
-                    logger.info("Found token_ids in trajectory data, using them directly")
+                    #logger.info("Found token_ids in trajectory data, using them directly")
                     # Use token_ids directly without re-tokenization
                     trajectories = _convert_sharegpt_with_token_ids_to_dataproto(
                         sharegpt_data,
@@ -55,7 +59,7 @@ def load_and_tokenize_jsonl(
                         max_response_length
                     )
                 else:
-                    logger.info("No token_ids found in trajectory data, falling back to tokenization")
+                    #logger.info("No token_ids found in trajectory data, falling back to tokenization")
                     # Tokenize this conversation
                     trajectories = _tokenize_sharegpt_to_dataproto(
                         sharegpt_data,

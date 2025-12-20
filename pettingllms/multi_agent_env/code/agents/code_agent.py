@@ -162,7 +162,6 @@ class CodeGenerationAgent(Agent):
                 env_data.success = False
     def calculate_reward(self, env_data: Env):
         self.agent_reward = env_data.state.ground_truth_test_vs_generated_code_match_ratio+env_data.state.ground_truth_test_vs_generated_code_match_ratio
-        self.reward_history.append(self.agent_reward)
                 
  
 

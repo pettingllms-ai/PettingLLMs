@@ -424,55 +424,26 @@ async def llm_async_generate(
     reset_event_loop_resources()
 
 
-    if mode == "train":
-        default_temp = 0.8
-        default_top_p = 0.9
-        default_top_k = 20
-        default_min_p = 0.0
-    else:  # mode == "validate" or other
-        if enable_thinking:
-            default_temp = 0.6
-            default_top_p = 0.95
-            default_top_k = 20
-            default_min_p = 0.0
-        else:
-            default_temp = 0.7
-            default_top_p = 0.8
-            default_top_k = 20
-            default_min_p = 0.0
-    
+    # Default LLM config parameters
+    default_llm_config = {
+        'enable_thinking': enable_thinking,
+        'temperature': 0.8 if mode == "train" else 0.6,
+        'top_p': 0.9 if mode == "train" else 0.95,
+        'top_k': 20,
+        'min_p': 0.0,
+    }
+
+    # Read from agent's train_llm_config or val_llm_config, fallback to default
+    llm_config = None
     if agent_config is not None:
-        if mode == "train":
-            temp = getattr(agent_config, 'train_temperature', default_temp)
-            top_p = getattr(agent_config, 'train_top_p', default_top_p)
-            top_k = getattr(agent_config, 'train_top_k', default_top_k)
-            min_p = getattr(agent_config, 'train_min_p', default_min_p)
-        else:  # mode == "validate" or other
-            temp = getattr(agent_config, 'val_temperature', default_temp)
-            top_p = getattr(agent_config, 'val_top_p', default_top_p)
-            top_k = getattr(agent_config, 'val_top_k', default_top_k)
-            min_p = getattr(agent_config, 'val_min_p', default_min_p)
-    else:
-        temp = default_temp
-        top_p = default_top_p
-        top_k = default_top_k
-        min_p = default_min_p
-    
-    # Validate and fix empty or invalid values
-    if temp is None or temp == '' or (isinstance(temp, str) and not temp.strip()):
-        temp = default_temp
-    if top_p is None or top_p == '' or (isinstance(top_p, str) and not top_p.strip()):
-        top_p = default_top_p
-    if top_k is None or top_k == '' or (isinstance(top_k, str) and not top_k.strip()):
-        top_k = default_top_k
-    if min_p is None or min_p == '' or (isinstance(min_p, str) and not min_p.strip()):
-        min_p = default_min_p
-    
-    # Convert to proper types
-    temp = float(temp)
-    top_p = float(top_p)
-    top_k = int(top_k)
-    min_p = float(min_p)
+        llm_config = getattr(agent_config, 'train_llm_config' if mode == "train" else 'val_llm_config', None)
+
+    # Extract parameters with defaults
+    enable_thinking = llm_config.get('enable_thinking', default_llm_config['enable_thinking']) if llm_config else default_llm_config['enable_thinking']
+    temp = float(llm_config.get('temperature', default_llm_config['temperature'])) if llm_config else default_llm_config['temperature']
+    top_p = float(llm_config.get('top_p', default_llm_config['top_p'])) if llm_config else default_llm_config['top_p']
+    top_k = int(llm_config.get('top_k', default_llm_config['top_k'])) if llm_config else default_llm_config['top_k']
+    min_p = float(llm_config.get('min_p', default_llm_config['min_p'])) if llm_config else default_llm_config['min_p']
     
     if _DEBUG_API_CALLS:
         print(f"[LLM][llm_async_generate] enable_thinking={enable_thinking} mode={mode} temperature={temp} top_p={top_p} top_k={top_k} min_p={min_p} sample_num={sample_num}")
@@ -536,9 +507,6 @@ async def llm_async_generate(
     
     # Use return_exceptions=True to handle failures gracefully
     start_time = time.time()
-    if _DEBUG_API_CALLS:
-        print(f"[LLM][DEBUG] About to await {len(tasks)} API calls for rollout_idx={rollout_idx}, turn_idx={turn_idx}, agent_idx={agent_idx}")
-        print(f"[LLM][AWAIT_START] Waiting for asyncio.gather() at {time.time()}")
     completions_list = await asyncio.gather(*tasks, return_exceptions=True)
     elapsed_time = time.time() - start_time
     if _DEBUG_API_CALLS:
@@ -591,14 +559,9 @@ async def llm_async_generate(
                     token_ids = choice.get("logprobs", {}).get("tokens", [])
                     text = choice.get("text", "")
                     batch_texts.append(text)
-                    if token_ids:
-                        token_ids = [int(t.split(":")[1]) for t in token_ids]
-                        comps.append(token_ids)
-                    else:
-                        # Fallback: if no token_ids, add EOS
-                        if _DEBUG_API_CALLS:
-                            print(f"[WARNING] No token_ids in choice for batch {batch_index}")
-                        comps.append([tokenizer.eos_token_id])
+                    token_ids = [int(t.split(":")[1]) for t in token_ids]
+                    comps.append(token_ids)
+                    
         except Exception as e:
             if _DEBUG_API_CALLS:
                 print(f"[ERROR] Failed to process response for batch {batch_index}: {e}")
