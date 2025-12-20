@@ -260,6 +260,11 @@ class AsyncvLLMServer(AsyncServerBase):
         else:
             chat_template_str = None
         print(f"chat_template_str: {chat_template_str}")
+
+        # Get tool_parser from config, default to "hermes" for AutoGen compatibility
+        # Available parsers: hermes, mistral, openai, llama3_json, pythonic, etc.
+        tool_parser = config.get("tool_parser", "hermes")
+
         self.openai_serving_chat = OpenAIServingChat(
             self.engine,
             model_config,
@@ -268,6 +273,8 @@ class AsyncvLLMServer(AsyncServerBase):
             request_logger=RequestLogger(max_log_len=4096) if not config.disable_logging else None,
             chat_template=chat_template_str,
             chat_template_content_format="auto",
+            enable_auto_tools=True,
+            tool_parser=tool_parser,
             #return_tokens_as_token_ids=True,
         )
 
@@ -300,7 +307,7 @@ class AsyncvLLMServer(AsyncServerBase):
         generator = await self.openai_serving_chat.create_chat_completion(request, raw_request)
 
         if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(), status_code=generator.code)
+            return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
         if request.stream:
             return StreamingResponse(content=generator, media_type="text/event-stream")
         else:
@@ -340,7 +347,7 @@ class AsyncvLLMServer(AsyncServerBase):
         generator = await self.openai_serving_chat.create_chat_completion(request)
         if isinstance(generator, ErrorResponse):
             data = generator.model_dump_json(exclude_unset=True)
-            yield generator.code, f"data: {data}\n\n"
+            yield generator.error.code, f"data: {data}\n\n"
 
         if request.stream:
             async for chunk in generator:

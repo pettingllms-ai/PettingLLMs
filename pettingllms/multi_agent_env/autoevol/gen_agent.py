@@ -57,22 +57,40 @@ class MASGenerator(Agent):
     def update_from_model(self, response: str):
         code = ""
 
+        # Strategy 1: Try <code>...</code> tags first
         code_match = re.search(r"<code>\s*(.*?)\s*</code>", response, re.DOTALL)
         if code_match:
             code = code_match.group(1).strip()
         else:
-            matches = re.findall(r"```python(.*?)```", response, re.DOTALL)
+            # Strategy 2: Try ```python...``` code blocks
+            matches = re.findall(r"```python\s*(.*?)\s*```", response, re.DOTALL)
             if matches:
                 code = matches[-1].strip()
             else:
-
-                code = "# Error: Could not extract code from the model response."
-                logger.warning("Failed to extract code from model response")
-
+                # Strategy 3: Try just ``` code blocks (no language specified)
+                matches = re.findall(r"```\s*(.*?)\s*```", response, re.DOTALL)
+                if matches:
+                    # Filter out non-Python code blocks (e.g., those containing only markdown/text)
+                    python_blocks = [m.strip() for m in matches if 'import' in m or 'def ' in m or 'class ' in m or 'from ' in m]
+                    if python_blocks:
+                        code = python_blocks[-1]
+                    else:
+                        # Fallback to last code block even if we're not sure it's Python
+                        code = matches[-1].strip()
+                else:
+                    # Strategy 4: As last resort, look for Python-like code patterns
+                    # Look for import statements, function definitions, etc.
+                    import_pattern = r'((?:from|import)\s+\w+.*?(?:\n|$)(?:.*?(?:\n|$))*?)(?=\n\n|\Z)'
+                    import_match = re.search(import_pattern, response, re.MULTILINE | re.DOTALL)
+                    if import_match:
+                        # Found Python code, try to extract a reasonable block
+                        start_pos = import_match.start()
+                        code = response[start_pos:].strip()
+                    else:
+                        code = "# Error: Could not extract code from the model response."
+                        logger.warning("Failed to extract code from model response")
 
         self.generated_code = code
-
-
         self.current_action = code
 
         return self.current_action
@@ -126,71 +144,6 @@ class MASGenerator(Agent):
 
         return modified_code
 
-    def _replace_question_in_code(self, code: str, question: str) -> str:
-        """
-        Replace hardcoded question/problem in the generated mas.py code with the actual question.
-
-        This function looks for common patterns where questions appear in system messages:
-        - After "Problem:" or "problem:"
-        - In long text blocks within system_message
-        - Between specific markers
-
-        Args:
-            code: The generated Python code containing hardcoded question
-            question: The actual question from env_data.state.problem
-
-        Returns:
-            Modified code with replaced question
-        """
-        # Escape backslashes in the question to avoid Python string escape issues
-        # This is important for LaTeX math expressions like \{, \cdots, \tfrac, etc.
-        escaped_question = question.replace('\\', '\\\\')
-
-        # Strategy 1: Try to find and replace content after "Problem:" in system_message
-        # This pattern matches: system_message="""...\n\nProblem: <old question>\n\n..."""
-        pattern1 = r'(system_message\s*=\s*"""[^"]*?)(Problem:\s*)(.*?)(\n\n|\n""")'
-
-        def replace_after_problem(match):
-            prefix = match.group(1)  # Everything before "Problem:"
-            problem_marker = match.group(2)  # "Problem:" with whitespace
-            # Skip the old question text (group 3)
-            suffix = match.group(4)  # The ending (newlines or end of string)
-            return f"{prefix}{problem_marker}{escaped_question}{suffix}"
-
-        modified_code = re.sub(pattern1, replace_after_problem, code, flags=re.DOTALL)
-
-        # Strategy 2: If no "Problem:" marker found, try to replace entire long text in system_message
-        # Only if Strategy 1 didn't change anything
-        if modified_code == code:
-            # Find system_message with multi-line content and replace with question
-            pattern2 = r'(system_message\s*=\s*""")(.*?)(""")'
-
-            def replace_system_message(match):
-                prefix = match.group(1)
-                old_content = match.group(2).strip()
-                suffix = match.group(3)
-
-                # Only replace if the old content looks like a problem (long text, not a simple instruction)
-                if len(old_content) > 100 and ('solve' in old_content.lower() or 'find' in old_content.lower()):
-                    # Keep the first line if it's a role description
-                    lines = old_content.split('\n')
-                    if len(lines) > 0 and len(lines[0]) < 100 and 'You are' in lines[0]:
-                        role_line = lines[0]
-                        new_content = f"{role_line}\n\n{escaped_question}"
-                    else:
-                        new_content = escaped_question
-                    return f"{prefix}{new_content}{suffix}"
-                return match.group(0)  # Return unchanged if doesn't match criteria
-
-            modified_code = re.sub(pattern2, replace_system_message, code, flags=re.DOTALL)
-
-        if modified_code != code:
-            logger.info(f"Replaced question in generated code")
-        else:
-            logger.warning("Failed to replace question in generated code - no suitable pattern found")
-
-        return modified_code
-
     async def step(self, env_data: Env, env_worker: Any = None, output_dir: str = None,
                    server_address: str = None, model_name: str = None, tokenizer=None,
                    max_prompt_length: int = 2048, max_response_length: int = 2048,
@@ -199,9 +152,10 @@ class MASGenerator(Agent):
         Execute MAS Designer step: generate mas.py, run it with vLLM access, calculate reward.
 
         Returns:
-            Tuple[List[Tuple[DataProto, str]], float]:
+            Tuple[List[Tuple[DataProto, str]], float, bool]:
                 - tokenized_trajectories: List of (DataProto, response_text) tuples
                 - final_reward: Reward score from task-specific reward function
+                - mas_execution_success: Whether mas.py executed successfully (True/False)
         """
         
 
@@ -266,10 +220,7 @@ except Exception as e:
         if llm_config_for_mas is not None:
             full_code = self._replace_llm_config_in_code(full_code, llm_config_for_mas)
 
-        # Replace hardcoded question with actual question from env_data
-        if env_data and hasattr(env_data.state, 'problem'):
-            actual_question = env_data.state.problem
-            full_code = self._replace_question_in_code(full_code, actual_question)
+
 
         with open(mas_py_path, 'w') as f:
             f.write(full_code)
@@ -277,6 +228,7 @@ except Exception as e:
         logger.info(f"Saved MAS code to {mas_py_path}")
 
         # Run the mas.py file in Ray Docker Worker environment
+        mas_execution_success = False
         try:
             # Read and execute the generated MAS code
             with open(mas_py_path, 'r') as f:
@@ -295,11 +247,16 @@ except Exception as e:
                 # Check for Ray execution errors
                 if isinstance(stdout, str):
                     if stdout.startswith("error:"):
-                        logger.error(f"Ray execution failed: {stdout}")
+                        logger.warning(f"Ray execution failed (ignoring error): {stdout[:200]}")
                         stderr, stdout = stdout, ""
+                        mas_execution_success = False
                     elif stdout == "timeout":
-                        logger.error(f"Ray execution timed out for rollout {self.rollout_idx}")
-                        raise subprocess.TimeoutExpired(mas_py_path, execution_timeout)
+                        logger.warning(f"Ray execution timed out for rollout {self.rollout_idx}")
+                        mas_execution_success = False
+                    else:
+                        mas_execution_success = True
+                else:
+                    mas_execution_success = True
             else:
                 logger.warning("env_worker is None, falling back to subprocess execution")
 
@@ -320,86 +277,128 @@ except Exception as e:
                 # Use venv python if available, otherwise use system python
                 python_executable = venv_python if os.path.exists(venv_python) else 'python'
 
-                result = subprocess.run(
-                    [python_executable, mas_py_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=execution_timeout,
-                    cwd=output_dir,
-                    env=env
-                )
-                stdout, stderr = result.stdout, result.stderr
+                try:
+                    result = subprocess.run(
+                        [python_executable, mas_py_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=execution_timeout,
+                        cwd=output_dir,
+                        env=env
+                    )
+                    stdout, stderr = result.stdout, result.stderr
+                    mas_execution_success = (result.returncode == 0)
+                except subprocess.TimeoutExpired as te:
+                    logger.warning(f"Subprocess execution timed out for rollout {self.rollout_idx}")
+                    stdout = te.stdout if te.stdout else ""
+                    stderr = te.stderr if te.stderr else "Timeout"
+                    mas_execution_success = False
+                except Exception as e:
+                    logger.warning(f"Subprocess execution error (ignoring): {e}")
+                    stdout = ""
+                    stderr = str(e)
+                    mas_execution_success = False
 
             # Save execution output to file (both stdout and stderr)
-            output_txt_path = os.path.join(output_dir, "output.txt")
-            with open(output_txt_path, 'w') as f:
-                if stdout:
-                    f.write("=== STDOUT ===\n")
-                    f.write(stdout)
-                if stderr:
-                    f.write("\n=== STDERR ===\n")
-                    f.write(stderr)
-                if not stdout and not stderr:
-                    f.write("(No output captured)\n")
-            logger.info(f"Saved execution output to {output_txt_path}")
+            try:
+                output_txt_path = os.path.join(output_dir, "output.txt")
+                with open(output_txt_path, 'w') as f:
+                    if stdout:
+                        f.write("=== STDOUT ===\n")
+                        f.write(stdout)
+                    if stderr:
+                        f.write("\n=== STDERR ===\n")
+                        f.write(stderr)
+                    if not stdout and not stderr:
+                        f.write("(No output captured)\n")
+                logger.info(f"Saved execution output to {output_txt_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save execution output: {e}")
 
-            # Extract summary and trajectory from output
-            summary = self._extract_summary(stdout)
-            trajectory_store = self._extract_trajectory_from_stdout(stdout)
-            self.trajectory_store = trajectory_store if trajectory_store else {}
-
-            if trajectory_store:
-                logger.info(f"Extracted {len(trajectory_store)} trajectory entries from stdout")
-            else:
-                logger.warning("No trajectory data found in stdout")
-
-            # Load and tokenize trajectory data from saved JSONL file if tokenizer provided
+            # Only process output if execution was successful
+            summary = ""
+            trajectory_store = {}
             tokenized_trajectories = []
-            if tokenizer is not None:
+            final_reward = 0.0
+            
+            if mas_execution_success:
+                # Extract summary from output
+                summary = self._extract_summary(stdout) if stdout else ""
+
+                # Try to extract trajectory from stdout (legacy format)
+                trajectory_store = self._extract_trajectory_from_stdout(stdout) if stdout else {}
+                self.trajectory_store = trajectory_store if trajectory_store else {}
+
+                # Check for trajectory data from either stdout or file
                 trajectory_file = self.trajectory_json_path
-                if not os.path.exists(trajectory_file):
-                    logger.warning(f"Trajectory file {trajectory_file} not found, skipping tokenization")
-                    self.tokenized_trajectories = []
+                has_trajectory_data = False
+
+                if trajectory_store:
+                    logger.info(f"Extracted {len(trajectory_store)} trajectory entries from stdout")
+                    has_trajectory_data = True
+                elif os.path.exists(trajectory_file):
+                    # Trajectory saved to file instead of stdout
+                    logger.info(f"Trajectory data saved to file: {trajectory_file}")
+                    has_trajectory_data = True
                 else:
-                    # Use the new load_and_tokenize_jsonl function from utils
-                    tokenized_trajectories = load_and_tokenize_jsonl(
-                        trajectory_file, tokenizer, max_prompt_length, max_response_length
-                    )
-                    if tokenized_trajectories:
-                        logger.info(f"Tokenized {len(tokenized_trajectories)} trajectory turns")
-                        # Store tokenized trajectories in a new attribute
-                        self.tokenized_trajectories = tokenized_trajectories
-                    else:
-                        logger.warning("No tokenized trajectories generated")
+                    logger.warning("No trajectory data found in stdout or file")
+
+                # Load and tokenize trajectory data from saved JSONL file if tokenizer provided
+                if tokenizer is not None:
+                    try:
+                        if not os.path.exists(trajectory_file):
+                            logger.warning(f"Trajectory file {trajectory_file} not found, skipping tokenization")
+                            self.tokenized_trajectories = []
+                        else:
+                            # Use the new load_and_tokenize_jsonl function from utils
+                            tokenized_trajectories = load_and_tokenize_jsonl(
+                                trajectory_file, tokenizer, max_prompt_length, max_response_length
+                            )
+                            if tokenized_trajectories:
+                                logger.info(f"Tokenized {len(tokenized_trajectories)} trajectory turns")
+                                self.tokenized_trajectories = tokenized_trajectories
+                            else:
+                                logger.warning("No tokenized trajectories generated from file")
+                                self.tokenized_trajectories = []
+                    except Exception as e:
+                        logger.warning(f"Failed to tokenize trajectories (ignoring): {e}")
+                        tokenized_trajectories = []
                         self.tokenized_trajectories = []
 
-            # Log stderr if there were errors
-            if stderr:
-                logger.warning(f"MAS stderr output: {stderr[:500]}")
-
-            # Calculate reward using task-specific reward function
-            final_reward = 0.0
-            if self.task_type in REWARD_FUNCTIONS:
-                reward_func = REWARD_FUNCTIONS[self.task_type]
-                final_reward = reward_func(summary, env_data)
-                logger.info(f"Rollout {self.rollout_idx}: final_reward={final_reward}")
+                # Calculate reward using task-specific reward function
+                try:
+                    if self.task_type in REWARD_FUNCTIONS:
+                        reward_func = REWARD_FUNCTIONS[self.task_type]
+                        final_reward = reward_func(summary, env_data)
+                        logger.info(f"Rollout {self.rollout_idx}: final_reward={final_reward}")
+                    else:
+                        logger.warning(f"No reward function found for task_type={self.task_type}, defaulting to 0.0")
+                        final_reward = 0.0
+                except Exception as e:
+                    logger.warning(f"Failed to calculate reward (ignoring): {e}")
+                    final_reward = 0.0
             else:
-                logger.warning(f"No reward function found for task_type={self.task_type}, defaulting to 0.0")
-                final_reward = 0.0
+                # Execution failed - log the error
+                logger.warning(f"Rollout {self.rollout_idx}: MAS execution failed, skipping reward calculation")
+                self.tokenized_trajectories = []
+                
+                # Log stderr if there were errors
+                if stderr:
+                    logger.warning(f"MAS stderr output: {stderr[:500]}")
 
             self.agent_reward = final_reward
             if final_reward == 1.0:
                 env_data.success = True
 
-            # Return tokenized trajectories and final reward
-            return tokenized_trajectories, final_reward
+            # Return tokenized trajectories, final reward, and MAS execution success status
+            return tokenized_trajectories, final_reward, mas_execution_success
 
         except subprocess.TimeoutExpired:
-            logger.error(f"MAS execution timed out for rollout {self.rollout_idx}")
-            return [], 0.0
+            logger.warning(f"MAS execution timed out for rollout {self.rollout_idx}")
+            return [], 0.0, False
         except Exception as e:
-            logger.error(f"Error executing MAS: {e}")
-            return [], 0.0
+            logger.warning(f"Error executing MAS (ignoring): {e}")
+            return [], 0.0, False
 
 
 

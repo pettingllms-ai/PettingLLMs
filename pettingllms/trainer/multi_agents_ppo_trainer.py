@@ -196,21 +196,50 @@ class MultiAgentsPPOTrainer:
             server_address_list = getattr(rollout_engine, "server_addresses", [])
             self.server_address_dict[model_name] = server_address_list
  
-            # Construct an independent Router for each model
+        workflow_type = getattr(self.config, 'workflow_type', 'turn')
+        colorful_print(f"Initializing execution engine with workflow_type: {workflow_type}", "cyan")
         
-                # CRITICAL FIX: After initialization, verify LoRA adapters status in vLLM servers
-      
-        self.agent_execution_engine = MultiAgentsExecutionEngine(
-            config=self.config,
-            ppo_trainer_config_dict=self.ppo_trainer_config_dict,
-            tokenizer_dict=self.tokenizer_dict,
-            processor_dict=self.processor_dict,
-            server_address_dict=self.server_address_dict,
-            agent_policy_mapping=self.agent_policy_mapping,
-            lora_differ_mode=self.lora_differ_mode,
-            agent_lora_mapping=self.agent_lora_mapping,
-            use_lora_for_generation=self.use_lora_for_generation,
-        )
+        if workflow_type == "graph":
+            colorful_print("Initializing MultiAgentsExecutionEngineGraph", "cyan")
+            from pettingllms.trainer.multi_agents_execution_engine_graph import MultiAgentsExecutionEngineGraph
+            self.agent_execution_engine = MultiAgentsExecutionEngineGraph(
+                config=self.config,
+                ppo_trainer_config_dict=self.ppo_trainer_config_dict,
+                tokenizer_dict=self.tokenizer_dict,
+                processor_dict=self.processor_dict,
+                server_address_dict=self.server_address_dict,
+                agent_policy_mapping=self.agent_policy_mapping,
+                lora_differ_mode=self.lora_differ_mode,
+                agent_lora_mapping=self.agent_lora_mapping,
+                use_lora_for_generation=self.use_lora_for_generation,
+            )
+        elif workflow_type == "autoevol":
+            colorful_print("Initializing MultiAgentsExecutionEngineAutoEvol", "cyan")
+            from pettingllms.trainer.multi_agents_execution_engine_autoevol import MultiAgentsExecutionEngineAutoEvol
+            self.agent_execution_engine = MultiAgentsExecutionEngineAutoEvol(
+                config=self.config,
+                ppo_trainer_config_dict=self.ppo_trainer_config_dict,
+                tokenizer_dict=self.tokenizer_dict,
+                processor_dict=self.processor_dict,
+                server_address_dict=self.server_address_dict,
+                agent_policy_mapping=self.agent_policy_mapping,
+                lora_differ_mode=self.lora_differ_mode,
+                agent_lora_mapping=self.agent_lora_mapping,
+                use_lora_for_generation=self.use_lora_for_generation,
+            )
+        else:
+            colorful_print("Initializing MultiAgentsExecutionEngine (turn-based)", "cyan")
+            self.agent_execution_engine = MultiAgentsExecutionEngine(
+                config=self.config,
+                ppo_trainer_config_dict=self.ppo_trainer_config_dict,
+                tokenizer_dict=self.tokenizer_dict,
+                processor_dict=self.processor_dict,
+                server_address_dict=self.server_address_dict,
+                agent_policy_mapping=self.agent_policy_mapping,
+                lora_differ_mode=self.lora_differ_mode,
+                agent_lora_mapping=self.agent_lora_mapping,
+                use_lora_for_generation=self.use_lora_for_generation,
+            )
 
     def init_workers(self):
   

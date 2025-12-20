@@ -181,9 +181,13 @@ class MultiAgentsExecutionEngineAutoEvol:
             mode=self.mode
         )
         self.envs=self.envs_batch.env_list
+        print(f"[DEBUG] envs_batch created {len(self.envs)} environments")
+        print(f"[DEBUG] sample_num={self.sample_num}, gen_batch_size before={self.gen_batch_size}")
         self.gen_batch_size=len(self.envs)//self.sample_num
+        print(f"[DEBUG] gen_batch_size after={self.gen_batch_size}")
         self.env_idx_list=range(len(self.envs)//self.sample_num)
         self.rollout_idx_list=range(len(self.envs))
+        print(f"[DEBUG] rollout_idx_list has {len(self.rollout_idx_list)} elements")
         self.env_rollout_mapping={}
         for env_idx in range(len(self.env_idx_list)):
             self.env_rollout_mapping[env_idx] = [_ for _ in range(env_idx*self.sample_num, (env_idx+1)*self.sample_num)]
@@ -327,6 +331,8 @@ class MultiAgentsExecutionEngineAutoEvol:
 
         # Step 4: Update agent with model response (extract code)
         mas_generator.update_from_model(response)
+        
+        # Log the generated MAS code
 
         # Step 5: Execute MAS code via step() method and get tokenized trajectories + final reward
         tokenized_trajectories = []
@@ -341,22 +347,63 @@ class MultiAgentsExecutionEngineAutoEvol:
 
             # Prepare output directory for MAS execution
             import os
-            output_dir = os.path.join(
-                self.config.training.get('output_dir', './tmp_auto_mas'),
+            output_base_dir = './tmp_auto_mas'
+            output_dir = os.path.abspath(os.path.join(
+                output_base_dir,
                 f'rollout_{rollout_idx}'
-            )
-            os.makedirs(output_dir, exist_ok=True)
+            ))
+            try:
+                os.makedirs(output_dir, exist_ok=True)
+                if not os.path.exists(output_dir):
+                    raise RuntimeError(f"Failed to create output directory: {output_dir}")
+            except Exception as e:
+                self.multi_logger.log_env_agent_info(
+                    self.mode, env_idx, rollout_idx, 1, agent_name,
+                    f"Failed to create output directory: {e}",
+                    {"output_dir": output_dir, "error": str(e)}
+                )
+                raise
+            
+            # Get LLM config parameters from train/val config
+            if agent_config:
+                if self.mode == "train":
+                    llm_config = getattr(agent_config, 'train_llm_config', {})
+                else:
+                    llm_config = getattr(agent_config, 'val_llm_config', {})
+                
+                temperature = llm_config.get('temperature', 0.2) if llm_config else 0.2
+                top_p = llm_config.get('top_p', 0.95) if llm_config else 0.95
+                top_k = llm_config.get('top_k', 20) if llm_config else 20
+            else:
+                temperature = 0.2
+                top_p = 0.95
+                top_k = 20
 
             # Prepare LLM config for MAS execution
             llm_config_for_mas = {
                 "server_address": _address,
                 "model_name": model_name,
                 "api_key": getattr(self.config.training, 'openai_api_key', ''),
-                "temperature": getattr(agent_config, 'temperature', 0.2) if agent_config else 0.2,
+                "temperature": temperature,
+                "top_p": top_p,
+                "top_k": top_k,
             }
+            
+            # Log MAS execution configuration
+            print(f"[AUTOEVOL] Rollout {rollout_idx}: output_dir={output_dir}")
+            print(f"[AUTOEVOL] Rollout {rollout_idx}: LLM config: temp={temperature}, top_p={top_p}, top_k={top_k}")
+            self.multi_logger.log_env_agent_info(
+                self.mode, env_idx, rollout_idx, 1, agent_name,
+                "MAS execution configuration",
+                {
+                    "output_dir": output_dir,
+                    "llm_config": {k: v for k, v in llm_config_for_mas.items() if k != 'api_key'},
+                    "mode": self.mode
+                }
+            )
 
-            # Call step and get tokenized trajectories and final reward
-            tokenized_trajectories, final_reward = await asyncio.wait_for(
+            # Call step and get tokenized trajectories, final reward, and MAS execution success
+            tokenized_trajectories, final_reward, mas_execution_success = await asyncio.wait_for(
                 mas_generator.step(
                     env_data=env,
                     env_worker=env_worker,
@@ -370,6 +417,19 @@ class MultiAgentsExecutionEngineAutoEvol:
                 ),
                 timeout=self.step_timeout
             )
+            
+            # Log step execution results
+            print(f"[AUTOEVOL] Rollout {rollout_idx}: MAS execution success={mas_execution_success}, final_reward={final_reward}, trajectories={len(tokenized_trajectories) if tokenized_trajectories else 0}")
+            self.multi_logger.log_env_agent_info(
+                self.mode, env_idx, rollout_idx, 1, agent_name,
+                "MAS step completed",
+                {
+                    "mas_execution_success": mas_execution_success,
+                    "final_reward": final_reward,
+                    "num_trajectories": len(tokenized_trajectories) if tokenized_trajectories else 0,
+                    "output_dir": output_dir
+                }
+            )
         except asyncio.TimeoutError:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
@@ -377,6 +437,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 {"error": "timeout", "timeout_seconds": self.step_timeout}
             )
             tokenized_trajectories = []
+            mas_execution_success = False
         except Exception as e:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
@@ -384,34 +445,40 @@ class MultiAgentsExecutionEngineAutoEvol:
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
             tokenized_trajectories = []
+            mas_execution_success = False
             
 
         # Step 7: Merge MAS generation DataProto with tokenized trajectories DataProtos
         all_dataprotos = []
 
-        # Add the initial MAS generation DataProto
+        # First batch: MAS generation DataProto (reward based on task correctness)
         if output_dpr is not None:
-            output_dpr.non_tensor_batch["reward"] = np.array([reward])
-            output_dpr.non_tensor_batch["agent_name"] = np.array([agent_name], dtype=object)
-            output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward])
+            batch_size = output_dpr.batch.shape[0]
+            output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
+            output_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
+            output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
+            print(f"[DEBUG REWARD] Rollout {rollout_idx}: Set reward array with final_reward={final_reward}, batch_size={batch_size}")
 
             if self.lora_differ_mode:
-                batch_size = output_dpr.batch.batch_size[0] if hasattr(output_dpr.batch, 'batch_size') else len(output_dpr.batch)
                 lora_ids = [self.agent_lora_mapping[agent_name]] * batch_size
                 output_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
 
             all_dataprotos.append(output_dpr)
 
-        # Add tokenized trajectory DataProtos from MAS execution
+        # Second batch: tokenized trajectory DataProtos from MAS execution (reward = final_reward)
         if tokenized_trajectories:
             for traj_dpr, traj_response in tokenized_trajectories:
                 # Add metadata to each trajectory DataProto
-                traj_dpr.non_tensor_batch["reward"] = np.array([final_reward])
-                traj_dpr.non_tensor_batch["agent_name"] = np.array([agent_name], dtype=object)
-                traj_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward])
+                batch_size = traj_dpr.batch.shape[0]
+                traj_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
+                traj_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
+                traj_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
+                traj_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
+                traj_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
+                traj_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
+                traj_dpr.non_tensor_batch["agent_idx"] = np.array([0] * batch_size)
 
                 if self.lora_differ_mode:
-                    batch_size = traj_dpr.batch.batch_size[0] if hasattr(traj_dpr.batch, 'batch_size') else len(traj_dpr.batch)
                     lora_ids = [self.agent_lora_mapping[agent_name]] * batch_size
                     traj_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
 
@@ -476,12 +543,13 @@ class MultiAgentsExecutionEngineAutoEvol:
 
 
     async def generate_multiple_rollouts_concurrent(self, env_idx_list, rollout_mode="tree"):
-        rollout_indices=[]
+        rollout_indices = []
         for env_idx in env_idx_list:
             rollout_indices.extend(self.env_rollout_mapping[env_idx])
+        
         concurrent_timer = create_timer("ConcurrentRollouts")
         concurrent_timer.start(f"Starting concurrent rollouts for {len(rollout_indices)} rollouts")
-
+        
         concurrent_timer.checkpoint("Creating async tasks")
 
         tasks = [
@@ -582,7 +650,6 @@ class MultiAgentsExecutionEngineAutoEvol:
             {
                 "successfully_processed": completed_count,
                 "total_env_groups": len(tasks),
-                "total_rollouts": len(rollout_indices),
                 "failed": failed_count,
                 "success_rate": f"{completed_count}/{len(tasks)}",
                 "aggregated_policies": list(aggregated_results.keys()),

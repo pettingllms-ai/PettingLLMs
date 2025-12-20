@@ -431,6 +431,14 @@ async def llm_async_generate(
         'top_p': 0.9 if mode == "train" else 0.95,
         'top_k': 20,
         'min_p': 0.0,
+        'stop': None,
+        'presence_penalty': 0.0,
+        'frequency_penalty': 0.0,
+        'repetition_penalty': 1.0,
+        'best_of': None,
+        'ignore_eos': False,
+        'skip_special_tokens': True,
+        'spaces_between_special_tokens': True,
     }
 
     # Read from agent's train_llm_config or val_llm_config, fallback to default
@@ -438,18 +446,31 @@ async def llm_async_generate(
     if agent_config is not None:
         llm_config = getattr(agent_config, 'train_llm_config' if mode == "train" else 'val_llm_config', None)
 
-    # Extract parameters with defaults
-    enable_thinking = llm_config.get('enable_thinking', default_llm_config['enable_thinking']) if llm_config else default_llm_config['enable_thinking']
-    temp = float(llm_config.get('temperature', default_llm_config['temperature'])) if llm_config else default_llm_config['temperature']
-    top_p = float(llm_config.get('top_p', default_llm_config['top_p'])) if llm_config else default_llm_config['top_p']
-    top_k = int(llm_config.get('top_k', default_llm_config['top_k'])) if llm_config else default_llm_config['top_k']
-    min_p = float(llm_config.get('min_p', default_llm_config['min_p'])) if llm_config else default_llm_config['min_p']
+    # Merge llm_config with defaults
+    config = {**default_llm_config, **llm_config} if llm_config else default_llm_config
+
+    # Extract parameters with type conversion
+    enable_thinking = config['enable_thinking']
+    temp = float(config['temperature'])
+    top_p = float(config['top_p'])
+    top_k = int(config['top_k'])
+    min_p = float(config['min_p'])
+    stop = config['stop']
+    presence_penalty = float(config['presence_penalty'])
+    frequency_penalty = float(config['frequency_penalty'])
+    repetition_penalty = float(config['repetition_penalty'])
+    best_of = config['best_of']
+    ignore_eos = config['ignore_eos']
+    skip_special_tokens = config['skip_special_tokens']
+    spaces_between_special_tokens = config['spaces_between_special_tokens']
     
     if _DEBUG_API_CALLS:
         print(f"[LLM][llm_async_generate] enable_thinking={enable_thinking} mode={mode} temperature={temp} top_p={top_p} top_k={top_k} min_p={min_p} sample_num={sample_num}")
+        print(f"[LLM][llm_async_generate] stop={stop} presence_penalty={presence_penalty} frequency_penalty={frequency_penalty} repetition_penalty={repetition_penalty}")
+        print(f"[LLM][llm_async_generate] best_of={best_of} ignore_eos={ignore_eos}")
 
     kwargs={
-        "n": sample_num,  # Generate sample_num responses per prompt
+        "n": sample_num,
         "temperature":temp,
         "top_p":top_p,
         "max_tokens":ppo_trainer_config.data.max_response_length,
@@ -457,6 +478,23 @@ async def llm_async_generate(
         "min_p":min_p,
         "logprobs":1,
     }
+    
+    if stop is not None:
+        kwargs["stop"] = stop
+    if presence_penalty != 0.0:
+        kwargs["presence_penalty"] = presence_penalty
+    if frequency_penalty != 0.0:
+        kwargs["frequency_penalty"] = frequency_penalty
+    if repetition_penalty != 1.0:
+        kwargs["repetition_penalty"] = repetition_penalty
+    if best_of is not None:
+        kwargs["best_of"] = best_of
+    if ignore_eos:
+        kwargs["ignore_eos"] = ignore_eos
+    if not skip_special_tokens:
+        kwargs["skip_special_tokens"] = skip_special_tokens
+    if not spaces_between_special_tokens:
+        kwargs["spaces_between_special_tokens"] = spaces_between_special_tokens
     batch_size = len(prompt_dpr.non_tensor_batch["formatted_prompts"])
     batch_response_ids: list[list[int]] = [[] for _ in range(batch_size)]
     text_list = []  # Initialize text list for multiple samples

@@ -29,7 +29,7 @@ agent_policy_configs:
       policy_name: shared_model
       train_llm_config:
         enable_thinking: false
-        temperature: 1.0
+        temperature: 0.6
         top_p: 0.9
         top_k: 20
         min_p: 0.0
