@@ -52,7 +52,7 @@ actor_rollout_ref:
   actor:
     _target_: verl.workers.config.FSDPActorConfig
     strategy: fsdp2  # [fsdp, fsdp2], This is for backward-compatibility
-    ppo_mini_batch_size: 16 
+    ppo_mini_batch_size: 16  # 减小PPO mini batch大小以节省内存
     use_dynamic_bsz: True
     use_dynamic_mini_batch: False
     ppo_micro_batch_size: 4 # will be deprecated, use ppo_micro_batch_size_per_gpu
