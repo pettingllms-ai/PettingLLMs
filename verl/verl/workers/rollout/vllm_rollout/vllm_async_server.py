@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cloudpickle
 import ray
+import torch
 from omegaconf import DictConfig
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
@@ -38,6 +40,12 @@ from verl.workers.rollout.async_server import AsyncServerBase
 from verl.workers.rollout.vllm_rollout.monkey_patch import all_reduce
 
 logger = logging.getLogger(__file__)
+
+# Request tracking for proper sleep synchronization
+_active_request_count = 0
+_active_request_ids = set()  # Track request IDs for forced abort
+_request_count_lock = asyncio.Lock()
+_is_sleeping = False
 
 CudaCommunicator.all_reduce = all_reduce
 
@@ -304,38 +312,78 @@ class AsyncvLLMServer(AsyncServerBase):
 
         API reference: https://docs.vllm.ai/en/latest/serving/openai_compatible_server.html
         """
-        request_json = await raw_request.json()
-        request = ChatCompletionRequest(**request_json)
-        generator = await self.openai_serving_chat.create_chat_completion(request, raw_request)
+        global _active_request_count, _active_request_ids, _is_sleeping
 
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
-        if request.stream:
-            return StreamingResponse(content=generator, media_type="text/event-stream")
-        else:
-            assert isinstance(generator, ChatCompletionResponse)
-            return JSONResponse(content=generator.model_dump())
+        if _is_sleeping:
+            return JSONResponse(
+                content={"error": {"message": "Server is sleeping", "type": "server_error", "code": 503}},
+                status_code=503
+            )
+
+        import uuid
+        request_id = str(uuid.uuid4())
+
+        async with _request_count_lock:
+            _active_request_count += 1
+            _active_request_ids.add(request_id)
+
+        try:
+            request_json = await raw_request.json()
+            request = ChatCompletionRequest(**request_json)
+            generator = await self.openai_serving_chat.create_chat_completion(request, raw_request)
+
+            if isinstance(generator, ErrorResponse):
+                return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
+            if request.stream:
+                return StreamingResponse(content=generator, media_type="text/event-stream")
+            else:
+                assert isinstance(generator, ChatCompletionResponse)
+                return JSONResponse(content=generator.model_dump())
+        finally:
+            async with _request_count_lock:
+                _active_request_count -= 1
+                _active_request_ids.discard(request_id)
         
     async def completions(self, raw_request: Request):
         """OpenAI completions API.
 
         API reference: https://platform.openai.com/docs/api-reference/completions/create
         """
-        request_json = await raw_request.json()
-        request = CompletionRequest(**request_json)
-        generator = await self.openai_serving_completion.create_completion(request, raw_request)
+        global _active_request_count, _active_request_ids, _is_sleeping
 
-        if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
-        if request.stream:
-            return StreamingResponse(content=generator, media_type="text/event-stream")
-        else:
-            assert isinstance(generator, CompletionResponse)
-            if generator.choices and generator.choices[0].logprobs:
-                generator.choices[0].logprobs.token_logprobs = [] 
-                generator.choices[0].logprobs.top_logprobs = []
-                generator.choices[0].logprobs.text_offset = []
-            return JSONResponse(content=generator.model_dump())
+        if _is_sleeping:
+            return JSONResponse(
+                content={"error": {"message": "Server is sleeping", "type": "server_error", "code": 503}},
+                status_code=503
+            )
+
+        import uuid
+        request_id = str(uuid.uuid4())
+
+        async with _request_count_lock:
+            _active_request_count += 1
+            _active_request_ids.add(request_id)
+
+        try:
+            request_json = await raw_request.json()
+            request = CompletionRequest(**request_json)
+            generator = await self.openai_serving_completion.create_completion(request, raw_request)
+
+            if isinstance(generator, ErrorResponse):
+                return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
+            if request.stream:
+                return StreamingResponse(content=generator, media_type="text/event-stream")
+            else:
+                assert isinstance(generator, CompletionResponse)
+                if generator.choices and generator.choices[0].logprobs:
+                    generator.choices[0].logprobs.token_logprobs = []
+                    generator.choices[0].logprobs.top_logprobs = []
+                    generator.choices[0].logprobs.text_offset = []
+                return JSONResponse(content=generator.model_dump())
+        finally:
+            async with _request_count_lock:
+                _active_request_count -= 1
+                _active_request_ids.discard(request_id)
 
     async def chat_completion_generator(self, request: ChatCompletionRequest) -> AsyncGenerator[Tuple[int, str]]:
         """Direct chat completion without FastAPI.
@@ -360,11 +408,109 @@ class AsyncvLLMServer(AsyncServerBase):
             yield 200, f"data: {data}\n\n"
 
     async def wake_up(self, tags: Optional[list[str]] = None):
+        global _is_sleeping
         await self.engine.wake_up(tags)
+        _is_sleeping = False
+        print("[DEBUG] Server woke up, now accepting requests")
 
     async def sleep(self):
-        # TODO: https://github.com/vllm-project/vllm/issues/17103
-        await self.engine.reset_prefix_cache()
+        """
+        Safely put vLLM engine to sleep by ensuring all requests complete
+        and properly cleaning up resources before offloading.
+        """
+        global _active_request_count, _active_request_ids, _is_sleeping
+
+        print("[DEBUG] Stage 0: Marking server as sleeping to reject new requests...")
+        _is_sleeping = True
+
+        print("[DEBUG] Stage 1: Waiting for active requests to complete (max 30s)...")
+        max_wait_time = 30.0  # Reduced from 60s
+        wait_interval = 0.5
+        total_waited = 0.0
+        while total_waited < max_wait_time:
+            async with _request_count_lock:
+                current_count = _active_request_count
+            if current_count == 0:
+                print(f"[DEBUG] All active requests completed (waited {total_waited:.1f}s)")
+                break
+            if total_waited % 5.0 < wait_interval:
+                print(f"[DEBUG] Waiting for {current_count} active requests to complete...")
+            await asyncio.sleep(wait_interval)
+            total_waited += wait_interval
+        else:
+            async with _request_count_lock:
+                remaining = _active_request_count
+                orphaned_ids = list(_active_request_ids)
+            print(f"[WARNING] Timeout waiting for requests, {remaining} requests still active")
+            print(f"[DEBUG] Force resetting request counter and aborting orphaned requests...")
+
+            # Force reset the counter - these are orphaned requests from dropped connections
+            async with _request_count_lock:
+                _active_request_count = 0
+                _active_request_ids.clear()
+
+        print("[DEBUG] Stage 2: Aborting any pending engine requests...")
+        try:
+            # Try to abort all pending requests in the engine
+            # This helps free KV cache blocks held by orphaned requests
+            if hasattr(self.engine, 'output_processor') and hasattr(self.engine.output_processor, 'request_states'):
+                pending_ids = list(self.engine.output_processor.request_states.keys())
+                if pending_ids:
+                    print(f"[DEBUG] Found {len(pending_ids)} pending engine requests, aborting...")
+                    try:
+                        await self.engine.abort(pending_ids)
+                        print(f"[DEBUG] Aborted {len(pending_ids)} pending requests")
+                    except Exception as e:
+                        print(f"[DEBUG] Error aborting requests: {e}")
+                else:
+                    print("[DEBUG] No pending engine requests found")
+            else:
+                print("[DEBUG] Cannot access engine request states, skipping abort")
+        except Exception as e:
+            print(f"[DEBUG] Error checking pending requests: {e}")
+
+        # Give engine time to process aborts
+        await asyncio.sleep(1.0)
+
+        print("[DEBUG] Stage 3: Synchronizing CUDA...")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+
+        print("[DEBUG] Stage 4: Resetting prefix cache (with force retry)...")
+        max_retries = 20  # Increased retries
+        reset_success = False
+        for retry in range(max_retries):
+            try:
+                # First sync CUDA to ensure all GPU operations complete
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+
+                await self.engine.reset_prefix_cache()
+                reset_success = True
+                print(f"[DEBUG] Prefix cache reset successful on attempt {retry + 1}")
+                break
+            except Exception as e:
+                if retry < max_retries - 1:
+                    # Wait longer between retries
+                    await asyncio.sleep(0.5)
+                else:
+                    print(f"[DEBUG] Failed to reset prefix cache after {max_retries} retries: {e}")
+                    logger.warning(f"Failed to reset prefix cache after {max_retries} attempts: {e}")
+
+        if not reset_success:
+            print("[WARNING] Proceeding with sleep despite failed prefix cache reset")
+            logger.warning("Proceeding with sleep despite failed prefix cache reset")
+
+        print("[DEBUG] Stage 5: Waiting 2s for cleanup to complete...")
+        await asyncio.sleep(2.0)  # Increased from 1s
+
+        print("[DEBUG] Stage 6: Final CUDA sync before sleep...")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            # Clear CUDA cache to help free memory
+            torch.cuda.empty_cache()
+
+        print("[DEBUG] Cleanup completed, ready for sleep")
         await self.engine.sleep()
 
    

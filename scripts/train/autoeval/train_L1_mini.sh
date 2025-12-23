@@ -1,5 +1,7 @@
 set -x
-
+export CUDA_LAUNCH_BLOCKING=1
+export TORCH_USE_CUDA_DSA=1
+export CUDA_DEVICE_DEBUG=1
 export CUDA_VISIBLE_DEVICES=3,4
 export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -29,10 +31,12 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 python3 -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
     base_models.policy_0.path="/raid/lah003/mas_rl_cold_start"\
+    lora_rank=16\
+    lora_alpha=32\
     training.experiment_name=autoeval_L1_prompt\
     training.total_training_steps=400\
-    training.train_batch_size=32\
-    training.train_sample_num=8\
+    training.train_batch_size=4\
+    training.train_sample_num=4\
     training.validate_sample_num=3\
     training.max_prompt_length=2048\
     training.max_response_length=4096\

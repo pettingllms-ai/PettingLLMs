@@ -364,7 +364,7 @@ class DataParallelPPOActor(BasePPOActor):
             self.actor_module.set_adapter(adapter_name)
         elif not multi_lora and hasattr(self.actor_module, 'set_adapter'):
             # In single LoRA mode, use "default"
-            if "default" in self.actor_module.peft_config:
+            if hasattr(self.actor_module, 'peft_config') and "default" in self.actor_module.peft_config:
                 self.actor_module.set_adapter("default")
 
         temperature = data.meta_info["temperature"]

@@ -83,7 +83,7 @@ models:
     path: ${base_models.policy_0.path}
     name: ${base_models.policy_0.name}
     ppo_trainer_config:
-      filter_method: dapo
+      filter_method: uid
       filter_ratio: 0
       data:
         max_prompt_length: ${training.max_prompt_length}

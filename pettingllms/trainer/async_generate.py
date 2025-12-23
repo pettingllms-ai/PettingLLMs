@@ -578,7 +578,7 @@ def convert_prompt_to_format(tokenizer, enable_thinking, prompts,**kwargs):
     Args:
         tokenizer: HF tokenizer, must support apply_chat_template and __call__ tokenization
         enable_thinking: Whether to enable thinking mode for chat template
-        prompts: dict, {"text": str, "image": None, image path, or PIL.Image}
+        prompts: dict, {"text": str, "image": None, image path, or PIL.Image,system: Optional[str]}
         kwargs: Optional parameters, such as meta_info, etc.
     Returns:
         DataProto: Contains tensor and non-tensor information
@@ -589,22 +589,26 @@ def convert_prompt_to_format(tokenizer, enable_thinking, prompts,**kwargs):
 
     text = prompts.get("text", "") or ""
     image_data = prompts.get("image", None)
+    system_text = prompts.get("system", None)
 
     old_padding_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
-  
-    chat = np.array([
-        {"content": text, "role": "user"}
-    ])
+    try:
+        chat = []
+        if system_text is not None:
+            chat.append({"content": system_text, "role": "system"})
+        chat.append({"content": text, "role": "user"})
 
-    prompt_with_chat_template = tokenizer.apply_chat_template(
-        chat,
-        add_generation_prompt=True,
-        tokenize=False,
-        enable_thinking=enable_thinking
-    )
+        prompt_with_chat_template = tokenizer.apply_chat_template(
+            chat,
+            add_generation_prompt=True,
+            tokenize=False,
+            enable_thinking=enable_thinking
+        )
 
-    return prompt_with_chat_template
+        return prompt_with_chat_template
+    finally:
+        tokenizer.padding_side = old_padding_side
     
 
     
@@ -616,7 +620,7 @@ def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, mult
     Args:
         tokenizer: HF tokenizer, must support apply_chat_template and __call__ tokenization
         chat_parser: Reserved (currently unused)
-        prompts: dict, {"text": str, "image": None, image path, or PIL.Image}
+    prompts: dict, {"text": str, "image": None, image path, or PIL.Image, "system": Optional[str]}
         max_prompt_length: Maximum prompt length (left padding)
         multi_modal: Whether multimodal (if True, should also pass processor and other necessary information)
         kwargs: Optional parameters, such as processor, meta_info, etc.
@@ -634,13 +638,15 @@ def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, mult
 
     text = prompts.get("text", "") or ""
     image_data = prompts.get("image", None)
+    system_text = prompts.get("system")
 
     old_padding_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
     try:
-        chat = np.array([
-            {"content": text, "role": "user"}
-        ])
+        chat = []
+        if system_text is not None:
+            chat.append({"content": system_text, "role": "system"})
+        chat.append({"content": text, "role": "user"})
 
         prompt_with_chat_template = tokenizer.apply_chat_template(
             chat,

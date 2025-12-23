@@ -128,6 +128,24 @@ class MultiAgentsExecutionEngineAutoEvol:
             print(f"RayDockerWorker is not available or invalid for env '{self.env_name}'. Skipping env workers initialization.")
         
 
+    async def _cleanup_after_step(self, rollout_idx: int):
+        """
+        Clean up resources after step() to prevent memory leaks from AG2/OpenAI clients.
+        This helps prevent 'illegal memory' errors when running many concurrent rollouts.
+        Note: Main cleanup happens in gen_agent._cleanup_ag2_resources() and subprocess cleanup code.
+        This is an additional periodic garbage collection.
+        """
+        import gc
+
+        try:
+            # Force garbage collection periodically to release memory
+            # Do this every 10 rollouts to avoid overhead
+            if rollout_idx % 10 == 0:
+                gc.collect()
+
+        except Exception as e:
+            logger.debug(f"Non-critical cleanup error for rollout {rollout_idx}: {e}")
+
     def init_agents_and_envs(self,mode="train",step_idx=0):
         self.multi_logger = get_multi_logger(experiment_name=self.experiment_name)
         self.timer.checkpoint("Starting init_agents_and_envs")
@@ -441,6 +459,12 @@ class MultiAgentsExecutionEngineAutoEvol:
             )
             tokenized_trajectories = []
             mas_execution_success = False
+        finally:
+            # Additional cleanup for any lingering resources after step
+            try:
+                await self._cleanup_after_step(rollout_idx)
+            except Exception as cleanup_err:
+                logger.debug(f"Cleanup warning for rollout {rollout_idx}: {cleanup_err}")
             
 
         # Step 7: Merge MAS generation DataProto with tokenized trajectories DataProtos

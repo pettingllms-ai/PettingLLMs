@@ -109,9 +109,11 @@ def _convert_sharegpt_with_token_ids_to_dataproto(
     conversations = sharegpt_data.get("conversations", [])
 
     # Parse conversations into prompt-response pairs
+    # Mimic AG2/AutoGen behavior: accumulate conversation history
+    # Each trajectory includes ALL previous messages up to that point
     system_message = ""
     conversation_pairs = []
-    current_prompt_messages = []
+    current_history = []  # Accumulate all user/assistant messages
 
     for msg in conversations:
         role = msg["from"]
@@ -119,19 +121,22 @@ def _convert_sharegpt_with_token_ids_to_dataproto(
 
         if role == "system":
             system_message = content
-        elif role == "human":
-            current_prompt_messages.append({"role": "user", "content": content})
-        elif role == "gpt":
-            # This is a response with token_ids
-            if current_prompt_messages:
+        elif role == "human" or role == "user":
+            # Add user message to history
+            current_history.append({"role": "user", "content": content})
+        elif role == "gpt" or role == "assistant":
+            # Create a trajectory with all history up to this point
+            # This matches how AG2 sends messages to the LLM
+            if current_history:
                 conversation_pairs.append({
-                    "prompt_messages": current_prompt_messages.copy(),
+                    "prompt_messages": current_history.copy(),  # All history up to this point
                     "response": content,
                     "token_ids": msg.get("token_ids", [])
                 })
-                current_prompt_messages.append({"role": "assistant", "content": content})
+                # Add this assistant response to history for next turn
+                current_history.append({"role": "assistant", "content": content})
             else:
-                logger.warning("Found GPT response without preceding prompt, skipping")
+                logger.warning("Found GPT response without any user message in history, skipping")
 
     # Process each prompt-response pair
     for pair in conversation_pairs:
@@ -273,9 +278,11 @@ def _tokenize_sharegpt_to_dataproto(
     conversations = sharegpt_data.get("conversations", [])
 
     # Parse conversations into prompt-response pairs
+    # Mimic AG2/AutoGen behavior: accumulate conversation history
+    # Each trajectory includes ALL previous messages up to that point
     system_message = ""
     conversation_pairs = []
-    current_prompt_messages = []
+    current_history = []  # Accumulate all user/assistant messages
 
     for msg in conversations:
         role = msg["from"]
@@ -283,19 +290,21 @@ def _tokenize_sharegpt_to_dataproto(
 
         if role == "system":
             system_message = content
-        elif role == "human":
-            current_prompt_messages.append({"role": "user", "content": content})
-        elif role == "gpt":
-            # This is a response - create a pair
-            if current_prompt_messages:
+        elif role == "human" or role == "user":
+            # Add user message to history
+            current_history.append({"role": "user", "content": content})
+        elif role == "gpt" or role == "assistant":
+            # Create a trajectory with all history up to this point
+            # This matches how AG2 sends messages to the LLM
+            if current_history:
                 conversation_pairs.append({
-                    "prompt_messages": current_prompt_messages.copy(),
+                    "prompt_messages": current_history.copy(),  # All history up to this point
                     "response": content
                 })
-                # Add this response to the history for the next turn
-                current_prompt_messages.append({"role": "assistant", "content": content})
+                # Add this assistant response to history for next turn
+                current_history.append({"role": "assistant", "content": content})
             else:
-                logger.warning("Found GPT response without preceding prompt, skipping")
+                logger.warning("Found GPT response without any user message in history, skipping")
 
     # Tokenize each prompt-response pair
     for pair in conversation_pairs:

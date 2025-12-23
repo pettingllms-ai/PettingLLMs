@@ -136,7 +136,7 @@ actor_rollout_ref:
     layered_summon: False # for huge model, layered summon can save memory (prevent OOM) but make it slower
     tensor_model_parallel_size: 1
     max_num_batched_tokens: 65536 #
-    max_model_len: 2048
+    max_model_len: 8192  # Increased to accommodate max_prompt_length(2048) + max_response_length(4096) + margin
     max_num_seqs: 128
     data_parallel_size: 1
     log_prob_micro_batch_size: 1 # will be deprecated, use log_prob_micro_batch_size_per_gpu

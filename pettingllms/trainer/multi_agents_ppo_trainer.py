@@ -598,7 +598,32 @@ class MultiAgentsPPOTrainer:
                         self.agent_execution_engine.use_lora_for_generation = True
                         
                     gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list,rollout_mode=self.config.get("rollout_mode","tree")))
-                    
+
+                    # CRITICAL FIX: Reset prefix cache to free all KV cache blocks before sleep
+                    # This is essential for autoevol where mas.py creates external OpenAI client requests
+                    # that may leave KV cache blocks allocated. We force reset to ensure clean sleep/wake.
+                    print(f"[DEBUG] Resetting prefix cache to free KV blocks before sleep...")
+                    for model_name, rollout_engine in self.rollout_engine_dict.items():
+                        try:
+                            # Get the vLLM inference engine from rollout engine
+                            inference_engine = getattr(rollout_engine, 'inference_engine', None)
+                            if inference_engine is not None and hasattr(inference_engine, 'reset_prefix_cache'):
+                                # Reset prefix cache to free all KV cache blocks
+                                try:
+                                    loop = asyncio.get_event_loop()
+                                    if loop.is_running():
+                                        import concurrent.futures
+                                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                                            future = executor.submit(asyncio.run, inference_engine.reset_prefix_cache())
+                                            future.result(timeout=10)
+                                    else:
+                                        loop.run_until_complete(inference_engine.reset_prefix_cache())
+                                    print(f"[DEBUG] Successfully reset prefix cache for {model_name}")
+                                except Exception as e:
+                                    print(f"[WARNING] Failed to reset prefix cache for {model_name}: {e}")
+                        except Exception as e:
+                            print(f"[WARNING] Error accessing inference engine for {model_name}: {e}")
+
                     # Always sleep after trajectory collection to maintain strict pairing
                     for model_name,rollout_engine in self.rollout_engine_dict.items():
                         rollout_engine.sleep()
@@ -1104,7 +1129,6 @@ class MultiAgentsPPOTrainer:
 
             # Clean up aiohttp sessions
             try:
-                import asyncio
                 from pettingllms.trainer.async_generate import cleanup_shared_session
 
                 # Try to get the current event loop, or create a new one if needed

@@ -5,6 +5,7 @@ import re
 import os
 import subprocess
 import asyncio
+import warnings
 import numpy as np
 import torch
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
@@ -14,9 +15,12 @@ from verl.utils.torch_functional import pad_sequence_to_length
 from verl.utils.model import compute_position_id_with_mask
 from tensordict import TensorDict
 
-# Suppress AutoGen/AG2 logging warnings
+# Suppress AutoGen/AG2 logging warnings and aiohttp resource warnings
 logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
 logging.getLogger("autogen").setLevel(logging.ERROR)
+logging.getLogger("aiohttp").setLevel(logging.ERROR)
+# Suppress ResourceWarning for unclosed aiohttp sessions
+warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*")
 
 logger = logging.getLogger(__name__)
 from pettingllms.multi_agent_env.autoevol.reward_function import REWARD_FUNCTIONS
@@ -36,21 +40,15 @@ class MASGenerator(Agent):
 
 
     def update_from_env(self, env_data: Env):
-        """Update agent from environment data and generate Qwen-formatted prompt"""
+        """Update agent from environment data and generate prompt"""
         self.env_data = env_data
 
-        # Get code generation prompt
+        # Pass raw text only - let convert_prompt_to_dpr handle chat template formatting
+        # Do NOT pre-format with chat template here, otherwise it will be double-templated
         user_prompt_text = env_data.state.problem
         system_prompt_text = "You are an expert in designing Multi-Agent System workflows."
 
-        # Format with Qwen chat template
-        prompt_text = (
-            f"<|im_start|>system\n{system_prompt_text}<|im_end|>\n"
-            f"<|im_start|>user\n{user_prompt_text}<|im_end|>\n"
-            "<|im_start|>assistant\n"
-        )
-
-        self.current_prompt = {"text": prompt_text, "image": None}
+        self.current_prompt = {"text": user_prompt_text, "image": None, "system": system_prompt_text}
 
 
 
@@ -101,7 +99,7 @@ class MASGenerator(Agent):
 
         Args:
             code: The generated Python code containing llm_config
-            llm_config: Dictionary with keys: server_address, model_name, api_key, temperature
+            llm_config: Dictionary with keys: server_address, model_name, api_key, temperature, max_tokens, timeout
 
         Returns:
             Modified code with replaced llm_config
@@ -111,6 +109,10 @@ class MASGenerator(Agent):
         model_name = llm_config.get("model_name", "gpt-4")
         api_key = llm_config.get("api_key", "")
         temperature = llm_config.get("temperature", 0.2)
+        # Allow configurable max_tokens and timeout with safe defaults
+        # NOTE: timeout is for LLM API requests (OpenAI/vLLM), not subprocess execution timeout
+        max_tokens = llm_config.get("max_tokens", 4096)
+        timeout = llm_config.get("timeout", 600)
 
         # Ensure server_address has http:// prefix and /v1 suffix
         if server_address and not server_address.startswith(('http://', 'https://')):
@@ -120,29 +122,85 @@ class MASGenerator(Agent):
         if server_address and not server_address.endswith('/v1'):
             server_address = f"{server_address}/v1"
 
-        # Build the replacement llm_config string
+        # Build the replacement llm_config string with max_tokens and timeout
+        # AG2 (AutoGen) supports max_tokens and timeout parameters in llm_config
+        # Note: extra_body must be inside config_list item, not at top level
         new_llm_config = f'''llm_config = {{
     "config_list": [{{
         "model": "{model_name}",
         "api_key": "{api_key}",
-        "base_url": "{server_address}"
+        "base_url": "{server_address}",
+        "extra_body": {{
+            "chat_template_kwargs": {{
+                "enable_thinking": False
+            }}
+        }}
     }}],
     "temperature": {temperature},
+    "max_tokens": {max_tokens},
+    "timeout": {timeout},
 }}'''
 
-        # Pattern to match llm_config = { ... } including nested braces
-        # This pattern matches from 'llm_config =' to the closing '}' that matches the opening '{'
-        pattern = r'llm_config\s*=\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}'
-
-        # Replace the llm_config
-        modified_code = re.sub(pattern, new_llm_config, code, count=1, flags=re.DOTALL)
+        # Use brace counting to find and replace all llm_config definitions
+        # This is more robust than regex for nested structures
+        modified_code = self._replace_all_llm_configs(code, new_llm_config)
 
         if modified_code == code:
             logger.warning("Failed to replace llm_config in generated code - pattern not found")
         else:
-            logger.info(f"Replaced llm_config with: model={model_name}, base_url={server_address}")
+            logger.info(f"Replaced llm_config(s) with: model={model_name}, base_url={server_address}, max_tokens={max_tokens}, timeout={timeout}s")
 
         return modified_code
+
+    def _replace_all_llm_configs(self, code: str, new_llm_config: str) -> str:
+        """
+        Replace all llm_config = {...} definitions in code using brace counting.
+        More robust than regex for arbitrarily nested structures.
+        """
+        result = []
+        i = 0
+        replacement_count = 0
+
+        while i < len(code):
+            # Look for 'llm_config' followed by optional whitespace and '='
+            if code[i:].startswith('llm_config'):
+                # Check if this is actually an assignment (not part of another word)
+                # Look for '=' after 'llm_config' with optional whitespace
+                j = i + len('llm_config')
+                while j < len(code) and code[j] in ' \t\n':
+                    j += 1
+
+                if j < len(code) and code[j] == '=':
+                    # Skip '=' and whitespace to find '{'
+                    j += 1
+                    while j < len(code) and code[j] in ' \t\n':
+                        j += 1
+
+                    if j < len(code) and code[j] == '{':
+                        # Found 'llm_config = {', now find the matching '}'
+                        brace_count = 1
+                        k = j + 1
+                        while k < len(code) and brace_count > 0:
+                            if code[k] == '{':
+                                brace_count += 1
+                            elif code[k] == '}':
+                                brace_count -= 1
+                            k += 1
+
+                        if brace_count == 0:
+                            # Found complete llm_config definition, replace it
+                            result.append(new_llm_config)
+                            i = k
+                            replacement_count += 1
+                            continue
+
+            result.append(code[i])
+            i += 1
+
+        if replacement_count > 0:
+            logger.info(f"Replaced {replacement_count} llm_config definition(s)")
+
+        return ''.join(result)
 
     async def step(self, env_data: Env, env_worker: Any = None, output_dir: str = None,
                    server_address: str = None, model_name: str = None, tokenizer=None,
@@ -183,12 +241,16 @@ class MASGenerator(Agent):
 
         # Add logging suppression at the beginning of generated code
         logging_suppression_code = """
-# Suppress AutoGen/AG2 logging warnings
+# Suppress AutoGen/AG2 logging warnings and aiohttp resource warnings
 import logging
+import warnings
 logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
 logging.getLogger("autogen").setLevel(logging.ERROR)
 logging.getLogger("openai").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("aiohttp").setLevel(logging.ERROR)
+# Suppress ResourceWarning for unclosed sessions
+warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*")
 
 """
 
@@ -213,6 +275,58 @@ except Exception as e:
     # Silently fail - don't interrupt workflow execution
     print(f"\\n[Warning: Failed to save executor conversations: {{e}}]")
     pass
+
+# Clean up AG2/OpenAI resources for this execution only (won't affect next execution)
+try:
+    # Close AG2/AutoGen OpenAIWrapper clients used in this session
+    try:
+        from autogen.oai.client import OpenAIWrapper
+        # Close all cached clients in OpenAIWrapper
+        if hasattr(OpenAIWrapper, '_clients') and OpenAIWrapper._clients:
+            for client_key, client in list(OpenAIWrapper._clients.items()):
+                try:
+                    if hasattr(client, '_client') and client._client is not None:
+                        # Close the underlying httpx client
+                        if hasattr(client._client, 'close'):
+                            client._client.close()
+                except:
+                    pass
+            OpenAIWrapper._clients.clear()
+    except:
+        pass
+
+    # Close OpenAI SDK's default sync client if it exists
+    try:
+        import openai
+        if hasattr(openai, '_default_client') and openai._default_client is not None:
+            openai._default_client.close()
+            openai._default_client = None
+        # Also close async client if exists
+        if hasattr(openai, '_default_async_client') and openai._default_async_client is not None:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(openai._default_async_client.close())
+                else:
+                    loop.run_until_complete(openai._default_async_client.close())
+            except:
+                pass
+            openai._default_async_client = None
+    except:
+        pass
+
+    # Close httpx default client if it was created
+    try:
+        import httpx
+        if hasattr(httpx, '_client') and httpx._client is not None:
+            httpx._client.close()
+            httpx._client = None
+    except:
+        pass
+
+except:
+    pass
 """
         full_code = logging_suppression_code + self.generated_code + "\n" + trajectory_output_code
 
@@ -234,7 +348,10 @@ except Exception as e:
             with open(mas_py_path, 'r') as f:
                 mas_code = f.read()
 
-            execution_timeout = 300.0
+            # NOTE: Two different timeout values:
+            # 1. execution_timeout: subprocess execution timeout (how long to wait for mas.py to finish)
+            # 2. llm_config['timeout']: LLM API request timeout (set in _replace_llm_config_in_code)
+            execution_timeout = 600.0
 
             # Execute code using Ray worker or subprocess
             if env_worker is not None:
@@ -247,11 +364,15 @@ except Exception as e:
                 # Check for Ray execution errors
                 if isinstance(stdout, str):
                     if stdout.startswith("error:"):
-                        logger.warning(f"Ray execution failed (ignoring error): {stdout[:200]}")
                         stderr, stdout = stdout, ""
+                        # Check if this is an LLM API timeout error (llm_config issue)
+                        if "APITimeoutError" in stderr or "Request timed out" in stderr or "OpenAI API call timed out" in stderr:
+                            logger.warning(f"LLM API timeout error (llm_config timeout too small): {stderr[:300]}")
+                        else:
+                            logger.warning(f"Ray execution failed: {stderr[:200]}")
                         mas_execution_success = False
                     elif stdout == "timeout":
-                        logger.warning(f"Ray execution timed out for rollout {self.rollout_idx}")
+                        logger.warning(f"Subprocess execution timed out (execution_timeout={execution_timeout}s exceeded)")
                         mas_execution_success = False
                     else:
                         mas_execution_success = True
@@ -287,14 +408,25 @@ except Exception as e:
                         env=env
                     )
                     stdout, stderr = result.stdout, result.stderr
-                    mas_execution_success = (result.returncode == 0)
+                    
+                    # Check if execution failed
+                    if result.returncode != 0:
+                        # Distinguish between LLM API timeout and other errors
+                        if stderr and ("APITimeoutError" in stderr or "Request timed out" in stderr or "OpenAI API call timed out" in stderr):
+                            logger.warning(f"LLM API timeout error (llm_config timeout too small, not subprocess timeout): {stderr[:300]}")
+                        else:
+                            logger.warning(f"MAS execution failed with returncode {result.returncode}: {stderr[:300]}")
+                        mas_execution_success = False
+                    else:
+                        mas_execution_success = True
+                        
                 except subprocess.TimeoutExpired as te:
-                    logger.warning(f"Subprocess execution timed out for rollout {self.rollout_idx}")
+                    logger.warning(f"Subprocess execution timed out (execution_timeout={execution_timeout}s exceeded)")
                     stdout = te.stdout if te.stdout else ""
-                    stderr = te.stderr if te.stderr else "Timeout"
+                    stderr = te.stderr if te.stderr else "Subprocess timeout"
                     mas_execution_success = False
                 except Exception as e:
-                    logger.warning(f"Subprocess execution error (ignoring): {e}")
+                    logger.warning(f"Subprocess execution error: {e}")
                     stdout = ""
                     stderr = str(e)
                     mas_execution_success = False
@@ -399,6 +531,47 @@ except Exception as e:
         except Exception as e:
             logger.warning(f"Error executing MAS (ignoring): {e}")
             return [], 0.0, False
+        finally:
+            # Clean up AG2/OpenAI resources to prevent memory leaks
+            await self._cleanup_ag2_resources()
+
+    async def _cleanup_ag2_resources(self):
+        """
+        Clean up AG2/AutoGen and OpenAI client resources to prevent memory leaks.
+        This should be called after each step() to release httpx/aiohttp connections.
+        Note: The main cleanup happens in the subprocess (trajectory_output_code),
+        this is an additional safety cleanup in the parent process.
+        """
+        try:
+            # Close OpenAI SDK's default clients in parent process (if any were created)
+            try:
+                import openai
+                if hasattr(openai, '_default_client') and openai._default_client is not None:
+                    openai._default_client.close()
+                    openai._default_client = None
+                if hasattr(openai, '_default_async_client') and openai._default_async_client is not None:
+                    await openai._default_async_client.close()
+                    openai._default_async_client = None
+            except Exception:
+                pass
+
+            # Clear AG2/AutoGen OpenAIWrapper caches in parent process
+            try:
+                from autogen.oai.client import OpenAIWrapper
+                if hasattr(OpenAIWrapper, '_clients') and OpenAIWrapper._clients:
+                    for client_key, client in list(OpenAIWrapper._clients.items()):
+                        try:
+                            if hasattr(client, '_client') and client._client is not None:
+                                if hasattr(client._client, 'close'):
+                                    client._client.close()
+                        except Exception:
+                            pass
+                    OpenAIWrapper._clients.clear()
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.debug(f"Cleanup warning (non-critical): {e}")
 
 
 

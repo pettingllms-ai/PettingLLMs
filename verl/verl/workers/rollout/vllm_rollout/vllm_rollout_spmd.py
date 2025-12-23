@@ -315,35 +315,10 @@ class vLLMRollout(BaseRollout):
 
         lora_requests = None
         if self.lora_kwargs:
-            # Check if batch contains per-sample lora_ids for multi-agent LoRA
-            if "lora_ids" in non_tensor_batch and non_tensor_batch["lora_ids"] is not None:
-                # Multi-agent LoRA mode: use per-sample lora_id
-                lora_ids_batch = non_tensor_batch["lora_ids"]
-                lora_requests = []
-                for lora_id in lora_ids_batch:
-                    # Extract integer lora_id from string format like "agent_xxx_lora_0" or direct int
-                    if isinstance(lora_id, (int, np.integer)):
-                        lora_int_id = int(lora_id)
-                    elif isinstance(lora_id, str):
-                        # Parse from formats like "agent_reasoning_generator_lora_0" -> 0
-                        if 'lora_' in lora_id:
-                            lora_int_id = int(lora_id.split('lora_')[-1])
-                        else:
-                            lora_int_id = int(lora_id)
-                    else:
-                        lora_int_id = 0
-
-                    lora_requests.append(LoRARequest(
-                        lora_name=f"lora_{lora_int_id}",
-                        lora_int_id=lora_int_id,
-                        lora_path="/simon-stub-path"
-                    ))
-            else:
-                # Legacy single LoRA mode: use first available LoRA for all samples
-                lora_int_ids = list(self.inference_engine.llm_engine.list_loras())
-                if len(lora_int_ids) > 0:
-                    lora_int_id=lora_int_ids[0]
-                    lora_requests = [LoRARequest(lora_name=f"lora_{lora_int_id}",lora_int_id=lora_int_id,lora_path="/simon-stub-path")] * batch_size
+            lora_int_ids = list(self.inference_engine.llm_engine.list_loras())
+            if len(lora_int_ids) > 0:
+                lora_int_id=lora_int_ids[0]
+                lora_requests = [LoRARequest(lora_name=f"{lora_int_id}",lora_int_id=lora_int_id,lora_path="/simon-stub-path")] * batch_size
 
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
@@ -433,11 +408,6 @@ class vLLMAsyncRollout:
         self.inference_engine: WorkerWrapperBase = None
         self.sharding_manager = None
         self.is_sleep = False
-        # Store multi-LoRA configuration
-        self.multi_lora = False
-        self.lora_num = 1
-        # Track loaded LoRA adapters for OpenAI API registration
-        self.loaded_lora_requests = {}
 
     def init_worker(self, all_kwargs: List[Dict[str, Any]]):
         """Initialize worker engine."""
@@ -445,21 +415,6 @@ class vLLMAsyncRollout:
         all_kwargs[0]["local_rank"] = 0
 
         self.vllm_config = all_kwargs[0]["vllm_config"]
-
-        # Extract multi-LoRA configuration from vllm_config or all_kwargs
-        # Note: vLLM v1 uses max_loras > 0 to indicate LoRA is enabled (no explicit enable_lora flag)
-        if hasattr(self.vllm_config.model_config, "max_loras"):
-            max_loras = self.vllm_config.model_config.max_loras
-            enable_lora = max_loras > 0
-            self.multi_lora = enable_lora and max_loras > 1
-            self.lora_num = max_loras if self.multi_lora else 1
-        else:
-            # Fallback to checking all_kwargs
-            self.multi_lora = all_kwargs[0].get("multi_lora", False)
-            self.lora_num = all_kwargs[0].get("lora_num", 1)
-        
-        logger.info(f"vLLMAsyncRollout initialized with multi_lora={self.multi_lora}, lora_num={self.lora_num}")
-        
         self.inference_engine = WorkerWrapperBase(vllm_config=self.vllm_config)
         self.inference_engine.init_worker(all_kwargs)
 
@@ -469,12 +424,6 @@ class vLLMAsyncRollout:
         # inference engine is intialized now, update sharding manager
         self.sharding_manager.inference_engine = self.inference_engine
         self.sharding_manager.model_runner = self.inference_engine.worker.model_runner
-        
-        # Pass multi-LoRA configuration to sharding_manager
-        if hasattr(self, 'multi_lora') and hasattr(self, 'lora_num'):
-            self.sharding_manager.multi_lora = self.multi_lora
-            self.sharding_manager.lora_num = self.lora_num
-            logger.info(f"Updated sharding_manager with multi_lora={self.multi_lora}, lora_num={self.lora_num}")
 
     def sleep(self, *args, **kwargs):
         """Offload model weights and discard kv cache."""
@@ -487,39 +436,8 @@ class vLLMAsyncRollout:
         """Load model weights and build kv cache."""
         if not self.is_sleep:
             return
-        # Pass multi-LoRA configuration to __enter__
-        self.sharding_manager.__enter__(multi_lora=self.multi_lora, lora_num=self.lora_num)  # pylint: disable=C2801
+        self.sharding_manager.__enter__()  # pylint: disable=C2801
         self.is_sleep = False
-
-    def add_lora(self, lora_request):
-        """Add a LoRA adapter to the engine and track it for OpenAI API registration.
-
-        Args:
-            lora_request: LoRARequest or TensorLoRARequest object
-
-        Returns:
-            bool: True if the LoRA adapter was successfully added
-        """
-        # Add to the underlying vLLM engine
-        success = self.inference_engine.worker.add_lora(lora_request)
-
-        if success:
-            # Track the LoRA request for OpenAI API layer registration
-            self.loaded_lora_requests[lora_request.lora_name] = lora_request
-            logger.info(f"✓ vLLMAsyncRollout: Added LoRA adapter '{lora_request.lora_name}' "
-                       f"(ID: {lora_request.lora_int_id}) from path: {lora_request.lora_path}")
-        else:
-            logger.warning(f"✗ vLLMAsyncRollout: Failed to add LoRA adapter '{lora_request.lora_name}'")
-
-        return success
-
-    def list_loras(self):
-        """List all loaded LoRA adapters.
-
-        Returns:
-            dict: Dictionary mapping lora_name to LoRARequest objects
-        """
-        return self.loaded_lora_requests
 
     def execute_method(self, method: Union[str, bytes], *args, **kwargs):
         if method == "init_worker":
@@ -530,9 +448,5 @@ class vLLMAsyncRollout:
             return self.sleep(*args, **kwargs)
         elif method == "wake_up":
             return self.wake_up(*args, **kwargs)
-        elif method == "add_lora":
-            return self.add_lora(*args, **kwargs)
-        elif method == "list_loras":
-            return self.list_loras(*args, **kwargs)
         else:
             return self.inference_engine.execute_method(method, *args, **kwargs)
