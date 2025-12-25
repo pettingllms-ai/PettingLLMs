@@ -18,7 +18,7 @@ from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from verl.trainer.ppo.ray_trainer import (
-    
+
     RayWorkerGroup,
     ResourcePoolManager,
     Role,
@@ -28,6 +28,8 @@ from verl.trainer.ppo.ray_trainer import (
     compute_timing_metrics,
     reduce_metrics,
 )
+from pettingllms.verl.ray_trainer import apply_kl_penalty
+from verl.trainer.ppo import core_algos
 
 from pettingllms.verl.ray_trainer import RayPPOTrainer
 from verl.utils.torch_functional import pad_sequence_to_length
@@ -383,7 +385,9 @@ class MultiAgentsPPOTrainer:
             batch = batch.union(old_log_prob)
 
 
-        if ppo_trainer.use_reference_policy:
+        # Compute reference log_prob if needed for KL loss or KL in reward
+        need_ref_log_prob = ppo_trainer.use_reference_policy or ppo_trainer.config.algorithm.use_kl_in_reward
+        if need_ref_log_prob:
             # compute reference log_prob
             with simple_timer("ref", timing_raw):
                 if not ppo_trainer.ref_in_actor:
@@ -397,6 +401,22 @@ class MultiAgentsPPOTrainer:
             with simple_timer("values", timing_raw):
                 values = ppo_trainer.critic_wg.compute_values(batch)
                 batch = batch.union(values)
+
+        # Apply KL penalty to rewards if enabled
+        if ppo_trainer.config.algorithm.use_kl_in_reward:
+            with simple_timer("kl_penalty", timing_raw):
+                # Get or create KL controller
+                if not hasattr(ppo_trainer, 'kl_ctrl_in_reward'):
+                    ppo_trainer.kl_ctrl_in_reward = core_algos.get_kl_controller(
+                        ppo_trainer.config.algorithm.kl_ctrl
+                    )
+                batch, kl_metrics = apply_kl_penalty(
+                    batch,
+                    kl_ctrl=ppo_trainer.kl_ctrl_in_reward,
+                    kl_penalty=ppo_trainer.config.algorithm.kl_penalty
+                )
+                batch.meta_info["metrics"].update(kl_metrics)
+                colorful_print(f"Applied KL penalty: {kl_metrics}", "cyan")
 
         with simple_timer("adv", timing_raw):
 
