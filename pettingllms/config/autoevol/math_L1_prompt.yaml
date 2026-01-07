@@ -35,9 +35,9 @@ agent_policy_configs:
         min_p: 0.0
       val_llm_config:
         enable_thinking: false
-        temperature: 0.2
-        top_p: 0.95
-        top_k: 20
+        temperature: 0
+        top_p: 1
+        top_k: -1
         min_p: 0.0
 multi_agent_interaction:
   turn_order:

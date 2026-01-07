@@ -45,8 +45,9 @@ class MultiAgentsPPOTrainer:
         self,
         config,
         tokenizer_dict,
-        role_worker_mapping: dict[Role, WorkerType],
-        resource_pool_manager: ResourcePoolManager,
+        tokenizer_path_dict=None,
+        role_worker_mapping: dict[Role, WorkerType] = None,
+        resource_pool_manager: ResourcePoolManager = None,
         ray_worker_group_cls: RayWorkerGroup = RayWorkerGroup,
         agent_policy_mapping: dict = None,
         processor_dict=None,
@@ -54,6 +55,7 @@ class MultiAgentsPPOTrainer:
         self.config = config
         self.processor_dict = processor_dict or {}
         self.tokenizer_dict = tokenizer_dict
+        self.tokenizer_path_dict = tokenizer_path_dict or {}
         self.role_worker_mapping = role_worker_mapping
         self.resource_pool_manager = resource_pool_manager
         self.ray_worker_group_cls = ray_worker_group_cls
@@ -189,11 +191,15 @@ class MultiAgentsPPOTrainer:
     def init_multi_agent_sys_execution_engine(self):
         self.rollout_engine_dict = {}
         self.tokenizer_dict = {}
+        self.execution_engine_tokenizer_path_dict = {}
         self.server_address_dict = {}
-        
+
         for model_name, trainer in self.ppo_trainer_dict.items():
             self.rollout_engine_dict[model_name] = trainer.async_rollout_manager
             self.tokenizer_dict[model_name] = trainer.tokenizer
+            # Get tokenizer_path from initial tokenizer_path_dict
+            if model_name in self.tokenizer_path_dict:
+                self.execution_engine_tokenizer_path_dict[model_name] = self.tokenizer_path_dict[model_name]
             rollout_engine = trainer.async_rollout_manager
             server_address_list = getattr(rollout_engine, "server_addresses", [])
             self.server_address_dict[model_name] = server_address_list
@@ -222,6 +228,7 @@ class MultiAgentsPPOTrainer:
                 config=self.config,
                 ppo_trainer_config_dict=self.ppo_trainer_config_dict,
                 tokenizer_dict=self.tokenizer_dict,
+                tokenizer_path_dict=self.execution_engine_tokenizer_path_dict,
                 processor_dict=self.processor_dict,
                 server_address_dict=self.server_address_dict,
                 agent_policy_mapping=self.agent_policy_mapping,

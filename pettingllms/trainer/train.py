@@ -121,28 +121,30 @@ def train_multi_agents(config):
     multi_modal = getattr(config, 'multi_modal', False)
     
     tokenizer_dict = {}
+    tokenizer_path_dict = {}
     processor_dict = {}
     ppo_trainer_config_dict = {}
     model_num = 0
-    
 
-        
+
+
     for model_key, model_config in config.models.items():
         model_num += 1
         model_path = model_config.path
         model_name = model_config.name
-        
+
         print(f"Processing model: {model_name} at path: {model_path}")
-        
+
         local_path = copy_local_path_from_hdfs(model_path)
-        
+
         trust_remote_code = getattr(model_config, 'trust_remote_code', False)
         if hasattr(config, 'resource') and hasattr(config.resource, 'trust_remote_code'):
             trust_remote_code = config.resource.trust_remote_code
-        
+
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         processor = hf_processor(local_path, trust_remote_code=trust_remote_code)
         tokenizer_dict[model_name] = tokenizer
+        tokenizer_path_dict[model_name] = local_path  # Store tokenizer path directly
         if multi_modal:
             processor_dict[model_name] = processor
         ppo_trainer_config_dict[model_name] = model_config.ppo_trainer_config
@@ -172,6 +174,7 @@ def train_multi_agents(config):
     trainer = MultiAgentsPPOTrainer(
         config=config,
         tokenizer_dict=tokenizer_dict,
+        tokenizer_path_dict=tokenizer_path_dict,
         processor_dict=processor_dict,
         role_worker_mapping=role_worker_mapping,
         resource_pool_manager=managers,

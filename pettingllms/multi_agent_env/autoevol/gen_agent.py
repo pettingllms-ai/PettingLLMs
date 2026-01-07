@@ -6,6 +6,7 @@ import os
 import subprocess
 import asyncio
 import warnings
+import pickle
 import numpy as np
 import torch
 from pettingllms.multi_agent_env.base.agent import Agent, AgentData
@@ -14,7 +15,6 @@ from verl.protocol import DataProto
 from verl.utils.torch_functional import pad_sequence_to_length
 from verl.utils.model import compute_position_id_with_mask
 from tensordict import TensorDict
-
 # Suppress AutoGen/AG2 logging warnings and aiohttp resource warnings
 logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
 logging.getLogger("autogen").setLevel(logging.ERROR)
@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.
 
 logger = logging.getLogger(__name__)
 from pettingllms.multi_agent_env.autoevol.reward_function import REWARD_FUNCTIONS
-from pettingllms.multi_agent_env.autoevol.utils import load_and_tokenize_jsonl
+from pettingllms.multi_agent_env.autoevol.data_utils import load_and_tokenize_jsonl
 
 class MASGenerator(Agent):
     """MAS Designer Agent - designs multi-agent systems"""
@@ -42,10 +42,7 @@ class MASGenerator(Agent):
     def update_from_env(self, env_data: Env):
         """Update agent from environment data and generate prompt"""
         self.env_data = env_data
-
-        # Pass raw text only - let convert_prompt_to_dpr handle chat template formatting
-        # Do NOT pre-format with chat template here, otherwise it will be double-templated
-        user_prompt_text = env_data.state.problem
+        user_prompt_text = "Design Multi Agent System for the Question:" + env_data.state.problem
         system_prompt_text = "You are an expert in designing Multi-Agent System workflows."
 
         self.current_prompt = {"text": user_prompt_text, "image": None, "system": system_prompt_text}
@@ -54,557 +51,449 @@ class MASGenerator(Agent):
 
     def update_from_model(self, response: str):
         code = ""
+        self.current_response = response
 
         # Strategy 1: Try <code>...</code> tags first
         code_match = re.search(r"<code>\s*(.*?)\s*</code>", response, re.DOTALL)
         if code_match:
-            code = code_match.group(1).strip()
-        else:
-            # Strategy 2: Try ```python...``` code blocks
-            matches = re.findall(r"```python\s*(.*?)\s*```", response, re.DOTALL)
-            if matches:
-                code = matches[-1].strip()
+            code_content = code_match.group(1).strip()
+            # Check if the content inside <code> tags contains ```python...``` blocks
+            python_match = re.search(r"```python\s*(.*?)\s*```", code_content, re.DOTALL)
+            if python_match:
+                code = python_match.group(1).strip()
             else:
-                # Strategy 3: Try just ``` code blocks (no language specified)
-                matches = re.findall(r"```\s*(.*?)\s*```", response, re.DOTALL)
-                if matches:
-                    # Filter out non-Python code blocks (e.g., those containing only markdown/text)
-                    python_blocks = [m.strip() for m in matches if 'import' in m or 'def ' in m or 'class ' in m or 'from ' in m]
-                    if python_blocks:
-                        code = python_blocks[-1]
-                    else:
-                        # Fallback to last code block even if we're not sure it's Python
-                        code = matches[-1].strip()
+                # Try just ``` blocks without language specifier
+                generic_match = re.search(r"```\s*(.*?)\s*```", code_content, re.DOTALL)
+                if generic_match:
+                    code = generic_match.group(1).strip()
                 else:
-                    # Strategy 4: As last resort, look for Python-like code patterns
-                    # Look for import statements, function definitions, etc.
-                    import_pattern = r'((?:from|import)\s+\w+.*?(?:\n|$)(?:.*?(?:\n|$))*?)(?=\n\n|\Z)'
-                    import_match = re.search(import_pattern, response, re.MULTILINE | re.DOTALL)
-                    if import_match:
-                        # Found Python code, try to extract a reasonable block
-                        start_pos = import_match.start()
-                        code = response[start_pos:].strip()
-                    else:
-                        code = "# Error: Could not extract code from the model response."
-                        logger.warning("Failed to extract code from model response")
-
+                    # No code blocks inside, use the content as-is
+                    code = code_content
         self.generated_code = code
         self.current_action = code
 
         return self.current_action
-
-    def _replace_llm_config_in_code(self, code: str, llm_config: dict) -> str:
+    async def step(self, env_data: Env, output_dir: str = None,
+                   server_address: str = None, model_name: str = None, 
+                   tokenizer_path: Optional[str] = None,
+                   max_prompt_length: int = 2048, max_response_length: int = 2048,
+                   ppo_trainer_config: Any = None, enable_thinking: bool = False,
+                   step_timeout: float = 600.0, env_worker: Any = None):
         """
-        Replace the llm_config dictionary in generated mas.py code with actual LLM configuration.
+        Generate mas.py, execute it, collect results, and compute reward.
 
         Args:
-            code: The generated Python code containing llm_config
-            llm_config: Dictionary with keys: server_address, model_name, api_key, temperature, max_tokens, timeout
+            env_data: Environment data
+            output_dir: Output directory for generated code
+            server_address: vLLM server address for verl integration
+            model_name: Model name for verl integration
+            tokenizer_path: Path to tokenizer (preferred over extracting from tokenizer object)
+            max_prompt_length: Max prompt length
+            max_response_length: Max response length
+            ppo_trainer_config: PPO trainer config for verl integration
+            enable_thinking: Whether to enable thinking mode
+            step_timeout: Timeout for executing mas.py
+            env_worker: Ray worker for code execution (optional)
 
         Returns:
-            Modified code with replaced llm_config
+            dict: {
+                "workflow_dpr": List of DataProto from workflow execution,
+                "execution_success": bool indicating if execution succeeded,
+                "reward": float reward score,
+                "trajectory": List of DataProto (same as workflow_dpr)
+            }
         """
-        # Extract configuration values
-        server_address = llm_config.get("server_address", "")
-        model_name = llm_config.get("model_name", "gpt-4")
-        api_key = llm_config.get("api_key", "")
-        temperature = llm_config.get("temperature", 0.2)
-        # Allow configurable max_tokens and timeout with safe defaults
-        # NOTE: timeout is for LLM API requests (OpenAI/vLLM), not subprocess execution timeout
-        max_tokens = llm_config.get("max_tokens", 4096)
-        timeout = llm_config.get("timeout", 600)
 
-        # Ensure server_address has http:// prefix and /v1 suffix
-        if server_address and not server_address.startswith(('http://', 'https://')):
-            server_address = f"http://{server_address}"
-
-        # Add /v1 suffix if not present (required for OpenAI SDK compatibility)
-        if server_address and not server_address.endswith('/v1'):
-            server_address = f"{server_address}/v1"
-
-        # Build the replacement llm_config string with max_tokens and timeout
-        # AG2 (AutoGen) supports max_tokens and timeout parameters in llm_config
-        # Note: extra_body must be inside config_list item, not at top level
-        new_llm_config = f'''llm_config = {{
-    "config_list": [{{
-        "model": "{model_name}",
-        "api_key": "{api_key}",
-        "base_url": "{server_address}",
-        "extra_body": {{
-            "chat_template_kwargs": {{
-                "enable_thinking": False
-            }}
-        }}
-    }}],
-    "temperature": {temperature},
-    "max_tokens": {max_tokens},
-    "timeout": {timeout},
-}}'''
-
-        # Use brace counting to find and replace all llm_config definitions
-        # This is more robust than regex for nested structures
-        modified_code = self._replace_all_llm_configs(code, new_llm_config)
-
-        if modified_code == code:
-            logger.warning("Failed to replace llm_config in generated code - pattern not found")
-        else:
-            logger.info(f"Replaced llm_config(s) with: model={model_name}, base_url={server_address}, max_tokens={max_tokens}, timeout={timeout}s")
-
-        return modified_code
-
-    def _replace_all_llm_configs(self, code: str, new_llm_config: str) -> str:
-        """
-        Replace all llm_config = {...} definitions in code using brace counting.
-        More robust than regex for arbitrarily nested structures.
-        """
-        result = []
-        i = 0
-        replacement_count = 0
-
-        while i < len(code):
-            # Look for 'llm_config' followed by optional whitespace and '='
-            if code[i:].startswith('llm_config'):
-                # Check if this is actually an assignment (not part of another word)
-                # Look for '=' after 'llm_config' with optional whitespace
-                j = i + len('llm_config')
-                while j < len(code) and code[j] in ' \t\n':
-                    j += 1
-
-                if j < len(code) and code[j] == '=':
-                    # Skip '=' and whitespace to find '{'
-                    j += 1
-                    while j < len(code) and code[j] in ' \t\n':
-                        j += 1
-
-                    if j < len(code) and code[j] == '{':
-                        # Found 'llm_config = {', now find the matching '}'
-                        brace_count = 1
-                        k = j + 1
-                        while k < len(code) and brace_count > 0:
-                            if code[k] == '{':
-                                brace_count += 1
-                            elif code[k] == '}':
-                                brace_count -= 1
-                            k += 1
-
-                        if brace_count == 0:
-                            # Found complete llm_config definition, replace it
-                            result.append(new_llm_config)
-                            i = k
-                            replacement_count += 1
-                            continue
-
-            result.append(code[i])
-            i += 1
-
-        if replacement_count > 0:
-            logger.info(f"Replaced {replacement_count} llm_config definition(s)")
-
-        return ''.join(result)
-
-    async def step(self, env_data: Env, env_worker: Any = None, output_dir: str = None,
-                   server_address: str = None, model_name: str = None, tokenizer=None,
-                   max_prompt_length: int = 2048, max_response_length: int = 2048,
-                   llm_config_for_mas: dict = None):
-        """
-        Execute MAS Designer step: generate mas.py, run it with vLLM access, calculate reward.
-
-        Returns:
-            Tuple[List[Tuple[DataProto, str]], float, bool]:
-                - tokenized_trajectories: List of (DataProto, response_text) tuples
-                - final_reward: Reward score from task-specific reward function
-                - mas_execution_success: Whether mas.py executed successfully (True/False)
-        """
-        
-
-        # Ensure output directory is provided
-        if output_dir is None:
-            raise ValueError("output_dir must be provided to step()")
+        # Check if current_action is empty
+        if not hasattr(self, 'current_action') or not self.current_action or not self.current_action.strip():
+            logger.warning("current_action is empty, skipping execution")
+            return {
+                "workflow_dpr": [],
+                "execution_success": False,
+                "reward": 0.0,
+                "trajectory": []
+            }
 
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
-
-        # Prepare the code with necessary imports and path setup
-        dyevolve_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # Add environment setup at the beginning of the code
-
-
-
-        # Combine all parts
-        
-
+        response_txt_path = os.path.join(output_dir, "response.txt")
+        with open(response_txt_path, 'w') as f:
+            f.write(self.current_response if hasattr(self, 'current_response') else '')
         # Save generated code to mas.py
         mas_py_path = os.path.join(output_dir, "mas.py")
-        # Use absolute path for trajectory file to avoid path resolution issues
-        self.trajectory_json_path = os.path.abspath(os.path.join(output_dir, "traj.json"))
+        dataproto_pkl_path = os.path.abspath(os.path.join(output_dir, "dataproto.pkl"))
+        output_txt_path = os.path.join(output_dir, "output.txt")
+        # Log the final tokenizer_path for debugging
+        logger.info(f"Using tokenizer_path for mas.py generation: {tokenizer_path}")
 
-        # Add logging suppression at the beginning of generated code
-        logging_suppression_code = """
-# Suppress AutoGen/AG2 logging warnings and aiohttp resource warnings
+        # Add necessary imports and AIClient setup before the generated code
+        setup_code = f"""
+import sys
+import os
+
+# Resolve paths at runtime to avoid hardcoded absolute paths
+here = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(here, "..", "..", ".."))
+
+sys.path.insert(0, here)
+sys.path.insert(0, repo_root)
+
+# Suppress warnings
 import logging
 import warnings
-logging.getLogger("autogen.oai.client").setLevel(logging.ERROR)
 logging.getLogger("autogen").setLevel(logging.ERROR)
-logging.getLogger("openai").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("aiohttp").setLevel(logging.ERROR)
-# Suppress ResourceWarning for unclosed sessions
-warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.*")
+warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# Import necessary modules for verl integration
+from pettingllms.multi_agent_env.autoevol.utils.BaseOpenAI import AIClient
+
+# Debug: Print tokenizer_path for verification
+_tokenizer_path = {repr(tokenizer_path)}
+print(f"[DEBUG] mas.py: tokenizer_path = {{_tokenizer_path}}")
+print(f"[DEBUG] mas.py: tokenizer_path type = {{type(_tokenizer_path)}}")
+
+# Create AIClient with verl integration
+_server_addr = "{server_address}"
+_api_base = _server_addr if _server_addr.startswith('http') else f"http://{{{{_server_addr}}}}"
+ai_client = AIClient(
+    api_base=_api_base,
+    api_key="dummy",
+    chat_model="{model_name or 'default'}",
+    max_answer_tokens={max_response_length},
+    tokenizer_path=_tokenizer_path,
+    server_address=_server_addr,
+    max_prompt_length={max_prompt_length},
+    max_response_length={max_response_length},
+    enable_thinking={str(enable_thinking)},
+    workflow=None  # Will be set after workflow creation
+)
 
 """
 
-        trajectory_output_code = f"""
-# Automatically save executor conversations after workflow execution
+        # Patch the generated code to fix imports and add verl parameters
+        patched_code = self._patch_imports(self.generated_code)
+        patched_code = self._patch_string_escapes(patched_code)
+        patched_code = self._patch_workflow_init(
+            patched_code,
+            server_address,
+            enable_thinking
+        )
+
+        # Add DataProto saving code at the end
+        dataproto_save_code = f"""
+
+
+# Save workflow DataProto for training
 try:
-    from ag2_tracer import get_global_tracker
-    tracker = get_global_tracker()
-    if tracker.agent_conversations:  # Only save if there are conversations
-        import os
-        from datetime import datetime
+    import pickle
 
-        # Use absolute path to avoid cwd-related issues
-        trajectory_file = r'{self.trajectory_json_path}'
+    if 'workflow' in globals() and hasattr(workflow, 'dataproto_list') and workflow.dataproto_list:
+        dataproto_file = r'{dataproto_pkl_path}'
+        os.makedirs(os.path.dirname(dataproto_file), exist_ok=True)
 
-        # Ensure parent directory exists
-        os.makedirs(os.path.dirname(trajectory_file), exist_ok=True)
+        with open(dataproto_file, 'wb') as f:
+            pickle.dump(workflow.dataproto_list, f)
+        print("[SUCCESSSAVED]")
 
-        tracker.save_all(filepath=trajectory_file, append=False)
-        print(f"\\n[Conversation data saved to {{trajectory_file}}]")
 except Exception as e:
-    # Silently fail - don't interrupt workflow execution
-    print(f"\\n[Warning: Failed to save executor conversations: {{e}}]")
-    pass
-
-# Clean up AG2/OpenAI resources for this execution only (won't affect next execution)
-try:
-    # Close AG2/AutoGen OpenAIWrapper clients used in this session
-    try:
-        from autogen.oai.client import OpenAIWrapper
-        # Close all cached clients in OpenAIWrapper
-        if hasattr(OpenAIWrapper, '_clients') and OpenAIWrapper._clients:
-            for client_key, client in list(OpenAIWrapper._clients.items()):
-                try:
-                    if hasattr(client, '_client') and client._client is not None:
-                        # Close the underlying httpx client
-                        if hasattr(client._client, 'close'):
-                            client._client.close()
-                except:
-                    pass
-            OpenAIWrapper._clients.clear()
-    except:
-        pass
-
-    # Close OpenAI SDK's default sync client if it exists
-    try:
-        import openai
-        if hasattr(openai, '_default_client') and openai._default_client is not None:
-            openai._default_client.close()
-            openai._default_client = None
-        # Also close async client if exists
-        if hasattr(openai, '_default_async_client') and openai._default_async_client is not None:
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(openai._default_async_client.close())
-                else:
-                    loop.run_until_complete(openai._default_async_client.close())
-            except:
-                pass
-            openai._default_async_client = None
-    except:
-        pass
-
-    # Close httpx default client if it was created
-    try:
-        import httpx
-        if hasattr(httpx, '_client') and httpx._client is not None:
-            httpx._client.close()
-            httpx._client = None
-    except:
-        pass
-
-except:
-    pass
+    print(f"\\n[ERROR] Failed to save DataProto: {{e}}")
+    import traceback
+    traceback.print_exc()
 """
-        full_code = logging_suppression_code + self.generated_code + "\n" + trajectory_output_code
 
-        # Replace llm_config with actual LLM configuration
-        if llm_config_for_mas is not None:
-            full_code = self._replace_llm_config_in_code(full_code, llm_config_for_mas)
+        # Combine all parts
+        full_code = setup_code + "\n" + patched_code + "\n" + dataproto_save_code
 
-
-
+        # Save to file
         with open(mas_py_path, 'w') as f:
             f.write(full_code)
 
-        logger.info(f"Saved MAS code to {mas_py_path}")
+        logger.info(f"Generated mas.py with verl integration: {mas_py_path}")
 
-        # Run the mas.py file in Ray Docker Worker environment
-        mas_execution_success = False
+        # Execute mas.py and collect results
+        execution_success = False
+        workflow_dataproto_list = []
+        final_answer = ""
+        reward = 0.0
+
         try:
-            # Read and execute the generated MAS code
+            # Use Ray worker for execution (better resource management)
             with open(mas_py_path, 'r') as f:
-                mas_code = f.read()
-
-            # NOTE: Two different timeout values:
-            # 1. execution_timeout: subprocess execution timeout (how long to wait for mas.py to finish)
-            # 2. llm_config['timeout']: LLM API request timeout (set in _replace_llm_config_in_code)
-            execution_timeout = 600.0
-
-            # Execute code using Ray worker or subprocess
-            if env_worker is not None:
-                logger.info(f"Executing MAS code in Ray Docker Worker for rollout {self.rollout_idx}")
-                from pettingllms.multi_agent_env.math.math_worker import get_code_execution_output
-
-                stdout = await get_code_execution_output(code=mas_code, timeout=execution_timeout, ray_actor=env_worker)
-                stderr = ""
-
-                # Check for Ray execution errors
-                if isinstance(stdout, str):
-                    if stdout.startswith("error:"):
-                        stderr, stdout = stdout, ""
-                        # Check if this is an LLM API timeout error (llm_config issue)
-                        if "APITimeoutError" in stderr or "Request timed out" in stderr or "OpenAI API call timed out" in stderr:
-                            logger.warning(f"LLM API timeout error (llm_config timeout too small): {stderr[:300]}")
-                        else:
-                            logger.warning(f"Ray execution failed: {stderr[:200]}")
-                        mas_execution_success = False
-                    elif stdout == "timeout":
-                        logger.warning(f"Subprocess execution timed out (execution_timeout={execution_timeout}s exceeded)")
-                        mas_execution_success = False
-                    else:
-                        mas_execution_success = True
-                else:
-                    mas_execution_success = True
-            else:
-                logger.warning("env_worker is None, falling back to subprocess execution")
-
-                # Setup environment with virtual environment and PYTHONPATH
-                env = os.environ.copy()
-
-                # Get paths
-                workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-                venv_python = os.path.join(workspace_root, "pettingllms_venv/bin/python")
-                autoevol_dir = os.path.dirname(os.path.abspath(__file__))
-
-                # Add autoevol directory to PYTHONPATH for ag2_tools and ag2_tracer
-                if 'PYTHONPATH' in env:
-                    env['PYTHONPATH'] = f"{autoevol_dir}:{env['PYTHONPATH']}"
-                else:
-                    env['PYTHONPATH'] = autoevol_dir
-
-                # Use venv python if available, otherwise use system python
-                python_executable = venv_python if os.path.exists(venv_python) else 'python'
-
-                try:
-                    result = subprocess.run(
-                        [python_executable, mas_py_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=execution_timeout,
-                        cwd=output_dir,
-                        env=env
-                    )
-                    stdout, stderr = result.stdout, result.stderr
-                    
-                    # Check if execution failed
-                    if result.returncode != 0:
-                        # Distinguish between LLM API timeout and other errors
-                        if stderr and ("APITimeoutError" in stderr or "Request timed out" in stderr or "OpenAI API call timed out" in stderr):
-                            logger.warning(f"LLM API timeout error (llm_config timeout too small, not subprocess timeout): {stderr[:300]}")
-                        else:
-                            logger.warning(f"MAS execution failed with returncode {result.returncode}: {stderr[:300]}")
-                        mas_execution_success = False
-                    else:
-                        mas_execution_success = True
-                        
-                except subprocess.TimeoutExpired as te:
-                    logger.warning(f"Subprocess execution timed out (execution_timeout={execution_timeout}s exceeded)")
-                    stdout = te.stdout if te.stdout else ""
-                    stderr = te.stderr if te.stderr else "Subprocess timeout"
-                    mas_execution_success = False
-                except Exception as e:
-                    logger.warning(f"Subprocess execution error: {e}")
-                    stdout = ""
-                    stderr = str(e)
-                    mas_execution_success = False
-
-            # Save execution output to file (both stdout and stderr)
-            try:
-                output_txt_path = os.path.join(output_dir, "output.txt")
-                with open(output_txt_path, 'w') as f:
-                    if stdout:
-                        f.write("=== STDOUT ===\n")
-                        f.write(stdout)
-                    if stderr:
-                        f.write("\n=== STDERR ===\n")
-                        f.write(stderr)
-                    if not stdout and not stderr:
-                        f.write("(No output captured)\n")
-                logger.info(f"Saved execution output to {output_txt_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save execution output: {e}")
-
-            # Only process output if execution was successful
-            summary = ""
-            trajectory_store = {}
-            tokenized_trajectories = []
-            final_reward = 0.0
+                script_content = f.read()
             
-            if mas_execution_success:
-                # Extract summary from output
-                summary = self._extract_summary(stdout) if stdout else ""
+            from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
+            import ray
+            
+            timeout_buffer = 20
+            total_timeout = step_timeout + timeout_buffer
+            
+            obj_ref = env_worker.run.remote(script_content, step_timeout)
+            output_text = await _await_ray_object_ref(obj_ref, total_timeout)
+            
+            # Save output to file
+            with open(output_txt_path, 'w') as f:
+                f.write(output_text)
+            
+            if "[SUCCESSSAVED]" in output_text:
+                execution_success = True
 
-                # Try to extract trajectory from stdout (legacy format)
-                trajectory_store = self._extract_trajectory_from_stdout(stdout) if stdout else {}
-                self.trajectory_store = trajectory_store if trajectory_store else {}
+            # Load DataProto from file if exists
+            if os.path.exists(dataproto_pkl_path):
+                with open(dataproto_pkl_path, 'rb') as f:
+                    workflow_dataproto_list = pickle.load(f)
+                logger.info(f"Loaded {len(workflow_dataproto_list)} DataProto entries from {dataproto_pkl_path}")
 
-                # Check for trajectory data from either stdout or file
-                trajectory_file = self.trajectory_json_path
-                has_trajectory_data = False
+            # Extract final answer from output
+            final_answer = self._extract_final_answer(output_text)
 
-                if trajectory_store:
-                    logger.info(f"Extracted {len(trajectory_store)} trajectory entries from stdout")
-                    has_trajectory_data = True
-                elif os.path.exists(trajectory_file):
-                    # Trajectory saved to file instead of stdout
-                    logger.info(f"Trajectory data saved to file: {trajectory_file}")
-                    has_trajectory_data = True
-                else:
-                    logger.warning("No trajectory data found in stdout or file")
+            # Calculate reward based on task type
+            reward = self._calculate_reward(final_answer, env_data)
+            logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
 
-                # Load and tokenize trajectory data from saved JSONL file if tokenizer provided
-                if tokenizer is not None:
-                    try:
-                        if not os.path.exists(trajectory_file):
-                            logger.warning(f"Trajectory file {trajectory_file} not found, skipping tokenization")
-                            self.tokenized_trajectories = []
-                        else:
-                            # Use the new load_and_tokenize_jsonl function from utils
-                            tokenized_trajectories = load_and_tokenize_jsonl(
-                                trajectory_file, tokenizer, max_prompt_length, max_response_length
-                            )
-                            if tokenized_trajectories:
-                                logger.info(f"Tokenized {len(tokenized_trajectories)} trajectory turns")
-                                self.tokenized_trajectories = tokenized_trajectories
-                            else:
-                                logger.warning("No tokenized trajectories generated from file")
-                                self.tokenized_trajectories = []
-                    except Exception as e:
-                        logger.warning(f"Failed to tokenize trajectories (ignoring): {e}")
-                        tokenized_trajectories = []
-                        self.tokenized_trajectories = []
+        except asyncio.TimeoutError:
+            logger.warning(f"MAS execution timed out after {step_timeout}s")
+        except Exception as e:
+            logger.warning(f"MAS execution error: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
 
-                # Calculate reward using task-specific reward function
-                try:
-                    if self.task_type in REWARD_FUNCTIONS:
-                        reward_func = REWARD_FUNCTIONS[self.task_type]
-                        final_reward = reward_func(summary, env_data)
-                        logger.info(f"Rollout {self.rollout_idx}: final_reward={final_reward}")
-                    else:
-                        logger.warning(f"No reward function found for task_type={self.task_type}, defaulting to 0.0")
-                        final_reward = 0.0
-                except Exception as e:
-                    logger.warning(f"Failed to calculate reward (ignoring): {e}")
-                    final_reward = 0.0
+        # Return results
+        return {
+            "workflow_dpr": workflow_dataproto_list,
+            "execution_success": execution_success,
+            "reward": reward,
+            "trajectory": workflow_dataproto_list
+        }
+
+    def _patch_imports(self, code: str) -> str:
+        """
+        Patch import statements to use full module paths.
+        
+        Converts:
+        - from workflow import ... -> from pettingllms.multi_agent_env.autoevol.workflow import ...
+        - from utils import ... -> from pettingllms.multi_agent_env.autoevol.utils import ...
+        
+        Args:
+            code: Generated code with relative imports
+            
+        Returns:
+            Patched code with absolute imports
+        """
+        import re
+        
+        # Pattern 1: from workflow import ...
+        # Pattern 2: from workflow.xxx import ...
+        # Pattern 3: from utils import ...
+        # Pattern 4: from utils.xxx import ...
+        
+        # Replace workflow imports
+        code = re.sub(
+            r'\bfrom\s+workflow\s+import\s+',
+            'from pettingllms.multi_agent_env.autoevol.workflow import ',
+            code
+        )
+        code = re.sub(
+            r'\bfrom\s+workflow\.',
+            'from pettingllms.multi_agent_env.autoevol.workflow.',
+            code
+        )
+        
+        # Replace utils imports
+        code = re.sub(
+            r'\bfrom\s+utils\s+import\s+',
+            'from pettingllms.multi_agent_env.autoevol.utils import ',
+            code
+        )
+        code = re.sub(
+            r'\bfrom\s+utils\.',
+            'from pettingllms.multi_agent_env.autoevol.utils.',
+            code
+        )
+        
+        return code
+
+    def _patch_string_escapes(self, code: str) -> str:
+        """
+        Patch string literals to handle backslashes correctly.
+        
+        Converts strings containing backslashes (like LaTeX commands) to raw strings
+        to avoid unicode escape errors.
+        
+        Args:
+            code: Generated code that may contain strings with backslashes
+            
+        Returns:
+            Patched code with raw strings where needed
+        """
+        import re
+        
+        def needs_raw_string(content):
+            if '\\' not in content:
+                return False
+            
+            problematic_patterns = [
+                r'\\u[0-9a-fA-F]', r'\\U[0-9a-fA-F]', r'\\N\{', r'\\x[0-9a-fA-F]',
+                r'\\textit', r'\\textbf', r'\\underline', r'\\overline',
+                r'\\sqrt', r'\\frac', r'\\geq', r'\\leq', r'\\neq',
+                r'\\sum', r'\\prod', r'\\int', r'\\lim',
+                r'\\left', r'\\right', r'\\begin', r'\\end'
+            ]
+            
+            for pattern in problematic_patterns:
+                if re.search(pattern, content):
+                    return True
+            
+            return False
+        
+        def replace_string(match):
+            full_match = match.group(0)
+            var_name = match.group(1)
+            equals_space = match.group(2)
+            raw_prefix = match.group(3) or ''
+            quote_type = match.group(4)
+            content = match.group(5)
+            
+            if raw_prefix.lower() == 'r':
+                return full_match
+            
+            if needs_raw_string(content):
+                result = var_name + equals_space + 'r' + quote_type + content + quote_type
+                return result
+            
+            return full_match
+        
+        pattern = r'(\w+)(\s*=\s*)(r|R)?("""|\'\'\')(.+?)\4'
+        patched = re.sub(pattern, replace_string, code, flags=re.DOTALL)
+        
+        return patched
+
+    def _patch_workflow_init(self, code: str, server_address: str, enable_thinking: bool) -> str:
+        """
+        Patch workflow = Workflow(...) to add verl integration parameters.
+
+        Args:
+            code: Generated code containing Workflow initialization
+            server_address: vLLM server address
+            enable_thinking: Whether to enable thinking mode
+
+        Returns:
+            Patched code with verl parameters added to Workflow
+        """
+        
+
+        # Find workflow = Workflow(...) pattern and the line after it
+        # Match: workflow = Workflow(name="...", other_params)
+        pattern = r'(workflow\s*=\s*Workflow\s*\([^)]*)\)'
+
+        def add_verl_params(match):
+            original = match.group(1)
+            # Add verl parameters before the closing parenthesis
+            verl_params = f"""
+    ai_client=ai_client"""
+
+            # Check if original ends with comma
+            if original.rstrip().endswith(','):
+                workflow_line = original + verl_params + "\n)"
             else:
-                # Execution failed - log the error
-                logger.warning(f"Rollout {self.rollout_idx}: MAS execution failed, skipping reward calculation")
-                self.tokenized_trajectories = []
-                
-                # Log stderr if there were errors
-                if stderr:
-                    logger.warning(f"MAS stderr output: {stderr[:500]}")
+                workflow_line = original + "," + verl_params + "\n)"
+            
+            # Add ai_client.workflow assignment immediately after workflow creation
+            workflow_line += "\nai_client.workflow = workflow"
+            
+            return workflow_line
 
-            self.agent_reward = final_reward
-            if final_reward == 1.0:
-                env_data.success = True
+        # Apply the patch
+        patched = re.sub(pattern, add_verl_params, code, flags=re.MULTILINE | re.DOTALL)
 
-            # Return tokenized trajectories, final reward, and MAS execution success status
-            return tokenized_trajectories, final_reward, mas_execution_success
+        if patched == code:
+            logger.warning("Could not find 'workflow = Workflow(...)' pattern to patch. Code unchanged.")
 
-        except subprocess.TimeoutExpired:
-            logger.warning(f"MAS execution timed out for rollout {self.rollout_idx}")
-            return [], 0.0, False
-        except Exception as e:
-            logger.warning(f"Error executing MAS (ignoring): {e}")
-            return [], 0.0, False
-        finally:
-            # Clean up AG2/OpenAI resources to prevent memory leaks
-            await self._cleanup_ag2_resources()
-
-    async def _cleanup_ag2_resources(self):
+        return patched
+    def _extract_final_answer(self, output_text: str) -> str:
         """
-        Clean up AG2/AutoGen and OpenAI client resources to prevent memory leaks.
-        This should be called after each step() to release httpx/aiohttp connections.
-        Note: The main cleanup happens in the subprocess (trajectory_output_code),
-        this is an additional safety cleanup in the parent process.
+        Extract final answer from MAS execution output.
+        
+        Looks for **Final Answer** marker and extracts the last number.
+        
+        Args:
+            output_text: Output from MAS execution
+            
+        Returns:
+            Extracted final answer string
         """
-        try:
-            # Close OpenAI SDK's default clients in parent process (if any were created)
-            try:
-                import openai
-                if hasattr(openai, '_default_client') and openai._default_client is not None:
-                    openai._default_client.close()
-                    openai._default_client = None
-                if hasattr(openai, '_default_async_client') and openai._default_async_client is not None:
-                    await openai._default_async_client.close()
-                    openai._default_async_client = None
-            except Exception:
-                pass
-
-            # Clear AG2/AutoGen OpenAIWrapper caches in parent process
-            try:
-                from autogen.oai.client import OpenAIWrapper
-                if hasattr(OpenAIWrapper, '_clients') and OpenAIWrapper._clients:
-                    for client_key, client in list(OpenAIWrapper._clients.items()):
-                        try:
-                            if hasattr(client, '_client') and client._client is not None:
-                                if hasattr(client._client, 'close'):
-                                    client._client.close()
-                        except Exception:
-                            pass
-                    OpenAIWrapper._clients.clear()
-            except Exception:
-                pass
-
-        except Exception as e:
-            logger.debug(f"Cleanup warning (non-critical): {e}")
-
-
-
-    def _extract_summary(self, stdout: str) -> str:
-        """Extract summary from workflow output"""
-        start_marker = "WORKFLOW_SUMMARY_START"
-        end_marker = "WORKFLOW_SUMMARY_END"
-
-        if start_marker in stdout and end_marker in stdout:
-            start_idx = stdout.find(start_marker) + len(start_marker)
-            end_idx = stdout.find(end_marker)
-            summary = stdout[start_idx:end_idx].strip()
-            return summary
-        else:
-            lines = [line.strip() for line in stdout.split('\n') if line.strip()]
-            return lines[-1] if lines else ""
+        import re
+        
+        # Strategy 1: Look for **Final Answer** and extract last number
+        final_answer_match = re.search(
+            r'\*\*Final\s*Answer\s*\*{0,2}[:\s]*(.*?)(?:={3,}|\Z)',
+            output_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        if final_answer_match:
+            final_answer_section = final_answer_match.group(1).strip()
+            
+            # Extract last number from final answer section
+            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+            numbers = re.findall(number_pattern, final_answer_section)
+            if numbers:
+                return numbers[-1]
+        
+        # Strategy 2: Look for WORKFLOW_SUMMARY_START/END markers
+        workflow_match = re.search(
+            r'WORKFLOW_SUMMARY_START\s*(.*?)\s*WORKFLOW_SUMMARY_END',
+            output_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        if workflow_match:
+            summary_content = workflow_match.group(1).strip()
+            
+            # Try to extract the last number from summary
+            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+            numbers = re.findall(number_pattern, summary_content)
+            if numbers:
+                return numbers[-1]
+            
+            # Fallback to last non-empty line
+            lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
+            if lines:
+                return lines[-1]
+        
+        # Strategy 3: Extract last number from entire output
+        number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+        numbers = re.findall(number_pattern, output_text)
+        if numbers:
+            return numbers[-1]
+        
+        # Fallback: return last non-empty line
+        lines = [line.strip() for line in output_text.split('\n') if line.strip()]
+        return lines[-1] if lines else ""
     
-    def _extract_trajectory_from_stdout(self, stdout: str) -> dict:
-        """Extract trajectory data from subprocess stdout"""
-        import pickle
-        import base64
-
-        start_marker = "TRAJECTORY_DATA_START"
-        end_marker = "TRAJECTORY_DATA_END"
-
-        if start_marker in stdout and end_marker in stdout:
-            start_idx = stdout.find(start_marker) + len(start_marker)
-            end_idx = stdout.find(end_marker)
-            trajectory_b64 = stdout[start_idx:end_idx].strip()
-
-            trajectory_bytes = base64.b64decode(trajectory_b64)
-            trajectory_store = pickle.loads(trajectory_bytes)
-            return trajectory_store
-        else:
-            return {}
-
+    def _calculate_reward(self, final_answer: str, env_data: Env) -> float:
+        """
+        Calculate reward based on task type and answer correctness.
+        
+        Args:
+            final_answer: Extracted final answer from MAS execution
+            env_data: Environment data containing ground truth
+            
+        Returns:
+            Reward score (typically 1.0 for correct, 0.0 for incorrect)
+        """
+        reward_function = REWARD_FUNCTIONS.get(self.task_type.lower())
+        
+        if reward_function is None:
+            logger.warning(f"No reward function found for task_type: {self.task_type}, defaulting to 0.0")
+            return 0.0
+        
+        try:
+            # Pass final_answer as summary to reward function
+            reward = reward_function(final_answer, env_data)
+            return float(reward)
+        except Exception as e:
+            logger.warning(f"Error calculating reward: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+            return 0.0

@@ -18,7 +18,8 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "/raid/lah003/mas_rl_cold_start"
+    "/home/nvidia/data/models/masrl-1227"
+    #"/raid/lah003/mas_rl_cold_start"
 )
 EXPERIMENT_NAME="mas_graph_test"
 # Assuming execution from repository root
@@ -26,7 +27,7 @@ REPO_ROOT="$(pwd)"
 CONFIG_PATH="${REPO_ROOT}/pettingllms/config/autoevol"
 CONFIG_NAME="math_L1_prompt"
 BENCHMARK="AIME24"
-BASE_VLLM_PORT=8301
+BASE_VLLM_PORT=8300
 BASE_PROXY_PORT=8320
 GPU_START_ID=3
 HOST="127.0.0.1"
@@ -64,24 +65,134 @@ cleanup() {
     fi
     CLEANUP_DONE=1
 
-    # Always cleanup proxy processes
-    for pid in "${PROXY_PIDS[@]}"; do
-        kill $pid 2>/dev/null || true
-    done
-    for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
-        timeout 2 lsof -ti:$((BASE_PROXY_PORT + i)) 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-    done
+    echo "==================================="
+    echo "Starting cleanup process..."
+    echo "==================================="
 
-    # Only cleanup vLLM if VLLM_SHUTDOWN is true
-    if [ "$VLLM_SHUTDOWN" = true ]; then
-        echo "Shutting down vLLM..."
-        for pid in "${VLLM_PIDS[@]}"; do
+    # ===== Cleanup Proxy Processes =====
+    echo "Cleaning up proxy processes..."
+    
+    # Step 1: Send TERM signal to proxy PIDs
+    for pid in "${PROXY_PIDS[@]}"; do
+        if kill -0 $pid 2>/dev/null; then
+            echo "  Sending TERM signal to proxy PID $pid"
             kill $pid 2>/dev/null || true
+        fi
+    done
+    
+    # Step 2: Wait a bit for graceful shutdown
+    if [ ${#PROXY_PIDS[@]} -gt 0 ]; then
+        echo "  Waiting 3 seconds for graceful shutdown..."
+        sleep 3
+    fi
+    
+    # Step 3: Force kill remaining proxy processes by PID
+    for pid in "${PROXY_PIDS[@]}"; do
+        if kill -0 $pid 2>/dev/null; then
+            echo "  Force killing proxy PID $pid"
+            kill -9 $pid 2>/dev/null || true
+        fi
+    done
+    
+    # Step 4: Find and kill any processes still using proxy ports
+    echo "  Checking and cleaning proxy ports..."
+    for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
+        PORT=$((BASE_PROXY_PORT + i))
+        PIDS=$(lsof -ti:$PORT 2>/dev/null || true)
+        if [ -n "$PIDS" ]; then
+            echo "  Killing processes on proxy port $PORT: $PIDS"
+            echo "$PIDS" | xargs -r kill -9 2>/dev/null || true
+            sleep 0.5
+        fi
+    done
+    
+    # Step 5: Clean up any remaining python processes related to vllm_id_token_proxy
+    echo "  Cleaning up any remaining proxy Python processes..."
+    pkill -9 -f "vllm_id_token_proxy.py" 2>/dev/null || true
+
+    # ===== Cleanup vLLM Processes =====
+    if [ "$VLLM_SHUTDOWN" = true ]; then
+        echo "Cleaning up vLLM processes..."
+        
+        # Step 1: Send TERM signal to vLLM PIDs
+        for pid in "${VLLM_PIDS[@]}"; do
+            if kill -0 $pid 2>/dev/null; then
+                echo "  Sending TERM signal to vLLM PID $pid"
+                kill $pid 2>/dev/null || true
+            fi
         done
+        
+        # Step 2: Wait for graceful shutdown
+        if [ ${#VLLM_PIDS[@]} -gt 0 ]; then
+            echo "  Waiting 5 seconds for graceful shutdown..."
+            sleep 5
+        fi
+        
+        # Step 3: Force kill remaining vLLM processes by PID
+        for pid in "${VLLM_PIDS[@]}"; do
+            if kill -0 $pid 2>/dev/null; then
+                echo "  Force killing vLLM PID $pid"
+                kill -9 $pid 2>/dev/null || true
+            fi
+        done
+        
+        # Step 4: Find and kill any processes still using vLLM ports
+        echo "  Checking and cleaning vLLM ports..."
         for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
-            timeout 2 lsof -ti:$((BASE_VLLM_PORT + i)) 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+            PORT=$((BASE_VLLM_PORT + i))
+            PIDS=$(lsof -ti:$PORT 2>/dev/null || true)
+            if [ -n "$PIDS" ]; then
+                echo "  Killing processes on vLLM port $PORT: $PIDS"
+                echo "$PIDS" | xargs -r kill -9 2>/dev/null || true
+                sleep 0.5
+            fi
+        done
+        
+        # Step 5: Clean up any remaining vllm.entrypoints processes
+        echo "  Cleaning up any remaining vLLM Python processes..."
+        pkill -9 -f "vllm.entrypoints.openai.api_server" 2>/dev/null || true
+        
+        # Step 6: Kill any orphaned ray processes
+        echo "  Cleaning up Ray processes..."
+        pkill -9 -f "ray::" 2>/dev/null || true
+        pkill -9 -f "ray start" 2>/dev/null || true
+    else
+        echo "Skipping vLLM cleanup (VLLM_SHUTDOWN=false)"
+    fi
+
+    # ===== Final Port Verification =====
+    echo "Verifying all ports are clean..."
+    ALL_CLEAN=true
+    
+    # Check proxy ports
+    for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
+        PORT=$((BASE_PROXY_PORT + i))
+        if lsof -ti:$PORT >/dev/null 2>&1; then
+            echo "  ⚠ Warning: Proxy port $PORT still in use"
+            ALL_CLEAN=false
+        fi
+    done
+    
+    # Check vLLM ports if we tried to clean them
+    if [ "$VLLM_SHUTDOWN" = true ]; then
+        for ((i=0; i<${#MODEL_PATHS[@]}; i++)); do
+            PORT=$((BASE_VLLM_PORT + i))
+            if lsof -ti:$PORT >/dev/null 2>&1; then
+                echo "  ⚠ Warning: vLLM port $PORT still in use"
+                ALL_CLEAN=false
+            fi
         done
     fi
+    
+    if [ "$ALL_CLEAN" = true ]; then
+        echo "✓ All ports successfully cleaned"
+    else
+        echo "✗ Some ports may still be in use"
+    fi
+    
+    echo "==================================="
+    echo "Cleanup process completed"
+    echo "==================================="
 }
 trap cleanup EXIT INT TERM
 

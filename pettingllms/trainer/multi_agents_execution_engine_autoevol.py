@@ -4,6 +4,8 @@ import time
 import json
 import traceback
 import uuid
+import os
+import pickle
 from tqdm.asyncio import tqdm
 import random
 try:
@@ -52,6 +54,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         config,
         ppo_trainer_config_dict=None,
         tokenizer_dict=None,
+        tokenizer_path_dict=None,
         processor_dict=None,
         server_address_dict=None,
         agent_policy_mapping=None,
@@ -69,6 +72,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         self.config = config
         self.ppo_trainer_config_dict = ppo_trainer_config_dict or {}
         self.tokenizer_dict = tokenizer_dict
+        self.tokenizer_path_dict = tokenizer_path_dict or {}
         self.processor_dict = processor_dict or {}
         self.agent_policy_mapping = agent_policy_mapping or {}
         self.env_args = env_args or {}
@@ -97,11 +101,33 @@ class MultiAgentsExecutionEngineAutoEvol:
         for agent_key, agent_config in self.agent_configs_raw.items():
             agent_name = agent_config.name
             self.agent_config_dict[agent_name] = agent_config
-        self.step_timeout = getattr(self.config.training, 'step_timeout', 150.0)
+        self.step_timeout = getattr(self.config.training, 'step_timeout', 1200.0)
         print(f"agent_config_dict keys: {list(self.agent_config_dict.keys())}")
         self.server_address_dict = server_address_dict or {}
         self.chat_parser_dict={}
         self.rollout_latency_dict = {}
+
+        # Validate tokenizer_path_dict and agent_policy_mapping consistency
+        print("=" * 80)
+        print("Validating tokenizer_path_dict and agent_policy_mapping...")
+        print(f"agent_policy_mapping: {self.agent_policy_mapping}")
+        print(f"tokenizer_path_dict keys: {list(self.tokenizer_path_dict.keys())}")
+        print(f"tokenizer_dict keys: {list(self.tokenizer_dict.keys()) if self.tokenizer_dict else []}")
+
+        # Check if all policy names have corresponding tokenizer paths
+        missing_tokenizer_paths = []
+        for agent_name, policy_name in self.agent_policy_mapping.items():
+            if policy_name not in self.tokenizer_path_dict:
+                missing_tokenizer_paths.append((agent_name, policy_name))
+                logger.warning(f"Policy '{policy_name}' for agent '{agent_name}' not found in tokenizer_path_dict")
+
+        if missing_tokenizer_paths:
+            logger.warning("Missing tokenizer_path_dict entries. This may cause errors during execution.")
+            logger.warning("Consider checking your configuration to ensure model names match policy names.")
+        else:
+            print("All policy names have corresponding tokenizer paths.")
+        print("=" * 80)
+
         self.timer.checkpoint("MultiAgentsExecutionEngine initialization completed")
         
         num_workers = self.config.training.get("num_workers", 180)
@@ -263,6 +289,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         # Step 1: Update agent from environment to get prompt
         mas_generator.update_from_env(env)
         prompt = mas_generator.current_prompt
+        #print(f"Generated prompt for rollout {rollout_idx}, agent {agent_name}: {prompt}")
 
         agent_enable_thinking = self.agent_enable_thinking.get(agent_name, False)
         agent_enable_multimodal = self.agent_enable_multimodal.get(agent_name, False)
@@ -333,6 +360,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 agent_config=agent_config,
                 sample_num=agent_sample_num,
             )
+            #print(f"response: {response}s")
         except Exception as e:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
@@ -416,49 +444,73 @@ class MultiAgentsExecutionEngineAutoEvol:
                 }
             )
 
-            # Call step and get tokenized trajectories, final reward, and MAS execution success
-            tokenized_trajectories, final_reward, mas_execution_success = await asyncio.wait_for(
+            # Get tokenizer_path - prefer tokenizer_path_dict, fallback to tokenizer_dict
+            tokenizer_path = self.tokenizer_path_dict.get(policy_name)
+            tokenizer_obj = self.tokenizer_dict.get(policy_name) if self.tokenizer_dict else None
+
+            logger.info(f"Calling step() with tokenizer_path: {tokenizer_path}")
+            
+            # Assign worker to this rollout (similar to multi_agents_execution_engine.py)
+            env_worker_id = rollout_idx % self.num_workers
+            env_worker = self.env_workers[env_worker_id]
+
+            # Store worker_id and GPU group in env_data for task folder path generation
+            if hasattr(env, 'state'):
+                env.state.assigned_worker_id = env_worker_id
+                env.state.gpu_group_id = self.gpu_group_id
+
+            # Step 6 & 7: Generate mas.py, execute it, and collect results (all in step())
+            step_result = await asyncio.wait_for(
                 mas_generator.step(
                     env_data=env,
-                    env_worker=env_worker,
                     output_dir=output_dir,
                     server_address=_address,
                     model_name=model_name,
-                    tokenizer=self.tokenizer_dict[policy_name],
+                    tokenizer_path=tokenizer_path,
                     max_prompt_length=self.max_prompt_length,
                     max_response_length=self.max_response_length,
-                    llm_config_for_mas=llm_config_for_mas
+                    ppo_trainer_config=ppo_trainer_config,
+                    enable_thinking=agent_enable_thinking,
+                    step_timeout=self.step_timeout,
+                    env_worker=env_worker
                 ),
-                timeout=self.step_timeout
+                timeout=self.step_timeout + 60.0
             )
-            
-           
+
+            # Extract results from step
+            workflow_dataproto_list = step_result.get("workflow_dpr", [])
+            mas_execution_success = step_result.get("execution_success", False)
+            final_reward = step_result.get("reward", 0.0)
+
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
-                "MAS step completed",
+                "MAS execution completed",
                 {
                     "mas_execution_success": mas_execution_success,
                     "final_reward": final_reward,
-                    "num_trajectories": len(tokenized_trajectories) if tokenized_trajectories else 0,
+                    "num_dataprotos": len(workflow_dataproto_list) if workflow_dataproto_list else 0,
                     "output_dir": output_dir
                 }
             )
+
         except asyncio.TimeoutError:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
-                f"MAS step timed out after {self.step_timeout}s",
-                {"error": "timeout", "timeout_seconds": self.step_timeout}
+                "MAS generation timed out",
+                {"error": "timeout"}
             )
-            tokenized_trajectories = []
             mas_execution_success = False
+            workflow_dataproto_list = []
+            final_reward = 0.0
         except Exception as e:
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, agent_name,
-                f"MAS step failed: {e}",
+                f"MAS generation failed: {e}",
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
-            tokenized_trajectories = []
             mas_execution_success = False
+            workflow_dataproto_list = []
+            final_reward = 0.0
         finally:
             # Additional cleanup for any lingering resources after step
             try:
@@ -467,12 +519,10 @@ class MultiAgentsExecutionEngineAutoEvol:
                 logger.debug(f"Cleanup warning for rollout {rollout_idx}: {cleanup_err}")
             
 
-        # Step 7: Merge MAS generation DataProto with tokenized trajectories DataProtos
+        # Step 8: Merge all DataProtos
         all_dataprotos = []
 
-        # First batch: MAS generation DataProto (reward based on task correctness)
-        # Note: output_dpr already has rollout_idx, env_idx, turn_idx, agent_idx from async_generate
-
+        # First batch: MAS generation DataProto (reward based on final_reward from MAS execution)
         batch_size = len(output_dpr)
         output_dpr.non_tensor_batch["reward"] = np.array([int(mas_execution_success)] * batch_size)
         output_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
@@ -484,24 +534,27 @@ class MultiAgentsExecutionEngineAutoEvol:
 
         all_dataprotos.append(output_dpr)
 
-        # Second batch: tokenized trajectory DataProtos from MAS execution (reward = final_reward)
-        if tokenized_trajectories:
-            for traj_dpr, traj_response in tokenized_trajectories:
-                # Add metadata to each trajectory DataProto
-                batch_size = len(traj_dpr)
-                traj_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
-                traj_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
-                traj_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
-                traj_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
-                traj_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
-                traj_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
-                traj_dpr.non_tensor_batch["agent_idx"] = np.array([0] * batch_size)
+        # Second batch: workflow DataProtos from MAS workflow execution (verl integration)
+        if workflow_dataproto_list:
+            for workflow_dpr in workflow_dataproto_list:
+                # Add metadata to each workflow DataProto
+                batch_size = len(workflow_dpr)
+                workflow_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
+                workflow_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
+                workflow_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
+                # Use turn_idx=1 for workflow DataProtos
+                workflow_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
+                workflow_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
+                workflow_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
+                workflow_dpr.non_tensor_batch["agent_idx"] = np.array([0] * batch_size)
 
                 if self.lora_differ_mode:
                     lora_ids = [self.agent_lora_mapping[agent_name]] * batch_size
-                    traj_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
+                    workflow_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
 
-                all_dataprotos.append(traj_dpr)
+                all_dataprotos.append(workflow_dpr)
+
+            logger.info(f"Added {len(workflow_dataproto_list)} workflow DataProto entries for rollout {rollout_idx}")
 
         # Concatenate all DataProtos if we have any
         if all_dataprotos:
@@ -519,7 +572,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                   
                     raise
 
-        # Step 8: Log results
+        # Step 9: Log results
         env_state_compact = env.state.to_dict_compact(agent_name=agent_name) if hasattr(env.state, 'to_dict_compact') else env.state
 
         self.multi_logger.log_env_agent_info(
@@ -529,26 +582,30 @@ class MultiAgentsExecutionEngineAutoEvol:
                 "agent_prompt": {"text": prompt.get("text", "") if isinstance(prompt, dict) else str(prompt), "image": None},
                 "agent_response": response,
                 "env_state": env_state_compact,
-                "reward": float(reward)
+                "reward": final_reward
             }
         )
 
-        # Step 9: Log rollout summary
-        agent_rewards = {agent_name: mas_generator.agent_reward}
+        # Step 10: Log rollout summary
+        agent_rewards = {agent_name: final_reward}
         self.multi_logger.log_rollout_summary(
             self.mode, env_idx, rollout_idx, agent_rewards,
             "rollout_complete",
             extra_data={
                 "turn_idx": 1,  # Single turn
                 "message": f"Rollout {rollout_idx} completed",
-                "reward": float(reward)
+                "reward": final_reward
             }
         )
 
         if self.mode == "validate":
-            if env.success:
+            # Consider successful if reward > 0.5 (for binary rewards, this means reward == 1.0)
+            if final_reward > 0.5:
                 self.success_rollout_idx_list_dict[agent_name].append(rollout_idx)
                 self.success_ave_turn_dict[agent_name] += 1  # Single turn
+                env.success = True
+            else:
+                env.success = False
         
        
         #trajectory_per_task_dict = self._assign_consistent_uids(trajectory_per_task_dict)
@@ -557,11 +614,11 @@ class MultiAgentsExecutionEngineAutoEvol:
         try:
             
             latency_s = time.perf_counter() - start_time
-            self.rollout_latency_dict[rollout_idx] = {"latency_s": latency_s, "reward": reward}
+            self.rollout_latency_dict[rollout_idx] = {"latency_s": latency_s, "reward": final_reward}
             self.multi_logger.log_async_event(
                 self.mode, env_idx, rollout_idx, "rollout_latency",
                 f"Rollout {rollout_idx} latency: {latency_s:.3f}s",
-                {"latency_s": float(latency_s)}
+                {"latency_s": float(latency_s), "reward": float(final_reward)}
             )
         except Exception:
             pass

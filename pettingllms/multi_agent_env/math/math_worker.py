@@ -48,6 +48,7 @@ async def _await_ray_object_ref(obj_ref, timeout_seconds: float = 10.0):
         
         elapsed = time.time() - start_time
         if elapsed > timeout_seconds:
+            print(f"Ray task timed out after {timeout_seconds}s")
             raise asyncio.TimeoutError(f"Ray task timed out after {timeout_seconds}s")
         
         await asyncio.sleep(0.01)

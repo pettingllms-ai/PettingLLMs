@@ -80,10 +80,6 @@ def math_reward_function(summary: str, env_data: Env) -> float:
     ground_truth = None
     ground_truth = env_data.state.ground_truth_answer
 
-    if ground_truth is None:
-        logger.warning(f"No ground truth answer found in env_data. env_data type: {type(env_data)}")
-        return 0.0
-
     # Parse both answers
     parsed_gt = parse(str(ground_truth))
     # Verify if they match
