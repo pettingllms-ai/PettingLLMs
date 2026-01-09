@@ -20,7 +20,7 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: your base model path
+    path: /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/1230_code_data_sft_agent/sft/checkpoint-2342
     name: shared_model
 agent_policy_configs:
   agent_configs:

@@ -1,7 +1,6 @@
 set -x
 
-export CUDA_VISIBLE_DEVICES=3,4
-export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+export CUDA_VISIBLE_DEVICES=0
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
@@ -11,24 +10,46 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export HYDRA_FULL_ERROR=1
 export NCCL_IB_DISABLE=1
 export NCCL_NET_GDR_LEVEL=0
+export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Auto-detect CUDA: prefer conda env, fallback to system CUDA
+if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
+    # Try to find CUDA in conda env
+    CONDA_CUDA_BIN=$(find "$CONDA_PREFIX" -name "ptxas" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
+    if [ -n "$CONDA_CUDA_BIN" ] && [ -f "$CONDA_CUDA_BIN/ptxas" ]; then
+        export TRITON_PTXAS_PATH="$CONDA_CUDA_BIN/ptxas"
+        export CUDA_HOME=$(dirname "$CONDA_CUDA_BIN" 2>/dev/null)
+        echo "Using CUDA from conda env: $CUDA_HOME"
+    else
+        # Fallback to system CUDA
+        export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+        export TRITON_PTXAS_PATH=${TRITON_PTXAS_PATH:-$CUDA_HOME/bin/ptxas}
+        echo "Using system CUDA: $CUDA_HOME"
+    fi
+else
+    # No conda env, use system CUDA
+    export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
+    export TRITON_PTXAS_PATH=${TRITON_PTXAS_PATH:-$CUDA_HOME/bin/ptxas}
+    echo "Using system CUDA: $CUDA_HOME"
+fi
 
+# Set library paths (only if CUDA_HOME is set)
+if [ -n "$CUDA_HOME" ]; then
+    [ -d "$CUDA_HOME/targets/x86_64-linux/lib" ] && export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
+    [ -d "$CUDA_HOME/lib64" ] && export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
+fi
 
-export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
-export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}
-
-export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
-
-
-GPU_num=2
+# select gpus 
+GPU_num=1
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
 
-python3 -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
+
+python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="/raid/lah003/mas_rl_cold_start"\
+    base_models.policy_0.path="Mercury7353/masrl-1227"\
     training.experiment_name=autoeval_L1_prompt\
     training.total_training_steps=400\
     training.train_batch_size=32\
