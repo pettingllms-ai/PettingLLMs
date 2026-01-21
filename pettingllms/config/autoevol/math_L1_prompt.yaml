@@ -20,7 +20,7 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/1227_math_reason_fixbug/sft/checkpoint-1546
+    path: Mercury7353/masrl-1227
     name: shared_model
 agent_policy_configs:
   agent_configs:
