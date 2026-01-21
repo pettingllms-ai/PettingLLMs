@@ -1,6 +1,6 @@
 set -x
 
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
@@ -39,24 +39,30 @@ if [ -n "$CUDA_HOME" ]; then
 fi
 
 # select gpus 
-GPU_num=8
+# For split_policy with 2 models, need at least 2 GPUs (one per model)
+GPU_num=4
+# For 2 models, each model gets GPU_num // 2 GPUs
+GPU_per_model=$((GPU_num / 2))
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
-model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
+model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_per_model $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_per_model"
 
+model_1_config_path="models.model_1.ppo_trainer_config"
+model_1_resource="$model_1_config_path.trainer.n_gpus_per_node=$GPU_per_model $model_1_config_path.trainer.nnodes=1 $model_1_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_per_model"
 
-
-python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
+python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_split_policy \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl-1227"\
-    training.experiment_name=autoeval_L1_prompt\
+    $model_1_resource \
+    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/1227_math_reason_fixbug/sft/checkpoint-1546"\
+    base_models.policy_1.path="/mnt/afs/share_data/models_weights/external/Qwen/Qwen3/Qwen3-4B"\
+    training.experiment_name=autoeval_L1_split_policy\
     training.total_training_steps=400\
-    training.train_batch_size=32\
+    training.train_batch_size=16\
     training.train_sample_num=8\
     training.validate_sample_num=3\
     training.max_prompt_length=2048\
-    training.max_response_length=4096\
+    training.max_response_length=1024\
     training.val_freq=10\
     env.dataset=polaris\
     env.benchmark=AIME24\

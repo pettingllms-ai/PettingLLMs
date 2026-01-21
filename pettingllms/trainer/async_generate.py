@@ -155,28 +155,102 @@ async def poll_completions_openai(address: str, timeout: Optional[float] = None,
     
     async with semaphore:
         try:
+            import logging
+            logger = logging.getLogger(__name__)
+            model_name_in_request = completions_request.get('model', 'N/A')
+            print(f"[PRINT DEBUG] ========== poll_completions_openai START ==========")
+            print(f"[PRINT DEBUG] URL: {base_url}")
+            print(f"[PRINT DEBUG] Model in request: {model_name_in_request}")
+            print(f"[PRINT DEBUG] Prompt length: {len(completions_request.get('prompt', ''))}")
+            logger.debug(f"[DEBUG] poll_completions_openai: Sending request to {base_url}")
+            logger.debug(f"[DEBUG] poll_completions_openai: Model: {model_name_in_request}")
+            
             async with session.post(
                 base_url, 
                 json=completions_request, 
                 headers=headers,
                 timeout=api_timeout
             ) as response:
+                print(f"[PRINT DEBUG] HTTP Status: {response.status}")
                 if response.status != 200:
                     error_text = await response.text()
+                    print(f"[PRINT DEBUG] ========== API ERROR ==========")
+                    print(f"[PRINT DEBUG] Status: {response.status}")
+                    print(f"[PRINT DEBUG] Error: {error_text[:1000]}")
+                    print(f"[PRINT DEBUG] URL: {base_url}")
+                    print(f"[PRINT DEBUG] Model: {model_name_in_request}")
+                    logger.error(f"[ERROR] API request failed with status {response.status}")
+                    logger.error(f"[ERROR] Error response: {error_text[:500]}")
+                    logger.error(f"[ERROR] Request URL: {base_url}")
+                    logger.error(f"[ERROR] Model: {model_name_in_request}")
                     raise Exception(f"API request failed with status {response.status}: {error_text}")
                 result = await response.json()
+                print(f"[PRINT DEBUG] API call SUCCESS! Response keys: {list(result.keys()) if isinstance(result, dict) else 'N/A'}")
+                if isinstance(result, dict) and 'choices' in result:
+                    print(f"[PRINT DEBUG] Number of choices: {len(result['choices'])}")
+                    if result['choices']:
+                        choice_text = result['choices'][0].get('text', '')[:200]
+                        print(f"[PRINT DEBUG] First choice text (first 200 chars): {choice_text}")
+                logger.debug(f"[DEBUG] poll_completions_openai: Successfully received response")
                 return result
                 
         except asyncio.TimeoutError as e:
-            error_msg = f"Request timeout to {address}"
+            import logging
+            logger = logging.getLogger(__name__)
+            error_msg = f"Request timeout to {address} (timeout={timeout}s)"
+            print(f"[PRINT DEBUG] ========== TIMEOUT ERROR ==========")
+            print(f"[PRINT DEBUG] {error_msg}")
+            print(f"[PRINT DEBUG] Model: {completions_request.get('model', 'N/A')}")
+            print(f"[PRINT DEBUG] URL: {base_url}")
+            logger.error(f"[ERROR] {error_msg}")
+            logger.error(f"[ERROR] This usually means the model server is not responding or is overloaded")
+            logger.error(f"[ERROR] Check if the model server is running at: {address}")
+            raise Exception(error_msg) from e
+            
+        except aiohttp.ClientConnectorError as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            error_msg = f"Cannot connect to model server at {address}: {e}"
+            print(f"[PRINT DEBUG] ========== CONNECTION ERROR ==========")
+            print(f"[PRINT DEBUG] {error_msg}")
+            print(f"[PRINT DEBUG] Model: {completions_request.get('model', 'N/A')}")
+            print(f"[PRINT DEBUG] URL: {base_url}")
+            print(f"[PRINT DEBUG] This usually means the model server is not running or the address is incorrect")
+            print(f"[PRINT DEBUG] Please check:")
+            print(f"[PRINT DEBUG]   1. Is the vLLM server running?")
+            print(f"[PRINT DEBUG]   2. Is the address correct? (current: {address})")
+            print(f"[PRINT DEBUG]   3. Can you reach the server? (try: curl http://{address}/health)")
+            logger.error(f"[ERROR] {error_msg}")
+            logger.error(f"[ERROR] This usually means the model server is not running or the address is incorrect")
+            logger.error(f"[ERROR] Please check:")
+            logger.error(f"[ERROR]   1. Is the vLLM server running?")
+            logger.error(f"[ERROR]   2. Is the address correct? (current: {address})")
+            logger.error(f"[ERROR]   3. Can you reach the server? (try: curl http://{address}/health)")
             raise Exception(error_msg) from e
             
         except aiohttp.ClientError as e:
+            import logging
+            logger = logging.getLogger(__name__)
             error_msg = f"Client error when requesting {address}: {e}"
+            print(f"[PRINT DEBUG] ========== CLIENT ERROR ==========")
+            print(f"[PRINT DEBUG] {error_msg}")
+            print(f"[PRINT DEBUG] Model: {completions_request.get('model', 'N/A')}")
+            print(f"[PRINT DEBUG] URL: {base_url}")
+            logger.error(f"[ERROR] {error_msg}")
             raise Exception(error_msg) from e
             
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
             error_msg = f"Unexpected error when requesting {address}: {e}"
+            print(f"[PRINT DEBUG] ========== UNEXPECTED ERROR ==========")
+            print(f"[PRINT DEBUG] {error_msg}")
+            print(f"[PRINT DEBUG] Model: {completions_request.get('model', 'N/A')}")
+            print(f"[PRINT DEBUG] URL: {base_url}")
+            import traceback
+            print(f"[PRINT DEBUG] Traceback: {traceback.format_exc()}")
+            logger.error(f"[ERROR] {error_msg}")
+            logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
             raise
 
 
@@ -460,6 +534,21 @@ async def llm_async_generate(
         actual_model = model_name
     
     tasks = []
+    import logging
+    logger = logging.getLogger(__name__)
+    print(f"[PRINT DEBUG] ========== llm_async_generate START ==========")
+    print(f"[PRINT DEBUG] address: {address}")
+    print(f"[PRINT DEBUG] model_name (input): {model_name}")
+    print(f"[PRINT DEBUG] actual_model (for API): {actual_model}")
+    print(f"[PRINT DEBUG] lora_id: {lora_id}")
+    print(f"[PRINT DEBUG] timeout: {timeout}")
+    print(f"[PRINT DEBUG] enable_thinking: {enable_thinking}")
+    print(f"[PRINT DEBUG] Preparing {len(prompt_dpr.non_tensor_batch['formatted_prompts'])} API requests")
+    logger.info(f"[DEBUG] llm_async_generate: Preparing {len(prompt_dpr.non_tensor_batch['formatted_prompts'])} API requests")
+    logger.info(f"[DEBUG] llm_async_generate: Address: {address}")
+    logger.info(f"[DEBUG] llm_async_generate: Model: {actual_model}")
+    logger.info(f"[DEBUG] llm_async_generate: Timeout: {timeout}")
+    
     for batch_index, formatted_prompt in enumerate(prompt_dpr.non_tensor_batch["formatted_prompts"]):
         # For Completion API, we need to convert the conversation to a prompt string
         
@@ -474,17 +563,34 @@ async def llm_async_generate(
             **kwargs,
         }
         
+        print(f"[PRINT DEBUG] Request {batch_index}: model='{actual_model}', address='{address}', prompt_length={len(formatted_prompt)}")
         tasks.append(submit_completions(**request_kwargs))
 
 
     
     # Use return_exceptions=True to handle failures gracefully
+    print(f"[PRINT DEBUG] Sending {len(tasks)} API requests...")
     start_time = time.time()
     completions_list = await asyncio.gather(*tasks, return_exceptions=True)
     elapsed_time = time.time() - start_time
     
     success_count = sum(1 for c in completions_list if not isinstance(c, Exception))
     error_count = len(completions_list) - success_count
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    print(f"[PRINT DEBUG] ========== API calls completed ==========")
+    print(f"[PRINT DEBUG] Elapsed time: {elapsed_time:.2f}s")
+    print(f"[PRINT DEBUG] Success: {success_count}, Errors: {error_count}")
+    logger.info(f"[DEBUG] llm_async_generate: API calls completed in {elapsed_time:.2f}s")
+    logger.info(f"[DEBUG] llm_async_generate: Success: {success_count}, Errors: {error_count}")
+    if error_count > 0:
+        print(f"[PRINT DEBUG] ========== ERROR DETAILS ==========")
+        logger.error(f"[ERROR] llm_async_generate: {error_count} out of {len(completions_list)} API calls failed!")
+        for i, c in enumerate(completions_list):
+            if isinstance(c, Exception):
+                print(f"[PRINT DEBUG] Request {i} FAILED: {type(c).__name__}: {str(c)}")
+                logger.error(f"[ERROR] Request {i} failed: {type(c).__name__}: {str(c)}")
     
     
     for batch_index, completions in enumerate(completions_list):
@@ -493,6 +599,16 @@ async def llm_async_generate(
         
         # Handle exceptions from API calls
         if isinstance(completions, Exception):
+            import logging
+            logger = logging.getLogger(__name__)
+            error_msg = str(completions)
+            error_type = type(completions).__name__
+            logger.error(f"[ERROR] API call failed for batch {batch_index}: {error_type}: {error_msg}")
+            logger.error(f"[ERROR] This usually means the model server is not running or unreachable at address: {address}")
+            logger.error(f"[ERROR] Model name: {actual_model}")
+            import traceback
+            if hasattr(completions, '__traceback__') and completions.__traceback__:
+                logger.error(f"[ERROR] Traceback: {''.join(traceback.format_tb(completions.__traceback__))}")
             # Return empty token list as fallback for each sample
             for _ in range(sample_num):
                 comps.append([tokenizer.eos_token_id])
@@ -503,6 +619,10 @@ async def llm_async_generate(
             
         # Handle None or invalid responses
         if completions is None:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[ERROR] API returned None for batch {batch_index}")
+            logger.error(f"[ERROR] Address: {address}, Model: {actual_model}")
             for _ in range(sample_num):
                 comps.append([tokenizer.eos_token_id])
                 batch_texts.append("")
@@ -514,6 +634,11 @@ async def llm_async_generate(
         try:
             choices = completions.get("choices", [])
             if not choices:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"[WARNING] API response has no 'choices' field for batch {batch_index}")
+                logger.warning(f"[WARNING] Response keys: {list(completions.keys()) if isinstance(completions, dict) else 'N/A'}")
+                logger.warning(f"[WARNING] Full response: {str(completions)[:500]}")
                 for _ in range(sample_num):
                     comps.append([tokenizer.eos_token_id])
                     batch_texts.append("")
@@ -521,11 +646,20 @@ async def llm_async_generate(
                 for choice in choices:
                     token_ids = choice.get("logprobs", {}).get("tokens", [])
                     text = choice.get("text", "")
+                    if not text:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"[WARNING] Choice has empty 'text' field. Choice keys: {list(choice.keys())}")
                     batch_texts.append(text)
                     token_ids = [int(t.split(":")[1]) for t in token_ids]
                     comps.append(token_ids)
                     
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"[ERROR] Error processing API response for batch {batch_index}: {e}")
+            import traceback
+            logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
             for _ in range(sample_num):
                 comps.append([tokenizer.eos_token_id])
                 batch_texts.append("")
@@ -558,12 +692,39 @@ async def llm_async_generate(
     # Return format depends on sample_num:
     # - sample_num=1: return single string (backward compatible)
     # - sample_num>1: return list of strings
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if sample_num == 1:
         response = text_list[0] if text_list else ""
         # Debug empty responses
+        logger.info(f"[DEBUG] llm_async_generate: sample_num=1, text_list length: {len(text_list)}")
+        logger.info(f"[DEBUG] llm_async_generate: text_list content: {[repr(t[:100]) for t in text_list[:3]]}")
+        logger.info(f"[DEBUG] llm_async_generate: response type: {type(response)}, length: {len(response) if response else 0}")
+        if not response:
+            logger.warning(f"[DEBUG] llm_async_generate: WARNING - response is empty! text_list: {text_list}")
+            # Try to decode from output_dpr if available
+            if output_dpr is not None and "responses" in output_dpr.batch.keys():
+                logger.info(f"[DEBUG] llm_async_generate: Attempting to decode from output_dpr.batch['responses']")
+                try:
+                    resp_ids_tensor = output_dpr.batch["responses"][0]
+                    valid_ids = [int(t) for t in resp_ids_tensor.tolist() if int(t) not in (pad_token_id, eos_token_id)]
+                    if valid_ids:
+                        decoded = tokenizer.decode(valid_ids, skip_special_tokens=True)
+                        logger.info(f"[DEBUG] llm_async_generate: Decoded from tokens: {decoded[:200]}")
+                        if decoded:
+                            response = decoded
+                except Exception as e:
+                    logger.warning(f"[DEBUG] llm_async_generate: Failed to decode from tokens: {e}")
     else:
         response = text_list
         # Debug empty responses
+        logger.info(f"[DEBUG] llm_async_generate: sample_num={sample_num}, text_list length: {len(text_list)}")
+        logger.info(f"[DEBUG] llm_async_generate: response type: {type(response)}, length: {len(response)}")
+    
+    logger.info(f"[DEBUG] llm_async_generate: Final response type: {type(response)}, length: {len(response) if isinstance(response, str) else 'N/A'}")
+    if isinstance(response, str) and response:
+        logger.info(f"[DEBUG] llm_async_generate: Final response first 200 chars: {response[:200]}")
     
     return output_dpr, response
     

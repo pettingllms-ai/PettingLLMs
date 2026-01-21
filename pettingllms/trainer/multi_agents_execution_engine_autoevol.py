@@ -16,7 +16,7 @@ import torch
 import numpy as np
 from pettingllms.trainer.multiagentssys_register import     ENV_CLASS_MAPPING,ENV_BATCH_CLASS_MAPPING
 # Backward compatibility
-from pettingllms.multi_agent_env.autoevol.gen_agent import MASGenerator
+from pettingllms.multi_agent_env.autoevol.gen_agent import MASGenerator, MASExecutor
 from functools import partial
 import multiprocessing
 from pettingllms.utils.performance import create_timer
@@ -95,7 +95,17 @@ class MultiAgentsExecutionEngineAutoEvol:
         self.experiment_name = self.config.training.experiment_name
         self.env_name = env_name
         self.env_class = ENV_CLASS_MAPPING[env_name]
-        self.agent_class_list = [MASGenerator(task_type=getattr(self.config, 'task_type', "math"))]
+        # Create agent class list based on turn_order
+        # Store classes, not instances - instances will be created later with proper parameters
+        self.agent_class_list = []
+        for agent_name in self.turn_order:
+            if agent_name == "Designer" or "designer" in agent_name.lower():
+                self.agent_class_list.append(MASGenerator)
+            elif agent_name == "Executor" or "executor" in agent_name.lower():
+                self.agent_class_list.append(MASExecutor)
+            else:
+                # Default to MASGenerator for backward compatibility
+                self.agent_class_list.append(MASGenerator)
         self.agent_configs_raw = self.config.agent_policy_configs.agent_configs
         self.agent_config_dict = {}
         for agent_key, agent_config in self.agent_configs_raw.items():
@@ -235,11 +245,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             self.env_rollout_mapping[env_idx] = [_ for _ in range(env_idx*self.sample_num, (env_idx+1)*self.sample_num)]
         self.timer.checkpoint("Starting batched env initialization")
             
-        # For autoevol, each rollout only needs one MASGenerator
-        # No need for multiple agents or turns - just one generation per rollout
+        # For autoevol with split policy, create both Designer and Executor agents
         self.agent_groups_list = []
         for rollout_idx in range(len(self.envs)):
-            # Create a single MASGenerator for this rollout
             agent_init_params = {
                 'env_idx': rollout_idx,
                 'agent_sample_idx': rollout_idx,
@@ -248,17 +256,22 @@ class MultiAgentsExecutionEngineAutoEvol:
             }
             agent_init_params['benchmark'] = getattr(self.config.env, 'benchmark', 'AIME24') if hasattr(self.config, 'env') else 'AIME24'
 
-            # Single MASGenerator instance per rollout
-            mas_generator = MASGenerator(**agent_init_params)
-            self.agent_groups_list.append(mas_generator)
+            # Create agent instances based on turn_order
+            agent_group = []
+            for agent_class in self.agent_class_list:
+                agent = agent_class(**agent_init_params)
+                agent_group.append(agent)
+            self.agent_groups_list.append(agent_group)
         
     
                    
             
     async def generate_single_rollout(self, rollout_idx):
         """
-        Generate a single rollout for autoevol - simplified to single generation per rollout.
-        MASGenerator only needs to generate once, then step() handles MAS execution.
+        Generate a single rollout for autoevol with split policy:
+        - Designer (model 0) generates MAS code
+        - Executor (model 1) executes the MAS code
+        Both use outcome reward to update their policies.
 
         Args:
             rollout_idx: Index of the rollout
@@ -272,115 +285,242 @@ class MultiAgentsExecutionEngineAutoEvol:
         for policy_name in self.tokenizer_dict.keys():
             trajectory_per_task_dict[policy_name] = DataProto()
 
-        reward = 0.0
         env = self.envs[rollout_idx]
-        mas_generator = self.agent_groups_list[rollout_idx]  # Single MASGenerator instance
-
-        # Use the first (and only) agent name from turn_order
-        agent_name = self.turn_order[0] if self.turn_order else "mas_generator"
-        policy_name = self.agent_policy_mapping.get(agent_name)
+        agent_group = self.agent_groups_list[rollout_idx]  # List of agents: [Designer, Executor]
+        
+        # Get agent names and their corresponding policies
+        designer_name = self.turn_order[0] if len(self.turn_order) > 0 else "Designer"
+        executor_name = self.turn_order[1] if len(self.turn_order) > 1 else "Executor"
+        
+        designer_policy = self.agent_policy_mapping.get(designer_name)
+        executor_policy = self.agent_policy_mapping.get(executor_name)
+        
+        designer_agent = agent_group[0] if len(agent_group) > 0 else None
+        executor_agent = agent_group[1] if len(agent_group) > 1 else None
+        
+        if designer_agent is None or executor_agent is None:
+            logger.error(f"Missing agents for rollout {rollout_idx}")
+            return trajectory_per_task_dict
 
         self.multi_logger.log_async_event(
             self.mode, env_idx, rollout_idx, "generation_start",
-            f"Starting MAS generation for rollout {rollout_idx}",
-            {"rollout_idx": rollout_idx}
+            f"Starting split policy rollout for rollout {rollout_idx}",
+            {"rollout_idx": rollout_idx, "designer": designer_name, "executor": executor_name}
         )
 
-        # Step 1: Update agent from environment to get prompt
-        mas_generator.update_from_env(env)
-        prompt = mas_generator.current_prompt
-        #print(f"Generated prompt for rollout {rollout_idx}, agent {agent_name}: {prompt}")
+        # ========== PHASE 1: Designer generates MAS code ==========
+        designer_enable_thinking = self.agent_enable_thinking.get(designer_name, False)
+        designer_enable_multimodal = self.agent_enable_multimodal.get(designer_name, False)
+        
+        # Step 1: Designer updates from environment to get prompt
+        designer_agent.update_from_env(env)
+        designer_prompt = designer_agent.current_prompt
 
-        agent_enable_thinking = self.agent_enable_thinking.get(agent_name, False)
-        agent_enable_multimodal = self.agent_enable_multimodal.get(agent_name, False)
+        # Step 2: Format designer prompt for model
+        print(f"[PRINT DEBUG] Converting designer prompt to DataProto...")
+        print(f"[PRINT DEBUG] prompt type: {type(designer_prompt)}")
+        print(f"[PRINT DEBUG] prompt keys: {list(designer_prompt.keys()) if isinstance(designer_prompt, dict) else 'N/A'}")
+        if isinstance(designer_prompt, dict):
+            print(f"[PRINT DEBUG] prompt['text'] length: {len(designer_prompt.get('text', ''))}")
+            print(f"[PRINT DEBUG] prompt['system']: {designer_prompt.get('system', 'N/A')[:100]}")
+        
+        try:
+            designer_format_prompt = convert_prompt_to_dpr(
+                self.tokenizer_dict[designer_policy],
+                self.processor_dict.get(designer_policy),
+                designer_prompt,
+                self.max_prompt_length,
+                multi_modal=designer_enable_multimodal,
+                enable_thinking=designer_enable_thinking
+            )
+            print(f"[PRINT DEBUG] designer_format_prompt created: {designer_format_prompt is not None}")
+            if designer_format_prompt is not None:
+                batch_exists = hasattr(designer_format_prompt, 'batch') and designer_format_prompt.batch is not None
+                if batch_exists:
+                    try:
+                        batch_keys = list(designer_format_prompt.batch.keys())
+                        print(f"[PRINT DEBUG] designer_format_prompt.batch keys: {batch_keys}")
+                    except Exception as e:
+                        print(f"[PRINT DEBUG] Error getting batch keys: {e}")
+                else:
+                    print(f"[PRINT DEBUG] designer_format_prompt.batch is None or doesn't exist")
+        except Exception as e:
+            print(f"[PRINT DEBUG] ========== ERROR in convert_prompt_to_dpr for designer ==========")
+            print(f"[PRINT DEBUG] Exception: {e}")
+            import traceback
+            print(f"[PRINT DEBUG] Traceback: {traceback.format_exc()}")
+            raise
 
-        # Step 2: Format prompt for model
-        format_prompt = convert_prompt_to_dpr(
-            self.tokenizer_dict[policy_name],
-            self.processor_dict.get(policy_name),
-            prompt,
-            self.max_prompt_length,
-            multi_modal=agent_enable_multimodal,
-            enable_thinking=agent_enable_thinking
-        )
-
-        if format_prompt is None:
+        if designer_format_prompt is None:
+            print(f"[PRINT DEBUG] ========== ERROR: designer_format_prompt is None ==========")
             self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
-                "Failed to format prompt",
-                {"error": "format_prompt is None"}
+                self.mode, env_idx, rollout_idx, 0, designer_name,
+                "Failed to format designer prompt",
+                {"error": "designer_format_prompt is None"}
             )
             return trajectory_per_task_dict
 
-        # Step 3: Generate MAS code using LLM
-        ppo_trainer_config = self.ppo_trainer_config_dict.get(policy_name, None)
-        model_path = ppo_trainer_config.actor_rollout_ref.model.path
-        if "checkpoint" in str(model_path):
-            model_name = str(model_path)
+        # Step 3: Generate MAS code using Designer's LLM
+        designer_ppo_config = self.ppo_trainer_config_dict.get(designer_policy, None)
+        designer_model_path = designer_ppo_config.actor_rollout_ref.model.path if designer_ppo_config else None
+        if designer_model_path:
+            designer_model_name = "/".join(str(designer_model_path).split("/")[-2:])
         else:
-            model_name = "/".join(str(model_path).split("/")[-2:])
+            designer_model_name = designer_policy
 
-        output_dpr = None
-        response = None
+        print(f"[PRINT DEBUG] ========== Designer MAS Generation Start (rollout_idx={rollout_idx}, env_idx={env_idx}) ==========")
+        print(f"[PRINT DEBUG] designer_policy: {designer_policy}")
+        print(f"[PRINT DEBUG] designer_model_name: {designer_model_name}")
+
+        designer_output_dpr = None
+        designer_response = None
 
         try:
-            _addresses = self.server_address_dict.get(policy_name)
-            if isinstance(_addresses, (list, tuple)):
-                _address = random.choice(_addresses) if len(_addresses) > 0 else _addresses[0]
+            designer_addresses = self.server_address_dict.get(designer_policy)
+            if isinstance(designer_addresses, (list, tuple)):
+                designer_address = random.choice(designer_addresses) if len(designer_addresses) > 0 else designer_addresses[0]
             else:
-                _address = _addresses
+                designer_address = designer_addresses
 
-            lora_id = None
-            if self.lora_differ_mode and self.use_lora_for_generation and agent_name in self.agent_lora_mapping:
-                lora_id = self.agent_lora_mapping[agent_name]
+            designer_lora_id = None
+            if self.lora_differ_mode and self.use_lora_for_generation and designer_name in self.agent_lora_mapping:
+                designer_lora_id = self.agent_lora_mapping[designer_name]
 
-            agent_config = self.agent_config_dict.get(agent_name, None)
-            agent_sample_num = getattr(agent_config, 'sample_num', 1) if agent_config else 1
+            designer_config = self.agent_config_dict.get(designer_name, None)
+            designer_sample_num = getattr(designer_config, 'sample_num', 1) if designer_config else 1
 
-            if _DEBUG_ENGINE:
-                lora_status = f"LoRA={lora_id}" if lora_id is not None else "base_model"
-                
-
-            output_dpr, response = await llm_async_generate(
+            designer_output_dpr, designer_response = await llm_async_generate(
                 rollout_idx=rollout_idx,
-                turn_idx=0,  # Single turn
-                agent_idx=0,  # Single agent
-                prompt_dpr=format_prompt,
-                ppo_trainer_config=ppo_trainer_config,
-                address=_address,
-                model_name=model_name,
-                tokenizer=self.tokenizer_dict[policy_name],
-                enable_thinking=agent_enable_thinking,
+                turn_idx=0,
+                agent_idx=0,
+                prompt_dpr=designer_format_prompt,
+                ppo_trainer_config=designer_ppo_config,
+                address=designer_address,
+                model_name=designer_model_name,
+                tokenizer=self.tokenizer_dict[designer_policy],
+                enable_thinking=designer_enable_thinking,
                 application_id=str(uuid.uuid4()),
                 env_idx=env_idx,
-                policy_name=policy_name,
+                policy_name=designer_policy,
                 timeout=self.generate_timeout,
                 mode=self.mode,
-                lora_id=lora_id,
-                agent_config=agent_config,
-                sample_num=agent_sample_num,
+                lora_id=designer_lora_id,
+                agent_config=designer_config,
+                sample_num=designer_sample_num,
             )
-            #print(f"response: {response}s")
+                
         except Exception as e:
+            import traceback
+            print(f"[PRINT DEBUG] ========== EXCEPTION in Designer MAS Generation ==========")
+            print(f"[PRINT DEBUG] Exception: {e}")
+            print(traceback.format_exc())
             self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
-                f"Failed to generate response: {e}",
+                self.mode, env_idx, rollout_idx, 0, designer_name,
+                f"Failed to generate designer response: {e}",
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
-            output_dpr = None
-            response = ""
+            designer_output_dpr = None
+            designer_response = ""
 
-        if response is None:
-            response = ""
+        if designer_response is None:
+            designer_response = ""
 
-        # Step 4: Update agent with model response (extract code)
-        mas_generator.update_from_model(response)
+        # Step 4: Update designer agent with model response (extract code)
+        designer_agent.update_from_model(designer_response)
+        designer_code = designer_agent.generated_code if hasattr(designer_agent, 'generated_code') else ""
         
-        # Log the generated MAS code
+        print(f"[PRINT DEBUG] Designer generated code length: {len(designer_code)}")
 
-        # Step 5: Execute MAS code via step() method and get tokenized trajectories + final reward
-        tokenized_trajectories = []
+        # ========== PHASE 2: Executor executes MAS code ==========
+        executor_enable_thinking = self.agent_enable_thinking.get(executor_name, False)
+        executor_enable_multimodal = self.agent_enable_multimodal.get(executor_name, False)
+        
+        # Step 5: Executor updates from environment with designer's code
+        executor_agent.update_from_env(env, designer_code=designer_code)
+        executor_prompt = executor_agent.current_prompt
+        
+        # Step 6: Format executor prompt for model (but executor doesn't need to generate, just execute)
+        # For executor, we still need to create a DataProto for training, but the prompt is the code itself
+        try:
+            executor_format_prompt = convert_prompt_to_dpr(
+                self.tokenizer_dict[executor_policy],
+                self.processor_dict.get(executor_policy),
+                executor_prompt,
+                self.max_prompt_length,
+                multi_modal=executor_enable_multimodal,
+                enable_thinking=False  # Executor should not use thinking
+            )
+        except Exception as e:
+            print(f"[PRINT DEBUG] ========== ERROR in convert_prompt_to_dpr for executor ==========")
+            print(f"[PRINT DEBUG] Exception: {e}")
+            import traceback
+            print(traceback.format_exc())
+            executor_format_prompt = None
+
+        # Step 7: Generate executor response (though it's mainly for creating DataProto)
+        executor_ppo_config = self.ppo_trainer_config_dict.get(executor_policy, None)
+        executor_model_path = executor_ppo_config.actor_rollout_ref.model.path if executor_ppo_config else None
+        if executor_model_path:
+            executor_model_name = "/".join(str(executor_model_path).split("/")[-2:])
+        else:
+            executor_model_name = executor_policy
+
+        executor_output_dpr = None
+        executor_response = ""
+
+        if executor_format_prompt is not None:
+            try:
+                executor_addresses = self.server_address_dict.get(executor_policy)
+                if isinstance(executor_addresses, (list, tuple)):
+                    executor_address = random.choice(executor_addresses) if len(executor_addresses) > 0 else executor_addresses[0]
+                else:
+                    executor_address = executor_addresses
+
+                executor_lora_id = None
+                if self.lora_differ_mode and self.use_lora_for_generation and executor_name in self.agent_lora_mapping:
+                    executor_lora_id = self.agent_lora_mapping[executor_name]
+
+                executor_config = self.agent_config_dict.get(executor_name, None)
+                executor_sample_num = getattr(executor_config, 'sample_num', 1) if executor_config else 1
+
+                executor_output_dpr, executor_response = await llm_async_generate(
+                    rollout_idx=rollout_idx,
+                    turn_idx=1,
+                    agent_idx=1,
+                    prompt_dpr=executor_format_prompt,
+                    ppo_trainer_config=executor_ppo_config,
+                    address=executor_address,
+                    model_name=executor_model_name,
+                    tokenizer=self.tokenizer_dict[executor_policy],
+                    enable_thinking=False,  # Executor should not use thinking
+                    application_id=str(uuid.uuid4()),
+                    env_idx=env_idx,
+                    policy_name=executor_policy,
+                    timeout=self.generate_timeout,
+                    mode=self.mode,
+                    lora_id=executor_lora_id,
+                    agent_config=executor_config,
+                    sample_num=executor_sample_num,
+                )
+            except Exception as e:
+                import traceback
+                print(f"[PRINT DEBUG] ========== EXCEPTION in Executor Generation ==========")
+                print(f"[PRINT DEBUG] Exception: {e}")
+                print(traceback.format_exc())
+                executor_output_dpr = None
+                executor_response = ""
+
+        if executor_response is None:
+            executor_response = ""
+
+        # Step 8: Update executor agent (though it mainly uses designer's code)
+        executor_agent.update_from_model(executor_response)
+
+        # Step 9: Execute MAS code via executor's step() method
         final_reward = 0.0
+        workflow_dataproto_list = []
+        mas_execution_success = False
+        
         try:
             env_worker_id = rollout_idx % self.num_workers
             env_worker = self.env_workers[env_worker_id]
@@ -402,75 +542,29 @@ class MultiAgentsExecutionEngineAutoEvol:
                     raise RuntimeError(f"Failed to create output directory: {output_dir}")
             except Exception as e:
                 self.multi_logger.log_env_agent_info(
-                    self.mode, env_idx, rollout_idx, 1, agent_name,
+                    self.mode, env_idx, rollout_idx, 1, executor_name,
                     f"Failed to create output directory: {e}",
                     {"output_dir": output_dir, "error": str(e)}
                 )
                 raise
-            
-            # Get LLM config parameters from train/val config
-            if agent_config:
-                if self.mode == "train":
-                    llm_config = getattr(agent_config, 'train_llm_config', {})
-                else:
-                    llm_config = getattr(agent_config, 'val_llm_config', {})
-                
-                temperature = llm_config.get('temperature', 0.2) if llm_config else 0.2
-                top_p = llm_config.get('top_p', 0.95) if llm_config else 0.95
-                top_k = llm_config.get('top_k', 20) if llm_config else 20
-            else:
-                temperature = 0.2
-                top_p = 0.95
-                top_k = 20
 
-            # Prepare LLM config for MAS execution
-            llm_config_for_mas = {
-                "server_address": _address,
-                "model_name": model_name,
-                "api_key": getattr(self.config.training, 'openai_api_key', ''),
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-            }
-                
-            
-            self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
-                "MAS execution configuration",
-                {
-                    "output_dir": output_dir,
-                    "llm_config": {k: v for k, v in llm_config_for_mas.items() if k != 'api_key'},
-                    "mode": self.mode
-                }
-            )
+            # Get tokenizer_path for executor
+            executor_tokenizer_path = self.tokenizer_path_dict.get(executor_policy)
 
-            # Get tokenizer_path - prefer tokenizer_path_dict, fallback to tokenizer_dict
-            tokenizer_path = self.tokenizer_path_dict.get(policy_name)
-            tokenizer_obj = self.tokenizer_dict.get(policy_name) if self.tokenizer_dict else None
+            logger.info(f"Calling executor step() with tokenizer_path: {executor_tokenizer_path}")
 
-            logger.info(f"Calling step() with tokenizer_path: {tokenizer_path}")
-            
-            # Assign worker to this rollout (similar to multi_agents_execution_engine.py)
-            env_worker_id = rollout_idx % self.num_workers
-            env_worker = self.env_workers[env_worker_id]
-
-            # Store worker_id and GPU group in env_data for task folder path generation
-            if hasattr(env, 'state'):
-                env.state.assigned_worker_id = env_worker_id
-                env.state.gpu_group_id = self.gpu_group_id
-
-            # Step 6 & 7: Generate mas.py, execute it, and collect results (all in step())
+            # Step 10: Execute MAS code using executor's step() method
             step_result = await asyncio.wait_for(
-                mas_generator.step(
+                executor_agent.step(
                     env_data=env,
                     output_dir=output_dir,
-                    server_address=_address,
-                    model_name=model_name,
-                    tokenizer_path=tokenizer_path,
+                    server_address=executor_address,
+                    model_name=executor_model_name,
+                    tokenizer_path=executor_tokenizer_path,
                     max_prompt_length=self.max_prompt_length,
                     max_response_length=self.max_response_length,
-                    ppo_trainer_config=ppo_trainer_config,
-                    enable_thinking=agent_enable_thinking,
+                    ppo_trainer_config=executor_ppo_config,
+                    enable_thinking=False,  # Executor should not use thinking
                     step_timeout=self.step_timeout,
                     env_worker=env_worker
                 ),
@@ -483,7 +577,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             final_reward = step_result.get("reward", 0.0)
 
             self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
+                self.mode, env_idx, rollout_idx, 1, executor_name,
                 "MAS execution completed",
                 {
                     "mas_execution_success": mas_execution_success,
@@ -495,8 +589,8 @@ class MultiAgentsExecutionEngineAutoEvol:
 
         except asyncio.TimeoutError:
             self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
-                "MAS generation timed out",
+                self.mode, env_idx, rollout_idx, 1, executor_name,
+                "MAS execution timed out",
                 {"error": "timeout"}
             )
             mas_execution_success = False
@@ -504,8 +598,8 @@ class MultiAgentsExecutionEngineAutoEvol:
             final_reward = 0.0
         except Exception as e:
             self.multi_logger.log_env_agent_info(
-                self.mode, env_idx, rollout_idx, 1, agent_name,
-                f"MAS generation failed: {e}",
+                self.mode, env_idx, rollout_idx, 1, executor_name,
+                f"MAS execution failed: {e}",
                 {"error": str(e), "traceback": traceback.format_exc()}
             )
             mas_execution_success = False
@@ -519,90 +613,131 @@ class MultiAgentsExecutionEngineAutoEvol:
                 logger.debug(f"Cleanup warning for rollout {rollout_idx}: {cleanup_err}")
             
 
-        # Step 8: Merge all DataProtos
-        all_dataprotos = []
+        # Step 11: Merge all DataProtos and assign outcome rewards
+        # Both Designer and Executor use the same outcome reward (final_reward)
+        
+        # Designer's DataProto - reward based on final outcome
+        if designer_output_dpr is not None:
+            designer_batch_size = len(designer_output_dpr)
+            designer_output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["agent_name"] = np.array([designer_name] * designer_batch_size, dtype=object)
+            designer_output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["turn_idx"] = np.array([0] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["agent_idx"] = np.array([0] * designer_batch_size)
 
-        # First batch: MAS generation DataProto (reward based on final_reward from MAS execution)
-        batch_size = len(output_dpr)
-        output_dpr.non_tensor_batch["reward"] = np.array([int(mas_execution_success)] * batch_size)
-        output_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
-        output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
+            if self.lora_differ_mode and designer_name in self.agent_lora_mapping:
+                designer_lora_ids = [self.agent_lora_mapping[designer_name]] * designer_batch_size
+                designer_output_dpr.non_tensor_batch["lora_ids"] = np.array(designer_lora_ids, dtype=object)
 
-        if self.lora_differ_mode:
-            lora_ids = [self.agent_lora_mapping[agent_name]] * batch_size
-            output_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
+            if trajectory_per_task_dict[designer_policy].batch is None:
+                trajectory_per_task_dict[designer_policy] = designer_output_dpr
+            else:
+                trajectory_per_task_dict[designer_policy] = DataProto.concat([
+                    trajectory_per_task_dict[designer_policy],
+                    designer_output_dpr
+                ])
 
-        all_dataprotos.append(output_dpr)
+        # Executor's DataProto - reward based on final outcome
+        if executor_output_dpr is not None:
+            executor_batch_size = len(executor_output_dpr)
+            executor_output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["agent_name"] = np.array([executor_name] * executor_batch_size, dtype=object)
+            executor_output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["turn_idx"] = np.array([1] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["agent_idx"] = np.array([1] * executor_batch_size)
 
-        # Second batch: workflow DataProtos from MAS workflow execution (verl integration)
+            if self.lora_differ_mode and executor_name in self.agent_lora_mapping:
+                executor_lora_ids = [self.agent_lora_mapping[executor_name]] * executor_batch_size
+                executor_output_dpr.non_tensor_batch["lora_ids"] = np.array(executor_lora_ids, dtype=object)
+
+            if trajectory_per_task_dict[executor_policy].batch is None:
+                trajectory_per_task_dict[executor_policy] = executor_output_dpr
+            else:
+                trajectory_per_task_dict[executor_policy] = DataProto.concat([
+                    trajectory_per_task_dict[executor_policy],
+                    executor_output_dpr
+                ])
+
+        # Workflow DataProtos from MAS workflow execution (assigned to executor)
         if workflow_dataproto_list:
             for workflow_dpr in workflow_dataproto_list:
-                # Add metadata to each workflow DataProto
                 batch_size = len(workflow_dpr)
                 workflow_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
-                workflow_dpr.non_tensor_batch["agent_name"] = np.array([agent_name] * batch_size, dtype=object)
+                workflow_dpr.non_tensor_batch["agent_name"] = np.array([executor_name] * batch_size, dtype=object)
                 workflow_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
-                # Use turn_idx=1 for workflow DataProtos
                 workflow_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
                 workflow_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
                 workflow_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
-                workflow_dpr.non_tensor_batch["agent_idx"] = np.array([0] * batch_size)
+                workflow_dpr.non_tensor_batch["agent_idx"] = np.array([1] * batch_size)
 
-                if self.lora_differ_mode:
-                    lora_ids = [self.agent_lora_mapping[agent_name]] * batch_size
-                    workflow_dpr.non_tensor_batch["lora_ids"] = np.array(lora_ids, dtype=object)
+                if self.lora_differ_mode and executor_name in self.agent_lora_mapping:
+                    executor_lora_ids = [self.agent_lora_mapping[executor_name]] * batch_size
+                    workflow_dpr.non_tensor_batch["lora_ids"] = np.array(executor_lora_ids, dtype=object)
 
-                all_dataprotos.append(workflow_dpr)
+                if trajectory_per_task_dict[executor_policy].batch is None:
+                    trajectory_per_task_dict[executor_policy] = workflow_dpr
+                else:
+                    trajectory_per_task_dict[executor_policy] = DataProto.concat([
+                        trajectory_per_task_dict[executor_policy],
+                        workflow_dpr
+                    ])
 
             logger.info(f"Added {len(workflow_dataproto_list)} workflow DataProto entries for rollout {rollout_idx}")
 
-        # Concatenate all DataProtos if we have any
-        if all_dataprotos:
-            if len(all_dataprotos) == 1:
-                trajectory_per_task_dict[policy_name] = all_dataprotos[0]
-            else:
-              
-                try:
-                    trajectory_per_task_dict[policy_name] = DataProto.concat(all_dataprotos)
-                except AssertionError as e:
-               
-                    for i, dpr in enumerate(all_dataprotos[1:], 1):
-                        missing_in_first = set(dpr.non_tensor_batch.keys()) - set(all_dataprotos[0].non_tensor_batch.keys())
-                        missing_in_current = set(all_dataprotos[0].non_tensor_batch.keys()) - set(dpr.non_tensor_batch.keys())
-                  
-                    raise
-
-        # Step 9: Log results
-        env_state_compact = env.state.to_dict_compact(agent_name=agent_name) if hasattr(env.state, 'to_dict_compact') else env.state
+        # Step 12: Log results
+        env_state_compact = env.state.to_dict_compact(agent_name=designer_name) if hasattr(env.state, 'to_dict_compact') else env.state
 
         self.multi_logger.log_env_agent_info(
-            self.mode, env_idx, rollout_idx, 1, agent_name,
-            "MAS generation and execution completed",
+            self.mode, env_idx, rollout_idx, 0, designer_name,
+            "Designer MAS generation completed",
             {
-                "agent_prompt": {"text": prompt.get("text", "") if isinstance(prompt, dict) else str(prompt), "image": None},
-                "agent_response": response,
+                "agent_prompt": {"text": designer_prompt.get("text", "") if isinstance(designer_prompt, dict) else str(designer_prompt), "image": None},
+                "agent_response": designer_response,
+                "generated_code_length": len(designer_code),
+                "reward": final_reward
+            }
+        )
+
+        self.multi_logger.log_env_agent_info(
+            self.mode, env_idx, rollout_idx, 1, executor_name,
+            "Executor MAS execution completed",
+            {
+                "agent_prompt": {"text": executor_prompt.get("text", "")[:500] if isinstance(executor_prompt, dict) else str(executor_prompt)[:500], "image": None},
+                "agent_response": executor_response,
                 "env_state": env_state_compact,
                 "reward": final_reward
             }
         )
 
-        # Step 10: Log rollout summary
-        agent_rewards = {agent_name: final_reward}
+        # Step 13: Log rollout summary
+        agent_rewards = {designer_name: final_reward, executor_name: final_reward}
         self.multi_logger.log_rollout_summary(
             self.mode, env_idx, rollout_idx, agent_rewards,
             "rollout_complete",
             extra_data={
-                "turn_idx": 1,  # Single turn
-                "message": f"Rollout {rollout_idx} completed",
-                "reward": final_reward
+                "turn_idx": 1,
+                "message": f"Rollout {rollout_idx} completed with split policy",
+                "reward": final_reward,
+                "designer": designer_name,
+                "executor": executor_name
             }
         )
 
         if self.mode == "validate":
-            # Consider successful if reward > 0.5 (for binary rewards, this means reward == 1.0)
+            # Consider successful if reward > 0.5
             if final_reward > 0.5:
-                self.success_rollout_idx_list_dict[agent_name].append(rollout_idx)
-                self.success_ave_turn_dict[agent_name] += 1  # Single turn
+                if designer_name in self.success_rollout_idx_list_dict:
+                    self.success_rollout_idx_list_dict[designer_name].append(rollout_idx)
+                if executor_name in self.success_rollout_idx_list_dict:
+                    self.success_rollout_idx_list_dict[executor_name].append(rollout_idx)
+                if designer_name in self.success_ave_turn_dict:
+                    self.success_ave_turn_dict[designer_name] += 1
+                if executor_name in self.success_ave_turn_dict:
+                    self.success_ave_turn_dict[executor_name] += 1
                 env.success = True
             else:
                 env.success = False
@@ -694,6 +829,13 @@ class MultiAgentsExecutionEngineAutoEvol:
                     task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)})")
                 except Exception as e:
                     failed_count += 1
+                    print(f"[PRINT DEBUG] ========== ROLLOUT TASK FAILED ==========")
+                    print(f"[PRINT DEBUG] Failed count: {failed_count}")
+                    print(f"[PRINT DEBUG] Exception type: {type(e).__name__}")
+                    print(f"[PRINT DEBUG] Exception message: {str(e)}")
+                    import traceback
+                    print(f"[PRINT DEBUG] Full traceback:")
+                    print(traceback.format_exc())
                     task_pbar.update(1)
                     task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)}, {failed_count} failed)")
 

@@ -98,12 +98,16 @@ class MultiAgentsPPOTrainer:
         config = self.config
         specialization = config.specialization
         
+        # Check if this is a split_policy scenario (multiple agents with different policies)
+        policy_names = set(agent_config.policy_name for agent_config in config.agent_policy_configs.agent_configs.values())
+        num_models = len(config.models) if hasattr(config, 'models') else 0
+        is_split_policy = len(policy_names) > 1 and num_models > 1
         
-        if specialization in ["prompt", "lora"]:
-            # Single PPO trainer for prompt/lora specialization
+        if specialization in ["prompt", "lora"] and not is_split_policy:
+            # Single PPO trainer for prompt/lora specialization (single model)
             self._create_single_ppo_trainer()
         else:
-            # Multiple PPO trainers for full/other specialization
+            # Multiple PPO trainers for full/other specialization or split_policy
             self._create_multiple_ppo_trainers()
         
     
@@ -275,6 +279,32 @@ class MultiAgentsPPOTrainer:
 
     def _update_parameters(self, batch, ppo_trainer, timing_raw):
 
+        # Check if batch is empty or None
+        if batch is None:
+            colorful_print("Error: batch is None, skipping parameter update", "red")
+            raise ValueError("Cannot update parameters: batch is None")
+        
+        if not hasattr(batch, 'batch') or batch.batch is None:
+            colorful_print("Warning: batch.batch is None or empty, skipping parameter update", "red")
+            # Return a minimal batch structure to avoid downstream errors
+            if not hasattr(batch, 'meta_info'):
+                batch.meta_info = {}
+            if 'metrics' not in batch.meta_info:
+                batch.meta_info['metrics'] = {}
+            batch.meta_info['metrics']['skipped'] = True
+            batch.meta_info['metrics']['reason'] = "Empty batch (all rollouts failed)"
+            return batch
+        
+        # Check if batch has required keys
+        if "prompts" not in batch.batch or "responses" not in batch.batch:
+            colorful_print(f"Warning: batch missing required keys. Available keys: {list(batch.batch.keys()) if batch.batch else 'None'}", "red")
+            if not hasattr(batch, 'meta_info'):
+                batch.meta_info = {}
+            if 'metrics' not in batch.meta_info:
+                batch.meta_info['metrics'] = {}
+            batch.meta_info['metrics']['skipped'] = True
+            batch.meta_info['metrics']['reason'] = f"Missing required keys: prompts or responses"
+            return batch
 
         # Initialize metrics dictionary if not exists
         if not hasattr(batch, 'meta_info'):
@@ -284,7 +314,7 @@ class MultiAgentsPPOTrainer:
 
         # Filter out data from untrained agents
         if self.agent_untrained and len(self.agent_untrained) > 0:
-            if 'agent_name' in batch.non_tensor_batch:
+            if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch and 'agent_name' in batch.non_tensor_batch:
                 agent_names = batch.non_tensor_batch['agent_name']
                 # Keep only samples from agents that are not in agent_untrained list
                 keep_indices = [i for i, name in enumerate(agent_names) if name not in self.agent_untrained]
@@ -297,6 +327,13 @@ class MultiAgentsPPOTrainer:
                     if len(keep_indices) == 0:
                         colorful_print("Warning: All samples filtered out, skipping parameter update", "red")
                         return batch
+
+        # Check if prompts/responses are empty after filtering
+        if len(batch.batch["prompts"]) == 0 or len(batch.batch["responses"]) == 0:
+            colorful_print(f"Warning: Empty prompts ({len(batch.batch.get('prompts', []))}) or responses ({len(batch.batch.get('responses', []))}), skipping parameter update", "red")
+            batch.meta_info['metrics']['skipped'] = True
+            batch.meta_info['metrics']['reason'] = "Empty prompts or responses after filtering"
+            return batch
 
         # prompts: left padding
         prompts_batch = torch.nn.utils.rnn.pad_sequence(
@@ -688,21 +725,49 @@ class MultiAgentsPPOTrainer:
                     
                     def update_single_trainer(model_name, batch, trainer):
                         
+                        # Check if batch is valid before processing
+                        if batch is None:
+                            colorful_print(f"Error: batch is None for model {model_name}, skipping update", "red")
+                            return {"status": "error", "model_name": model_name, "timing": {}, 
+                                    "metrics": {"error": "batch is None"}, "agent_names": None, "updated_batch": None}
+                        
+                        if not hasattr(batch, 'batch') or batch.batch is None:
+                            colorful_print(f"Warning: batch.batch is None for model {model_name}, skipping update", "red")
+                            return {"status": "skipped", "model_name": model_name, "timing": {}, 
+                                    "metrics": {"skipped": True, "reason": "Empty batch"}, "agent_names": None, "updated_batch": batch}
+                        
                         local_timing_raw = {}
-                        # Keep the updated batch with advantages/returns for later metrics
-                        updated_batch = self._update_parameters(batch, trainer, local_timing_raw)
-                        
-                        trainer_metrics = updated_batch.meta_info.get('metrics', {}) if hasattr(updated_batch, 'meta_info') else {}
-                        agent_names = updated_batch.non_tensor_batch.get('agent_name') if hasattr(updated_batch, 'non_tensor_batch') else None
-                        
-                        return {"status": "success", "model_name": model_name, "timing": local_timing_raw, 
-                                "metrics": trainer_metrics, "agent_names": agent_names, "updated_batch": updated_batch}
+                        try:
+                            # Keep the updated batch with advantages/returns for later metrics
+                            updated_batch = self._update_parameters(batch, trainer, local_timing_raw)
+                            
+                            trainer_metrics = updated_batch.meta_info.get('metrics', {}) if hasattr(updated_batch, 'meta_info') else {}
+                            agent_names = updated_batch.non_tensor_batch.get('agent_name') if hasattr(updated_batch, 'non_tensor_batch') and updated_batch.non_tensor_batch else None
+                            
+                            return {"status": "success", "model_name": model_name, "timing": local_timing_raw, 
+                                    "metrics": trainer_metrics, "agent_names": agent_names, "updated_batch": updated_batch}
+                        except Exception as e:
+                            colorful_print(f"Error updating parameters for model {model_name}: {e}", "red")
+                            import traceback
+                            colorful_print(f"Traceback: {traceback.format_exc()}", "red")
+                            return {"status": "error", "model_name": model_name, "timing": local_timing_raw, 
+                                    "metrics": {"error": str(e)}, "agent_names": None, "updated_batch": batch}
                     
                 
                     # Update trainers
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         if model_name in gen_batch_output_per_policy:
-                            result = update_single_trainer(model_name, batch_per_trainer[model_name], trainer)
+                            # Additional check before calling update_single_trainer
+                            if model_name not in batch_per_trainer:
+                                colorful_print(f"Warning: model {model_name} not in batch_per_trainer, skipping", "yellow")
+                                continue
+                            
+                            batch = batch_per_trainer[model_name]
+                            if batch is None or (hasattr(batch, 'batch') and batch.batch is None):
+                                colorful_print(f"Warning: Empty batch for model {model_name}, skipping parameter update", "yellow")
+                                continue
+                            
+                            result = update_single_trainer(model_name, batch, trainer)
                             
                             # Merge timing metrics
                             for key, value in result["timing"].items():
@@ -729,6 +794,19 @@ class MultiAgentsPPOTrainer:
             # Use the first trainer's batch for metrics calculation
     
             for model_name, batch in batch_per_trainer.items():
+                print(f"[PRINT DEBUG] Processing batch for model: {model_name}")
+                print(f"[PRINT DEBUG] batch is None: {batch is None}")
+                if batch is not None:
+                    print(f"[PRINT DEBUG] batch.batch is None: {batch.batch is None}")
+                    if batch.batch is not None:
+                        print(f"[PRINT DEBUG] batch.batch keys: {list(batch.batch.keys())}")
+                        if "token_level_scores" in batch.batch:
+                            print(f"[PRINT DEBUG] token_level_scores shape: {batch.batch['token_level_scores'].shape if hasattr(batch.batch['token_level_scores'], 'shape') else 'N/A'}")
+                        else:
+                            print(f"[PRINT DEBUG] WARNING: token_level_scores not in batch.batch!")
+                if batch is None or batch.batch is None:
+                    print(f"[PRINT DEBUG] ERROR: Cannot compute metrics - batch is None or batch.batch is None!")
+                    continue
                 for metric_name, metric_value in compute_data_metrics(batch=batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())).items():
                     metric_name_policy= model_name + "_" + metric_name
                     metrics[metric_name_policy] = metric_value

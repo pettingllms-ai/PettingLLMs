@@ -73,9 +73,15 @@ def train_multi_agents(config):
     
     # Validation 2: Check specialization mode requirements
     if specialization == "prompt" or specialization == "lora":
-        if num_models != 1:
+        # Allow multiple models for split_policy scenario (multiple agents with different policies)
+        # Check if we have multiple agents with different policy names
+        policy_names = set(agent_config.policy_name for agent_config in config.agent_policy_configs.agent_configs.values())
+        is_split_policy = len(policy_names) > 1 and num_models > 1
+        
+        if num_models != 1 and not is_split_policy:
             raise ValueError(
-                f"For specialization={specialization}', expected exactly 1 model, but got {num_models}"
+                f"For specialization={specialization}', expected exactly 1 model, but got {num_models}. "
+                f"For split_policy (multiple agents with different policies), multiple models are allowed."
             )
     if specialization == "lora":
         # Validate LoRA configuration
@@ -151,6 +157,14 @@ def train_multi_agents(config):
 
     n_gpus_per_model = n_gpus_per_node // model_num
     print(f"n_gpus_per_model: {n_gpus_per_model}")
+    
+    # Validation: Ensure each model gets at least 1 GPU
+    if n_gpus_per_model < 1:
+        raise ValueError(
+            f"Insufficient GPUs: n_gpus_per_node={n_gpus_per_node}, num_models={model_num}. "
+            f"Each model needs at least 1 GPU, but n_gpus_per_model={n_gpus_per_model}. "
+            f"Please increase n_gpus_per_node to at least {model_num}."
+        )
     
     role_worker_mapping = {
         Role.ActorRollout: ray.remote(max_concurrency=2048)(AsyncActorRolloutRefWorker),

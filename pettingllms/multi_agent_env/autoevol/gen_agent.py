@@ -52,7 +52,11 @@ class MASGenerator(Agent):
     def update_from_model(self, response: str):
         code = ""
         self.current_response = response
-
+        
+        # Enhanced debugging
+        print(f"[DEBUG] MASGenerator.update_from_model called",response)
+        
+        
         # Strategy 1: Try <code>...</code> tags first
         code_match = re.search(r"<code>\s*(.*?)\s*</code>", response, re.DOTALL)
         if code_match:
@@ -424,12 +428,30 @@ except Exception as e:
         """
         import re
         
-        # Strategy 1: Look for **Final Answer** and extract last number
+        # Strategy 1: Look for **Final Answer** or FINAL ANSWER: format and extract last number
+        # Try pattern with stars first: **Final Answer** or **Final Answer**: xxx
         final_answer_match = re.search(
             r'\*\*Final\s*Answer\s*\*{0,2}[:\s]*(.*?)(?:={3,}|\Z)',
             output_text,
             re.DOTALL | re.IGNORECASE
         )
+        
+        # If not found, try pattern without stars: FINAL ANSWER: xxx or FINAL ANSWER:\nxxx
+        # This pattern handles both "FINAL ANSWER: xxx" and "FINAL ANSWER:\nxxx" formats
+        if not final_answer_match:
+            final_answer_match = re.search(
+                r'(?:^|\n)\s*FINAL\s+ANSWER\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
+                output_text,
+                re.MULTILINE | re.IGNORECASE | re.DOTALL
+            )
+        
+        # Also try case-insensitive pattern: Final Answer: xxx or Final Answer:\nxxx
+        if not final_answer_match:
+            final_answer_match = re.search(
+                r'(?:^|\n)\s*Final\s+Answer\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
+                output_text,
+                re.MULTILINE | re.IGNORECASE | re.DOTALL
+            )
         
         if final_answer_match:
             final_answer_section = final_answer_match.group(1).strip()
@@ -490,6 +512,419 @@ except Exception as e:
         
         try:
             # Pass final_answer as summary to reward function
+            reward = reward_function(final_answer, env_data)
+            return float(reward)
+        except Exception as e:
+            logger.warning(f"Error calculating reward: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+            return 0.0
+
+
+class MASExecutor(Agent):
+    """MAS Executor Agent - executes multi-agent systems designed by Designer"""
+
+    def __init__(self, task_type: str = "math", rollout_idx: Optional[int] = None, **kwargs):
+        super().__init__()
+        self.task_type = task_type.lower()
+        self.rollout_idx = rollout_idx
+
+        # Accept other keyword arguments for compatibility
+        for key, value in (kwargs or {}).items():
+            setattr(self, key, value)
+
+    def update_from_env(self, env_data: Env, designer_code: str = None):
+        """Update agent from environment data and designer's generated code"""
+        self.env_data = env_data
+        # Use designer's code as the prompt, but without thinking
+        # The prompt should be the code itself, ready to execute
+        if designer_code:
+            user_prompt_text = designer_code
+            system_prompt_text = "You are an expert in executing Multi-Agent System workflows. Execute the provided workflow code."
+        else:
+            # Fallback if no designer code is provided
+            user_prompt_text = "Execute the Multi Agent System workflow."
+            system_prompt_text = "You are an expert in executing Multi-Agent System workflows."
+
+        self.current_prompt = {"text": user_prompt_text, "image": None, "system": system_prompt_text}
+        self.designer_code = designer_code
+
+    def update_from_model(self, response: str):
+        """For executor, we don't need to extract code from response - we already have the code from designer"""
+        self.current_response = response
+        # Executor doesn't generate new code, it executes the designer's code
+        # So we keep the designer's code as current_action
+        if hasattr(self, 'designer_code') and self.designer_code:
+            self.current_action = self.designer_code
+        else:
+            self.current_action = ""
+        return self.current_action
+
+    async def step(self, env_data: Env, output_dir: str = None,
+                   server_address: str = None, model_name: str = None, 
+                   tokenizer_path: Optional[str] = None,
+                   max_prompt_length: int = 2048, max_response_length: int = 2048,
+                   ppo_trainer_config: Any = None, enable_thinking: bool = False,
+                   step_timeout: float = 600.0, env_worker: Any = None):
+        """
+        Execute the MAS code designed by Designer, collect results, and compute reward.
+
+        Args:
+            env_data: Environment data
+            output_dir: Output directory for generated code
+            server_address: vLLM server address for verl integration
+            model_name: Model name for verl integration
+            tokenizer_path: Path to tokenizer (preferred over extracting from tokenizer object)
+            max_prompt_length: Max prompt length
+            max_response_length: Max response length
+            ppo_trainer_config: PPO trainer config for verl integration
+            enable_thinking: Whether to enable thinking mode (should be False for executor)
+            step_timeout: Timeout for executing mas.py
+            env_worker: Ray worker for code execution (optional)
+
+        Returns:
+            dict: {
+                "workflow_dpr": List of DataProto from workflow execution,
+                "execution_success": bool indicating if execution succeeded,
+                "reward": float reward score,
+                "trajectory": List of DataProto (same as workflow_dpr)
+            }
+        """
+        # Use designer's code for execution
+        code = self.designer_code if hasattr(self, 'designer_code') and self.designer_code else ""
+        
+        if not code or not code.strip():
+            logger.warning("No designer code available for execution")
+            return {
+                "workflow_dpr": [],
+                "execution_success": False,
+                "reward": 0.0,
+                "trajectory": []
+            }
+
+        # Create output directory if it doesn't exist
+        os.makedirs(output_dir, exist_ok=True)
+        response_txt_path = os.path.join(output_dir, "executor_response.txt")
+        with open(response_txt_path, 'w') as f:
+            f.write(self.current_response if hasattr(self, 'current_response') else '')
+        
+        # Save generated code to mas.py
+        mas_py_path = os.path.join(output_dir, "mas.py")
+        dataproto_pkl_path = os.path.abspath(os.path.join(output_dir, "dataproto.pkl"))
+        output_txt_path = os.path.join(output_dir, "output.txt")
+        
+        logger.info(f"Using tokenizer_path for mas.py generation: {tokenizer_path}")
+
+        # Add necessary imports and AIClient setup before the generated code
+        setup_code = f"""
+import sys
+import os
+
+# Resolve paths at runtime to avoid hardcoded absolute paths
+here = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(here, "..", "..", ".."))
+
+sys.path.insert(0, here)
+sys.path.insert(0, repo_root)
+
+# Suppress warnings
+import logging
+import warnings
+logging.getLogger("autogen").setLevel(logging.ERROR)
+logging.getLogger("aiohttp").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# Import necessary modules for verl integration
+from pettingllms.multi_agent_env.autoevol.utils.BaseOpenAI import AIClient
+
+# Debug: Print tokenizer_path for verification
+_tokenizer_path = {repr(tokenizer_path)}
+print(f"[DEBUG] mas.py: tokenizer_path = {{_tokenizer_path}}")
+print(f"[DEBUG] mas.py: tokenizer_path type = {{type(_tokenizer_path)}}")
+
+# Create AIClient with verl integration
+_server_addr = "{server_address}"
+_api_base = _server_addr if _server_addr.startswith('http') else f"http://{{{{_server_addr}}}}"
+ai_client = AIClient(
+    api_base=_api_base,
+    api_key="dummy",
+    chat_model="{model_name or 'default'}",
+    max_answer_tokens={max_response_length},
+    tokenizer_path=_tokenizer_path,
+    server_address=_server_addr,
+    max_prompt_length={max_prompt_length},
+    max_response_length={max_response_length},
+    enable_thinking={str(False)},  # Executor should not use thinking
+    workflow=None  # Will be set after workflow creation
+)
+
+"""
+
+        # Patch the generated code to fix imports and add verl parameters
+        patched_code = self._patch_imports(code)
+        patched_code = self._patch_string_escapes(patched_code)
+        patched_code = self._patch_workflow_init(
+            patched_code,
+            server_address,
+            False  # Executor should not use thinking
+        )
+
+        # Add DataProto saving code at the end
+        dataproto_save_code = f"""
+
+
+# Save workflow DataProto for training
+try:
+    import pickle
+
+    if 'workflow' in globals() and hasattr(workflow, 'dataproto_list') and workflow.dataproto_list:
+        dataproto_file = r'{dataproto_pkl_path}'
+        os.makedirs(os.path.dirname(dataproto_file), exist_ok=True)
+
+        with open(dataproto_file, 'wb') as f:
+            pickle.dump(workflow.dataproto_list, f)
+        print("[SUCCESSSAVED]")
+
+except Exception as e:
+    print(f"\\n[ERROR] Failed to save DataProto: {{e}}")
+    import traceback
+    traceback.print_exc()
+"""
+
+        # Combine all parts
+        full_code = setup_code + "\n" + patched_code + "\n" + dataproto_save_code
+
+        # Save to file
+        with open(mas_py_path, 'w') as f:
+            f.write(full_code)
+
+        logger.info(f"Generated mas.py with verl integration: {mas_py_path}")
+
+        # Execute mas.py and collect results
+        execution_success = False
+        workflow_dataproto_list = []
+        final_answer = ""
+        reward = 0.0
+
+        try:
+            # Use Ray worker for execution (better resource management)
+            with open(mas_py_path, 'r') as f:
+                script_content = f.read()
+            
+            from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
+            import ray
+            
+            timeout_buffer = 20
+            total_timeout = step_timeout + timeout_buffer
+            
+            obj_ref = env_worker.run.remote(script_content, step_timeout)
+            output_text = await _await_ray_object_ref(obj_ref, total_timeout)
+            
+            # Save output to file
+            with open(output_txt_path, 'w') as f:
+                f.write(output_text)
+            
+            if "[SUCCESSSAVED]" in output_text:
+                execution_success = True
+
+            # Load DataProto from file if exists
+            if os.path.exists(dataproto_pkl_path):
+                with open(dataproto_pkl_path, 'rb') as f:
+                    workflow_dataproto_list = pickle.load(f)
+                logger.info(f"Loaded {len(workflow_dataproto_list)} DataProto entries from {dataproto_pkl_path}")
+
+            # Extract final answer from output
+            final_answer = self._extract_final_answer(output_text)
+
+            # Calculate reward based on task type
+            reward = self._calculate_reward(final_answer, env_data)
+            logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
+
+        except asyncio.TimeoutError:
+            logger.warning(f"MAS execution timed out after {step_timeout}s")
+        except Exception as e:
+            logger.warning(f"MAS execution error: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+
+        # Return results
+        return {
+            "workflow_dpr": workflow_dataproto_list,
+            "execution_success": execution_success,
+            "reward": reward,
+            "trajectory": workflow_dataproto_list
+        }
+
+    def _patch_imports(self, code: str) -> str:
+        """Patch import statements to use full module paths."""
+        import re
+        
+        # Replace workflow imports
+        code = re.sub(
+            r'\bfrom\s+workflow\s+import\s+',
+            'from pettingllms.multi_agent_env.autoevol.workflow import ',
+            code
+        )
+        code = re.sub(
+            r'\bfrom\s+workflow\.',
+            'from pettingllms.multi_agent_env.autoevol.workflow.',
+            code
+        )
+        
+        # Replace utils imports
+        code = re.sub(
+            r'\bfrom\s+utils\s+import\s+',
+            'from pettingllms.multi_agent_env.autoevol.utils import ',
+            code
+        )
+        code = re.sub(
+            r'\bfrom\s+utils\.',
+            'from pettingllms.multi_agent_env.autoevol.utils.',
+            code
+        )
+        
+        return code
+
+    def _patch_string_escapes(self, code: str) -> str:
+        """Patch string literals to handle backslashes correctly."""
+        import re
+        
+        def needs_raw_string(content):
+            if '\\' not in content:
+                return False
+            
+            problematic_patterns = [
+                r'\\u[0-9a-fA-F]', r'\\U[0-9a-fA-F]', r'\\N\{', r'\\x[0-9a-fA-F]',
+                r'\\textit', r'\\textbf', r'\\underline', r'\\overline',
+                r'\\sqrt', r'\\frac', r'\\geq', r'\\leq', r'\\neq',
+                r'\\sum', r'\\prod', r'\\int', r'\\lim',
+                r'\\left', r'\\right', r'\\begin', r'\\end'
+            ]
+            
+            for pattern in problematic_patterns:
+                if re.search(pattern, content):
+                    return True
+            
+            return False
+        
+        def replace_string(match):
+            full_match = match.group(0)
+            var_name = match.group(1)
+            equals_space = match.group(2)
+            raw_prefix = match.group(3) or ''
+            quote_type = match.group(4)
+            content = match.group(5)
+            
+            if raw_prefix.lower() == 'r':
+                return full_match
+            
+            if needs_raw_string(content):
+                result = var_name + equals_space + 'r' + quote_type + content + quote_type
+                return result
+            
+            return full_match
+        
+        pattern = r'(\w+)(\s*=\s*)(r|R)?("""|\'\'\')(.+?)\4'
+        patched = re.sub(pattern, replace_string, code, flags=re.DOTALL)
+        
+        return patched
+
+    def _patch_workflow_init(self, code: str, server_address: str, enable_thinking: bool) -> str:
+        """Patch workflow = Workflow(...) to add verl integration parameters."""
+        import re
+
+        pattern = r'(workflow\s*=\s*Workflow\s*\([^)]*)\)'
+
+        def add_verl_params(match):
+            original = match.group(1)
+            verl_params = f"""
+    ai_client=ai_client"""
+
+            if original.rstrip().endswith(','):
+                workflow_line = original + verl_params + "\n)"
+            else:
+                workflow_line = original + "," + verl_params + "\n)"
+            
+            workflow_line += "\nai_client.workflow = workflow"
+            
+            return workflow_line
+
+        patched = re.sub(pattern, add_verl_params, code, flags=re.MULTILINE | re.DOTALL)
+
+        if patched == code:
+            logger.warning("Could not find 'workflow = Workflow(...)' pattern to patch. Code unchanged.")
+
+        return patched
+
+    def _extract_final_answer(self, output_text: str) -> str:
+        """Extract final answer from MAS execution output."""
+        import re
+        
+        # Strategy 1: Look for **Final Answer** or FINAL ANSWER: format
+        final_answer_match = re.search(
+            r'\*\*Final\s*Answer\s*\*{0,2}[:\s]*(.*?)(?:={3,}|\Z)',
+            output_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        if not final_answer_match:
+            final_answer_match = re.search(
+                r'(?:^|\n)\s*FINAL\s+ANSWER\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
+                output_text,
+                re.MULTILINE | re.IGNORECASE | re.DOTALL
+            )
+        
+        if not final_answer_match:
+            final_answer_match = re.search(
+                r'(?:^|\n)\s*Final\s+Answer\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
+                output_text,
+                re.MULTILINE | re.IGNORECASE | re.DOTALL
+            )
+        
+        if final_answer_match:
+            final_answer_section = final_answer_match.group(1).strip()
+            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+            numbers = re.findall(number_pattern, final_answer_section)
+            if numbers:
+                return numbers[-1]
+        
+        # Strategy 2: Look for WORKFLOW_SUMMARY_START/END markers
+        workflow_match = re.search(
+            r'WORKFLOW_SUMMARY_START\s*(.*?)\s*WORKFLOW_SUMMARY_END',
+            output_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        if workflow_match:
+            summary_content = workflow_match.group(1).strip()
+            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+            numbers = re.findall(number_pattern, summary_content)
+            if numbers:
+                return numbers[-1]
+            
+            lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
+            if lines:
+                return lines[-1]
+        
+        # Strategy 3: Extract last number from entire output
+        number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
+        numbers = re.findall(number_pattern, output_text)
+        if numbers:
+            return numbers[-1]
+        
+        # Fallback: return last non-empty line
+        lines = [line.strip() for line in output_text.split('\n') if line.strip()]
+        return lines[-1] if lines else ""
+    
+    def _calculate_reward(self, final_answer: str, env_data: Env) -> float:
+        """Calculate reward based on task type and answer correctness."""
+        reward_function = REWARD_FUNCTIONS.get(self.task_type.lower())
+        
+        if reward_function is None:
+            logger.warning(f"No reward function found for task_type: {self.task_type}, defaulting to 0.0")
+            return 0.0
+        
+        try:
             reward = reward_function(final_answer, env_data)
             return float(reward)
         except Exception as e:

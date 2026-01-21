@@ -27,7 +27,7 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly PYTHON_BIN="/usr/bin/python3.12"
+readonly PYTHON_BIN="/mnt/afs/zhangyaolun/.conda/envs/rllm/bin/python"
 readonly VENV_NAME="pettingllms_venv"
 readonly PYTORCH_VERSION="2.7.1"
 readonly TORCHVISION_VERSION="0.22.1"
@@ -172,6 +172,7 @@ print_completion() {
     echo "  python -c 'import torch; print(torch.__version__)'"
     echo ""
 }
+    echo "  source pettingllms_venv/bin/activate"
 
 # Error handler
 error_handler() {
