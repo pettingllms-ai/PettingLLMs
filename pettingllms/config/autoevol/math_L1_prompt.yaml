@@ -8,8 +8,8 @@ resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-lora_rank: 16
-lora_alpha: 32
+lora_rank: 0  # Set to 0 for full-parameter training, > 0 for LoRA training
+lora_alpha: 16
 env:
   name: math_env
   dataset: polaris
@@ -60,7 +60,7 @@ training:
   val_freq: 20
   max_prompt_length: 4096
   max_response_length: 2048
-  lora_rank: ${lora_rank}
+  lora_rank: ${lora_rank}  # 0 for full-parameter training
   lora_alpha: ${lora_alpha}
 models:
   model_0:
