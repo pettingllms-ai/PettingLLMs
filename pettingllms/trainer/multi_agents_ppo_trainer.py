@@ -278,6 +278,10 @@ class MultiAgentsPPOTrainer:
 
 
     def _update_parameters(self, batch, ppo_trainer, timing_raw):
+        import sys
+        print(f"[DEBUG HANG] ========== ENTERING _update_parameters ==========", flush=True)
+        print(f"[DEBUG HANG] ppo_trainer type: {type(ppo_trainer).__name__}", flush=True)
+        sys.stdout.flush()
 
         # Check if batch is empty or None
         if batch is None:
@@ -418,15 +422,32 @@ class MultiAgentsPPOTrainer:
 
 
         # recompute old_log_probs
+        import sys
+        print(f"[DEBUG HANG] ========== ENTERING compute_log_prob ==========", flush=True)
+        print(f"[DEBUG HANG] batch size: {len(batch) if batch is not None else 'None'}", flush=True)
+        print(f"[DEBUG HANG] batch.batch keys: {list(batch.batch.keys()) if batch.batch is not None else 'None'}", flush=True)
+        sys.stdout.flush()
+
         with simple_timer("old_log_prob", timing_raw):
             try:
                 dp_world_size = ppo_trainer.actor_rollout_wg.world_size
-            except Exception:
+                print(f"[DEBUG HANG] dp_world_size: {dp_world_size}", flush=True)
+            except Exception as e:
+                print(f"[DEBUG HANG] Failed to get world_size: {e}", flush=True)
                 dp_world_size = 1
             if dp_world_size > 1:
+                print(f"[DEBUG HANG] Padding batch to divisor {dp_world_size}...", flush=True)
                 batch, _ = pad_dataproto_to_divisor(batch, dp_world_size)
+                print(f"[DEBUG HANG] Padding done, new batch size: {len(batch)}", flush=True)
+
+            print(f"[DEBUG HANG] >>> Calling compute_log_prob NOW (this may hang)... <<<", flush=True)
+            sys.stdout.flush()
             old_log_prob = ppo_trainer.actor_rollout_wg.compute_log_prob(batch)
+            print(f"[DEBUG HANG] <<< compute_log_prob COMPLETED >>>", flush=True)
+            sys.stdout.flush()
+
             batch = batch.union(old_log_prob)
+            print(f"[DEBUG HANG] batch.union completed", flush=True)
 
 
         # Compute reference log_prob if needed for KL loss or KL in reward
@@ -714,13 +735,18 @@ class MultiAgentsPPOTrainer:
                             filter_ratio = getattr(trainer.config, 'filter_ratio', 0.0)
                             filter_method = getattr(trainer.config, 'filter_method', 'uid')
                             batch_per_trainer[model_name] = self._assign_consistent_uids(
-                                batch_per_trainer[model_name], 
-                                filter_ratio=filter_ratio, 
-                                mode=filter_method, 
+                                batch_per_trainer[model_name],
+                                filter_ratio=filter_ratio,
+                                mode=filter_method,
                                 sample_num=sample_num,
                                 rollout_mode=self.config.get("rollout_mode","tree")
                             )
-                    
+
+                    import sys
+                    print(f"[DEBUG HANG] ========== UID ASSIGNMENT LOOP COMPLETED ==========", flush=True)
+                    print(f"[DEBUG HANG] batch_per_trainer sizes: {{k: len(v) if v is not None and v.batch is not None else 'None' for k, v in batch_per_trainer.items()}}", flush=True)
+                    sys.stdout.flush()
+
                     all_trainer_metrics = {}
                     
                     def update_single_trainer(model_name, batch, trainer):
@@ -755,19 +781,30 @@ class MultiAgentsPPOTrainer:
                     
                 
                     # Update trainers
+                    import sys
+                    print(f"[DEBUG HANG] ========== STARTING TRAINER UPDATE LOOP ==========", flush=True)
+                    print(f"[DEBUG HANG] ppo_trainer_dict keys: {list(self.ppo_trainer_dict.keys())}", flush=True)
+                    print(f"[DEBUG HANG] gen_batch_output_per_policy keys: {list(gen_batch_output_per_policy.keys())}", flush=True)
+                    print(f"[DEBUG HANG] batch_per_trainer keys: {list(batch_per_trainer.keys())}", flush=True)
+                    sys.stdout.flush()
+
                     for model_name, trainer in self.ppo_trainer_dict.items():
+                        print(f"[DEBUG HANG] Processing model: {model_name}", flush=True)
                         if model_name in gen_batch_output_per_policy:
                             # Additional check before calling update_single_trainer
                             if model_name not in batch_per_trainer:
                                 colorful_print(f"Warning: model {model_name} not in batch_per_trainer, skipping", "yellow")
                                 continue
-                            
+
                             batch = batch_per_trainer[model_name]
                             if batch is None or (hasattr(batch, 'batch') and batch.batch is None):
                                 colorful_print(f"Warning: Empty batch for model {model_name}, skipping parameter update", "yellow")
                                 continue
-                            
+
+                            print(f"[DEBUG HANG] Calling update_single_trainer for {model_name}, batch size: {len(batch)}", flush=True)
+                            sys.stdout.flush()
                             result = update_single_trainer(model_name, batch, trainer)
+                            print(f"[DEBUG HANG] update_single_trainer completed for {model_name}, status: {result.get('status', 'unknown')}", flush=True)
                             
                             # Merge timing metrics
                             for key, value in result["timing"].items():

@@ -118,7 +118,8 @@ async def _worker_docker(
         Script output as string, or "timeout" if execution exceeds timeout
     """
     os.makedirs("tmp", exist_ok=True)
-    tmpdir = tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp")
+    # Make tmpdir absolute to avoid path resolution issues when cwd changes
+    tmpdir = os.path.abspath(tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp"))
     script_path = os.path.join(tmpdir, "script.py")
     stdout_path = os.path.join(tmpdir, "stdout.txt")
     stderr_path = os.path.join(tmpdir, "stderr.txt")

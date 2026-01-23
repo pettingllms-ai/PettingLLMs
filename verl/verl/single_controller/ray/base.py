@@ -561,7 +561,16 @@ class RayWorkerGroup(WorkerGroup):
         Returns:
             List of results from all workers
         """
-        return ray.get(self.execute_all_async(method_name, *args, **kwargs))
+        import sys
+        print(f"[DEBUG RAY] execute_all_sync: calling execute_all_async for method={method_name}", flush=True)
+        sys.stdout.flush()
+        refs = self.execute_all_async(method_name, *args, **kwargs)
+        print(f"[DEBUG RAY] execute_all_sync: got {len(refs)} refs, now calling ray.get()...", flush=True)
+        sys.stdout.flush()
+        result = ray.get(refs)
+        print(f"[DEBUG RAY] execute_all_sync: ray.get() completed for method={method_name}", flush=True)
+        sys.stdout.flush()
+        return result
 
     def execute_all_async(self, method_name: str, *args, **kwargs):
         """Execute a method on all workers asynchronously.
@@ -577,7 +586,9 @@ class RayWorkerGroup(WorkerGroup):
         # Here, we assume that if all arguments in args and kwargs are lists,
         # and their lengths match len(self._workers), we'll distribute each
         # element in these lists to the corresponding worker
-        # print(f"execute_all_async: method {method_name}({args}, {kwargs})")
+        import sys
+        print(f"[DEBUG RAY] execute_all_async: method={method_name}, num_workers={len(self._workers)}", flush=True)
+        sys.stdout.flush()
         length = len(self._workers)
         if all(isinstance(arg, list) for arg in args) and all(isinstance(kwarg, list) for kwarg in kwargs.values()):
             if all(len(arg) == length for arg in args) and all(len(kwarg) == length for kwarg in kwargs.values()):

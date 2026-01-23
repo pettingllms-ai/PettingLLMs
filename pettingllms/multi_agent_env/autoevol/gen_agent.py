@@ -160,6 +160,13 @@ print(f"[DEBUG] mas.py: tokenizer_path type = {{type(_tokenizer_path)}}")
 # Create AIClient with verl integration
 _server_addr = "{server_address}"
 _api_base = _server_addr if _server_addr.startswith('http') else f"http://{{{{_server_addr}}}}"
+print(f"[AICLIENT SETUP] Creating AIClient with:")
+print(f"[AICLIENT SETUP]   server_address = {{_server_addr}}")
+print(f"[AICLIENT SETUP]   model_name = {{'{model_name or 'default'}'}}")
+print(f"[AICLIENT SETUP]   tokenizer_path = {{_tokenizer_path}}")
+print(f"[AICLIENT SETUP]   max_prompt_length = {max_prompt_length}")
+print(f"[AICLIENT SETUP]   max_response_length = {max_response_length}")
+print(f"[AICLIENT SETUP]   enable_thinking = {enable_thinking}")
 ai_client = AIClient(
     api_base=_api_base,
     api_key="dummy",
@@ -172,6 +179,7 @@ ai_client = AIClient(
     enable_thinking={str(enable_thinking)},
     workflow=None  # Will be set after workflow creation
 )
+print(f"[AICLIENT SETUP] AIClient created successfully")
 
 """
 
@@ -235,12 +243,23 @@ except Exception as e:
             obj_ref = env_worker.run.remote(script_content, step_timeout)
             output_text = await _await_ray_object_ref(obj_ref, total_timeout)
             
+            # Print executor output for debugging
+            print("=" * 80)
+            print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
+            print("=" * 80)
+            print(output_text)
+            print("=" * 80)
+            print(f"[EXECUTOR OUTPUT END]")
+            
             # Save output to file
             with open(output_txt_path, 'w') as f:
                 f.write(output_text)
             
             if "[SUCCESSSAVED]" in output_text:
                 execution_success = True
+                print(f"[EXECUTOR SUCCESS] MAS execution succeeded, DataProto saved")
+            else:
+                print(f"[EXECUTOR WARNING] MAS execution may have failed - [SUCCESSSAVED] not found in output")
 
             # Load DataProto from file if exists
             if os.path.exists(dataproto_pkl_path):
@@ -250,9 +269,12 @@ except Exception as e:
 
             # Extract final answer from output
             final_answer = self._extract_final_answer(output_text)
+            print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
+            print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
 
             # Calculate reward based on task type
             reward = self._calculate_reward(final_answer, env_data)
+            print(f"[EXECUTOR RESULT] Calculated reward: {reward}")
             logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
 
         except asyncio.TimeoutError:
@@ -720,12 +742,23 @@ except Exception as e:
             obj_ref = env_worker.run.remote(script_content, step_timeout)
             output_text = await _await_ray_object_ref(obj_ref, total_timeout)
             
+            # Print executor output for debugging
+            print("=" * 80)
+            print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
+            print("=" * 80)
+            print(output_text)
+            print("=" * 80)
+            print(f"[EXECUTOR OUTPUT END]")
+            
             # Save output to file
             with open(output_txt_path, 'w') as f:
                 f.write(output_text)
             
             if "[SUCCESSSAVED]" in output_text:
                 execution_success = True
+                print(f"[EXECUTOR SUCCESS] MAS execution succeeded, DataProto saved")
+            else:
+                print(f"[EXECUTOR WARNING] MAS execution may have failed - [SUCCESSSAVED] not found in output")
 
             # Load DataProto from file if exists
             if os.path.exists(dataproto_pkl_path):
@@ -735,9 +768,12 @@ except Exception as e:
 
             # Extract final answer from output
             final_answer = self._extract_final_answer(output_text)
+            print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
+            print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
 
             # Calculate reward based on task type
             reward = self._calculate_reward(final_answer, env_data)
+            print(f"[EXECUTOR RESULT] Calculated reward: {reward}")
             logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
 
         except asyncio.TimeoutError:

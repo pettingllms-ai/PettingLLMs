@@ -286,26 +286,31 @@ class MultiAgentsExecutionEngineAutoEvol:
             trajectory_per_task_dict[policy_name] = DataProto()
 
         env = self.envs[rollout_idx]
-        agent_group = self.agent_groups_list[rollout_idx]  # List of agents: [Designer, Executor]
+        agent_group = self.agent_groups_list[rollout_idx]  # List of agents: [Designer] or [Designer, Executor]
         
         # Get agent names and their corresponding policies
         designer_name = self.turn_order[0] if len(self.turn_order) > 0 else "Designer"
-        executor_name = self.turn_order[1] if len(self.turn_order) > 1 else "Executor"
+        executor_name = self.turn_order[1] if len(self.turn_order) > 1 else None
         
         designer_policy = self.agent_policy_mapping.get(designer_name)
-        executor_policy = self.agent_policy_mapping.get(executor_name)
+        executor_policy = self.agent_policy_mapping.get(executor_name) if executor_name else designer_policy  # Use designer policy if executor not present
         
         designer_agent = agent_group[0] if len(agent_group) > 0 else None
         executor_agent = agent_group[1] if len(agent_group) > 1 else None
         
-        if designer_agent is None or executor_agent is None:
-            logger.error(f"Missing agents for rollout {rollout_idx}")
+        # Check if we have at least designer agent
+        if designer_agent is None:
+            logger.error(f"Missing designer agent for rollout {rollout_idx}")
             return trajectory_per_task_dict
+        
+        # Check if we have executor agent (for split policy mode)
+        has_executor = executor_agent is not None and executor_name is not None
 
+        mode_str = "split policy" if has_executor else "shared policy"
         self.multi_logger.log_async_event(
             self.mode, env_idx, rollout_idx, "generation_start",
-            f"Starting split policy rollout for rollout {rollout_idx}",
-            {"rollout_idx": rollout_idx, "designer": designer_name, "executor": executor_name}
+            f"Starting {mode_str} rollout for rollout {rollout_idx}",
+            {"rollout_idx": rollout_idx, "designer": designer_name, "executor": executor_name if has_executor else None, "has_executor": has_executor}
         )
 
         # ========== PHASE 1: Designer generates MAS code ==========
@@ -431,13 +436,26 @@ class MultiAgentsExecutionEngineAutoEvol:
         
         print(f"[PRINT DEBUG] Designer generated code length: {len(designer_code)}")
 
-        # ========== PHASE 2: Executor executes MAS code ==========
-        executor_enable_thinking = self.agent_enable_thinking.get(executor_name, False)
-        executor_enable_multimodal = self.agent_enable_multimodal.get(executor_name, False)
-        
-        # Step 5: Executor updates from environment with designer's code
-        executor_agent.update_from_env(env, designer_code=designer_code)
-        executor_prompt = executor_agent.current_prompt
+        # ========== PHASE 2: Executor executes MAS code (or Designer executes if shared policy) ==========
+        if has_executor:
+            executor_enable_thinking = self.agent_enable_thinking.get(executor_name, False)
+            executor_enable_multimodal = self.agent_enable_multimodal.get(executor_name, False)
+            
+            # Step 5: Executor updates from environment with designer's code
+            executor_agent.update_from_env(env, designer_code=designer_code)
+            executor_prompt =  executor_agent.current_prompt
+        else:
+            # Shared policy mode: Designer executes its own code
+            executor_name = designer_name  # Use designer name for consistency
+            executor_policy = designer_policy  # Use designer policy
+            executor_agent = designer_agent  # Use designer agent
+            executor_enable_thinking = designer_enable_thinking
+            executor_enable_multimodal = designer_enable_multimodal
+            
+            # Designer already has env info, just set the code
+            executor_agent.designer_code = designer_code
+            executor_prompt = executor_agent.current_prompt
+            #{"text": designer_code, "image": None, "system": "You are an expert in executing Multi-Agent System workflows."}
         
         # Step 6: Format executor prompt for model (but executor doesn't need to generate, just execute)
         # For executor, we still need to create a DataProto for training, but the prompt is the code itself
@@ -468,7 +486,12 @@ class MultiAgentsExecutionEngineAutoEvol:
         executor_output_dpr = None
         executor_response = ""
 
-        if executor_format_prompt is not None:
+        # In shared policy mode, skip executor LLM generation (Designer already generated everything)
+        if not has_executor:
+            # Use designer's output for executor in shared policy mode
+            executor_output_dpr = designer_output_dpr
+            executor_response = designer_response if hasattr(designer_agent, 'generated_code') else ""
+        elif executor_format_prompt is not None:
             try:
                 executor_addresses = self.server_address_dict.get(executor_policy)
                 if isinstance(executor_addresses, (list, tuple)):
@@ -514,7 +537,12 @@ class MultiAgentsExecutionEngineAutoEvol:
             executor_response = ""
 
         # Step 8: Update executor agent (though it mainly uses designer's code)
-        executor_agent.update_from_model(executor_response)
+        # In shared policy mode, executor_agent is the same as designer_agent, so this is a no-op
+        if has_executor:
+            executor_agent.update_from_model(executor_response)
+        else:
+            # In shared policy mode, executor_agent is designer_agent, already updated
+            pass
 
         # Step 9: Execute MAS code via executor's step() method
         final_reward = 0.0
@@ -554,13 +582,19 @@ class MultiAgentsExecutionEngineAutoEvol:
             logger.info(f"Calling executor step() with tokenizer_path: {executor_tokenizer_path}")
 
             # Step 10: Execute MAS code using executor's step() method
+            # IMPORTANT: Use designer's server_address and model_name for AIClient
+            # This ensures the MAS sub-agents use the designer's model
+            print(f"[EXECUTOR STEP] Starting MAS execution for rollout {rollout_idx}")
+            print(f"[EXECUTOR STEP] Using designer's model: server_address={designer_address}, model_name={designer_model_name}")
+            print(f"[EXECUTOR STEP] Executor tokenizer_path: {executor_tokenizer_path}")
+            
             step_result = await asyncio.wait_for(
                 executor_agent.step(
                     env_data=env,
                     output_dir=output_dir,
-                    server_address=executor_address,
-                    model_name=executor_model_name,
-                    tokenizer_path=executor_tokenizer_path,
+                    server_address=designer_address,  # Use designer's server address for AIClient
+                    model_name=designer_model_name,   # Use designer's model name for AIClient
+                    tokenizer_path=executor_tokenizer_path,  # But use executor's tokenizer_path if different
                     max_prompt_length=self.max_prompt_length,
                     max_response_length=self.max_response_length,
                     ppo_trainer_config=executor_ppo_config,
@@ -575,6 +609,10 @@ class MultiAgentsExecutionEngineAutoEvol:
             workflow_dataproto_list = step_result.get("workflow_dpr", [])
             mas_execution_success = step_result.get("execution_success", False)
             final_reward = step_result.get("reward", 0.0)
+            
+            print(f"[EXECUTOR STEP RESULT] MAS execution success: {mas_execution_success}")
+            print(f"[EXECUTOR STEP RESULT] Final reward: {final_reward}")
+            print(f"[EXECUTOR STEP RESULT] Number of workflow DataProtos: {len(workflow_dataproto_list)}")
 
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, executor_name,
@@ -597,6 +635,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             workflow_dataproto_list = []
             final_reward = 0.0
         except Exception as e:
+            import traceback
             self.multi_logger.log_env_agent_info(
                 self.mode, env_idx, rollout_idx, 1, executor_name,
                 f"MAS execution failed: {e}",
@@ -640,7 +679,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                 ])
 
         # Executor's DataProto - reward based on final outcome
-        if executor_output_dpr is not None:
+        # In shared policy mode, executor_output_dpr may be None or same as designer_output_dpr
+        # Only add executor DataProto if it's different from designer (split policy mode)
+        if executor_output_dpr is not None and has_executor:
             executor_batch_size = len(executor_output_dpr)
             executor_output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["agent_name"] = np.array([executor_name] * executor_batch_size, dtype=object)

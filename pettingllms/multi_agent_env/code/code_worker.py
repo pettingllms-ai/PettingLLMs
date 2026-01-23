@@ -37,7 +37,8 @@ async def _worker_docker(
         os.makedirs("tmp", exist_ok=True)
     except Exception:
         pass
-    tmpdir = tempfile.mkdtemp(prefix="pllm_exec_",dir="tmp")
+    # Make tmpdir absolute to avoid path resolution issues when cwd changes
+    tmpdir = os.path.abspath(tempfile.mkdtemp(prefix="pllm_exec_",dir="tmp"))
     script_path = os.path.join(tmpdir, "script.py")
     def cleanup_tmpdir():
         if not os.path.exists(tmpdir):
