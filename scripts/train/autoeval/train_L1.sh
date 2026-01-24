@@ -10,7 +10,13 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 export HYDRA_FULL_ERROR=1
 export NCCL_IB_DISABLE=1
 export NCCL_NET_GDR_LEVEL=0
+# Fix for 8 GPU NCCL hanging
+export NCCL_TIMEOUT=3600
+export NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_DEBUG=WARN
 export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+export NCCL_NVLS_ENABLE=0
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
     # Try to find CUDA in conda env
@@ -63,4 +69,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.dataset=polaris\
     env.benchmark=AIME24\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
-    $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
+    $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
+    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
+    $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\

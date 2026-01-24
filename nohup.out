@@ -1961,3 +1961,16 @@ To activate the virtual environment, run:
 To verify the installation, run:
   python -c 'import torch; print(torch.__version__)'
 
+  source pettingllms_venv/bin/activate
+
+========================================
+PettingLLMs Environment Setup
+========================================
+[0;34m[INFO][0m Checking prerequisites...
+[0;34m[INFO][0m Found Python 3.11.0 at /mnt/afs/zhangyaolun/.conda/envs/rllm/bin/python
+[0;32m[SUCCESS][0m Prerequisites check passed
+
+========================================
+Step 1/6: Setting up virtual environment
+========================================
+[0;34m[INFO][0m Creating virtual environment: pettingllms_venv
