@@ -27,7 +27,7 @@ readonly BLUE='\033[0;34m'
 readonly NC='\033[0m' # No Color
 
 # Configuration
-readonly PYTHON_BIN="/mnt/afs/zhangyaolun/.conda/envs/rllm/bin/python"
+readonly PYTHON_BIN="/usr/bin/python3.12"
 readonly VENV_NAME="pettingllms_venv"
 readonly PYTORCH_VERSION="2.7.1"
 readonly TORCHVISION_VERSION="0.22.1"
@@ -67,7 +67,7 @@ check_prerequisites() {
     # Check if Python exists
     if [[ ! -x "${PYTHON_BIN}" ]]; then
         log_error "Python 3.12 not found at ${PYTHON_BIN}"
-        log_info "Please install Python 3.12: sudo apt install python3.12 python3.12-venv"
+        log_info "Please install Python 3.12: sudo apt-get install python3.12-dev"
         exit 1
     fi
     
