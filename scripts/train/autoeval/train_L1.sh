@@ -45,7 +45,7 @@ if [ -n "$CUDA_HOME" ]; then
 fi
 
 # select gpus 
-GPU_num=1
+GPU_num=8
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
