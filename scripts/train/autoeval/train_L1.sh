@@ -55,18 +55,18 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl-1227"\
+    base_models.policy_0.path="Mercury7353/masrlnothink0128"\
     lora_rank=0\
     lora_alpha=16\
     training.experiment_name=autoeval_L1_prompt\
-    training.total_training_steps=400\
+    training.total_training_steps=300\
     training.train_batch_size=32\
     training.train_sample_num=8\
     training.validate_sample_num=3\
     training.max_prompt_length=1024\
     training.max_response_length=2048\
     training.val_freq=10\
-    env.dataset=polaris\
+    env.dataset=dapo_math\
     env.benchmark=AIME24\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\

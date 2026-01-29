@@ -56,6 +56,10 @@ class AgentNode(WorkflowNode):
     def _build_initial_messages(self, context: Context) -> List[Dict[str, str]]:
         """Build initial message list from context.
 
+        All agents can globally see the original user query to maintain alignment
+        with the task objective. If there's output from a previous agent, it will
+        be included as context after the original query.
+
         Args:
             context: Workflow context
 
@@ -82,17 +86,38 @@ class AgentNode(WorkflowNode):
 
         messages = [{"role": "system", "content": system_prompt}]
 
-        # Get the latest user input or intermediate result
-        latest_msg = context.get_latest_message()
-        if latest_msg:
-            if isinstance(latest_msg.content, str):
-                content = latest_msg.content
-            elif isinstance(latest_msg.content, dict):
-                content = json.dumps(latest_msg.content, ensure_ascii=False)
+        # Get the original user query (first USER_INPUT message)
+        user_inputs = context.get_messages_by_type(MessageType.USER_INPUT)
+        original_query = None
+        if user_inputs:
+            first_input = user_inputs[0]
+            if isinstance(first_input.content, str):
+                original_query = first_input.content
+            elif isinstance(first_input.content, dict):
+                original_query = json.dumps(first_input.content, ensure_ascii=False)
             else:
-                content = str(latest_msg.content)
+                original_query = str(first_input.content)
 
-            messages.append({"role": "user", "content": content})
+            messages.append({"role": "user", "content": original_query})
+
+        # Get the latest message (could be from previous agent)
+        latest_msg = context.get_latest_message()
+
+        # If latest message is different from original query, include previous agent's output
+        if latest_msg and latest_msg.message_type != MessageType.USER_INPUT:
+            if isinstance(latest_msg.content, str):
+                prev_content = latest_msg.content
+            elif isinstance(latest_msg.content, dict):
+                prev_content = json.dumps(latest_msg.content, ensure_ascii=False)
+            else:
+                prev_content = str(latest_msg.content)
+
+            # Add previous agent's output as assistant message, then prompt for next step
+            messages.append({"role": "assistant", "content": prev_content})
+            messages.append({
+                "role": "user",
+                "content": "Based on the above analysis and the original question, please continue with your task."
+            })
 
         return messages
     

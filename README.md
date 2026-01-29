@@ -16,7 +16,8 @@ bash scripts/train/math/math_L1_prompt.sh
 Example: train a multi-agent system on math tasks.
 
 ```bash
-bash scripts/train/math/math_L1_prompt.sh
+python scripts/dataprocess/load_math.py
+bash scripts/train/autoeval/train_L1.sh
 ```
 
 Other training scripts live in `scripts/train/`:

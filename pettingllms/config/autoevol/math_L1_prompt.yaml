@@ -12,7 +12,7 @@ lora_rank: 0  # Set to 0 for full-parameter training, > 0 for LoRA training
 lora_alpha: 16
 env:
   name: math_env
-  dataset: polaris
+  dataset: dapo_math
   benchmark: AIME24
   max_turns: 1
   resolve: false
@@ -20,7 +20,7 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: Mercury7353/masrl-1227
+    path: Mercury7353/masrlnothink0128
     name: shared_model
 agent_policy_configs:
   agent_configs:
@@ -29,7 +29,7 @@ agent_policy_configs:
       policy_name: shared_model
       train_llm_config:
         enable_thinking: false
-        temperature: 0.6
+        temperature: 0.8
         top_p: 0.9
         top_k: 20
         min_p: 0.0

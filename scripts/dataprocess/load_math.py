@@ -94,6 +94,39 @@ def standardize_hf_dataset(ds, q_keys, a_keys):
     return ds.map(map_fn, remove_columns=cols_to_remove)
 
 
+def process_dapo_math(ds):
+    """Process DAPO-Math-17k dataset with deduplication."""
+    seen_questions = set()
+    processed_data = []
+
+    for example in ds:
+        # Extract question from prompt array
+        prompt_list = example.get("prompt", [])
+        if prompt_list and isinstance(prompt_list, list) and len(prompt_list) > 0:
+            question = prompt_list[0].get("content", "").strip()
+        else:
+            continue
+
+        # Extract answer from reward_model
+        reward_model = example.get("reward_model", {})
+        if isinstance(reward_model, dict):
+            answer = str(reward_model.get("ground_truth", "")).strip()
+        else:
+            answer = ""
+
+        # Skip empty questions or duplicates
+        if not question or question in seen_questions:
+            continue
+
+        seen_questions.add(question)
+        processed_data.append({
+            "question": question,
+            "solution": answer,
+        })
+
+    return datasets.Dataset.from_list(processed_data)
+
+
 def main():
     project_root = Path(__file__).resolve().parents[2]
     out_train_dir = project_root / "datasets" / "math" / "train"
@@ -115,6 +148,18 @@ def main():
     polaris_path = out_train_dir / "polaris.parquet"
     polaris_std.to_parquet(str(polaris_path))
     print(f"Saved POLARIS train to: {polaris_path} ({len(polaris_std)} rows)")
+
+    # 2) DAPO-Math-17k train (with deduplication)
+    print("Loading BytedTsinghua-SIA/DAPO-Math-17k ...")
+    dapo_all = datasets.load_dataset("BytedTsinghua-SIA/DAPO-Math-17k")
+    dapo_split = choose_available_split(dapo_all, ["train", "test", "validation", "dev"])
+    dapo_ds = dapo_all[dapo_split]
+    print(f"Using split for DAPO-Math: {dapo_split}")
+    print(f"Original size: {len(dapo_ds)} rows, deduplicating...")
+    dapo_std = process_dapo_math(dapo_ds)
+    dapo_path = out_train_dir / "dapo_math.parquet"
+    dapo_std.to_parquet(str(dapo_path))
+    print(f"Saved DAPO-Math train to: {dapo_path} ({len(dapo_std)} rows after deduplication)")
 
     # 2) Test sets: AIME24, AIME25, OlympiadBench
     for benchmark in ["AIME24", "AIME25", "OlympiadBench"]:
