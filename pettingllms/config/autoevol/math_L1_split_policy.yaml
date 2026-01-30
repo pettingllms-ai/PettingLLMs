@@ -3,14 +3,14 @@ defaults:
 - ../ppo_trainer@models.model_1.ppo_trainer_config: eval
 - _self_
 workflow_type: autoevol
-specialization: prompt
+specialization: full
 task_type: math
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-lora_rank: 16
-lora_alpha: 32
+lora_rank: 0
+lora_alpha: 16
 env:
   name: math_env
   dataset: polaris
@@ -21,10 +21,10 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/1227_math_reason_fixbug/sft/checkpoint-1546
+    path: Mercury7353/masrlnothink0128
     name: designer_model
   policy_1:
-    path: /mnt/afs/share_data/models_weights/external/Qwen/Qwen3/Qwen3-4B
+    path: Qwen/Qwen3-8B
     name: executor_model
 agent_policy_configs:
   agent_configs:

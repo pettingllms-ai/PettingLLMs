@@ -500,6 +500,11 @@ class MultiAgentsPPOTrainer:
                 norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                 config=ppo_trainer.config.algorithm,
             )
+            # Debug: Check advantage statistics                                                                                                                        
+            adv = batch.batch["advantages"]                                                                                                                            
+            print(f"[GRPO DEBUG] Advantage stats: mean={adv.mean():.6f}, std={adv.std():.6f}, "                                                                        
+                    f"zeros={((adv == 0).sum() / adv.numel() * 100):.1f}%, "                                                                                             
+                    f"min={adv.min():.6f}, max={adv.max():.6f}")
 
         # update critic
         if ppo_trainer.use_critic:

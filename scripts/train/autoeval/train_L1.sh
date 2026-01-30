@@ -51,7 +51,7 @@ GPU_num=8
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
-
+# 
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
@@ -60,8 +60,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     lora_alpha=16\
     training.experiment_name=autoeval_L1_prompt\
     training.total_training_steps=300\
-    training.train_batch_size=32\
-    training.train_sample_num=8\
+    training.train_batch_size=8\
+    training.train_sample_num=2\
     training.validate_sample_num=3\
     training.max_prompt_length=1024\
     training.max_response_length=2048\
@@ -72,4 +72,4 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6\

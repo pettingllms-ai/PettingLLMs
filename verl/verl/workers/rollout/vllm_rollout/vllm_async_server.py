@@ -27,8 +27,14 @@ from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ChatCompleti
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
-from vllm.v1.engine.async_llm import AsyncLLM
-from vllm.v1.executor.abstract import Executor
+import os
+VLLM_USE_V1 = os.environ.get("VLLM_USE_V1", "1") == "1"
+if VLLM_USE_V1:
+    from vllm.v1.engine.async_llm import AsyncLLM
+    from vllm.v1.executor.abstract import Executor
+else:
+    from vllm.engine.async_llm_engine import AsyncLLMEngine
+    from vllm.executor.ray_gpu_executor import RayGPUExecutor as Executor
 from vllm.worker.worker_base import WorkerWrapperBase
 from vllm.distributed.device_communicators.cuda_communicator import (
             CudaCommunicator)
@@ -204,10 +210,15 @@ class AsyncvLLMServer(AsyncServerBase):
         )
 
         # init async llm engine
-        vllm_config = engine_args.create_engine_config()
-        namespace = ray.get_runtime_context().namespace
-        vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
-        self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        if VLLM_USE_V1:
+            vllm_config = engine_args.create_engine_config()
+            namespace = ray.get_runtime_context().namespace
+            vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
+            self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        else:
+            # V0 engine: use ray executor backend
+            engine_args.distributed_executor_backend = "ray"
+            self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
         # Pre-allocate LoRA adapter capacity if LoRA is enabled
         # This reserves memory capacity in vLLM's LoRA manager for dynamic loading
