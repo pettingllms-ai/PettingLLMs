@@ -51,7 +51,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 model_1_config_path="models.model_1.ppo_trainer_config"
 model_1_resource="$model_1_config_path.trainer.n_gpus_per_node=$GPU_per_model $model_1_config_path.trainer.nnodes=1 $model_1_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_per_model"
-#/mnt/afs/share_data/models_weights/external/Qwen/Qwen3/Qwen3-4B
+#/mnt/afs/share_data/models_weights/external/Qwen/Qwen3/Qwen3-4B Qwen3-VL-4B-Instruct
 #/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-1854
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_split_policy \
     $model_0_resource \
@@ -64,7 +64,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.train_sample_num=8\
     training.validate_sample_num=3\
     training.max_prompt_length=2048\
-    training.max_response_length=1024\
+    training.max_response_length=4096\
     training.val_freq=10\
     env.dataset=dapo_math\
     env.benchmark=AIME24\

@@ -63,8 +63,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.train_batch_size=8\
     training.train_sample_num=2\
     training.validate_sample_num=3\
-    training.max_prompt_length=1024\
-    training.max_response_length=2048\
+    training.max_prompt_length=4096\
+    training.max_response_length=8192\
     training.val_freq=10\
     env.dataset=dapo_math\
     env.benchmark=AIME24\

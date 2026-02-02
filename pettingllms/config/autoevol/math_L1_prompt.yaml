@@ -20,7 +20,7 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-1854
+    path: Mercury7353/masrlnothink0128
     name: shared_model
 agent_policy_configs:
   agent_configs:
