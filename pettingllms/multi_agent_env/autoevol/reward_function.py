@@ -64,8 +64,10 @@ def math_reward_function(summary: str, env_data: Env) -> float:
     """
     Calculate reward for math tasks by comparing predicted answer with ground truth.
 
+    The summary parameter is actually the already-extracted final answer from _calculate_reward.
+
     Args:
-        summary: The result summary from MAS execution
+        summary: The extracted final answer (not the full summary)
         env_data: Environment data containing the ground truth answer
 
     Returns:
@@ -73,22 +75,84 @@ def math_reward_function(summary: str, env_data: Env) -> float:
     """
     from math_verify import parse, verify
 
-    # Extract predicted answer from summary
-    predicted_answer = extract_answer_from_summary(summary)
+    # The summary is actually the already-extracted answer
+    predicted_answer = summary.strip()
 
     # Get ground truth answer from env_data.state
-    ground_truth = None
     ground_truth = env_data.state.ground_truth_answer
+    gt_str = str(ground_truth).strip()
 
-    # Parse both answers
-    parsed_gt = parse(str(ground_truth))
-    # Verify if they match
-    is_correct = verify(predicted_answer, parsed_gt)
+    # Helper: normalize LaTeX for comparison
+    def normalize_latex(s):
+        s = re.sub(r'\\\\', r'\\', s)  # Double backslash -> single
+        s = re.sub(r'\\dfrac', r'\\frac', s)  # dfrac -> frac
+        s = re.sub(r'\\left|\\right', '', s)  # Remove \left \right
+        s = re.sub(r'\\mathrm\{([^}]*)\}', r'\1', s)  # Remove \mathrm{}
+        s = re.sub(r'\\text\{([^}]*)\}', r'\1', s)  # Remove \text{}
+        s = re.sub(r'\s+', '', s)  # Remove whitespace
+        return s
 
-    reward = 1.0 if is_correct else 0.0
-    logger.info(f"Math verification: pred={predicted_answer}, gt={ground_truth}, correct={is_correct}")
+    # Helper: extract multiple choice letter (A-E)
+    def extract_choice_letter(s):
+        """Extract choice letter from formats like 'A', '(A)', '\mathrm{(A)}', 'A.', 'A)'"""
+        s = s.strip()
+        # Pattern: \mathrm{(X)} or \textbf{(X)}
+        match = re.search(r'\\(?:mathrm|textbf)\{\(([A-Ea-e])\)', s)
+        if match:
+            return match.group(1).upper()
+        # Pattern: (X) at start or standalone
+        match = re.search(r'^\(([A-Ea-e])\)', s)
+        if match:
+            return match.group(1).upper()
+        # Pattern: single letter at start (with optional punctuation after)
+        match = re.match(r'^([A-Ea-e])(?:[.\)\s:]|$)', s)
+        if match:
+            return match.group(1).upper()
+        return None
 
-    return reward
+    # 1. Direct exact match (case-insensitive)
+    pred_lower = predicted_answer.lower().strip()
+    gt_lower = gt_str.lower().strip()
+    if pred_lower == gt_lower:
+        logger.info(f"Math verification (exact match): pred={predicted_answer}, gt={ground_truth}, correct=True")
+        return 1.0
+
+    # 2. Normalized LaTeX match
+    pred_latex = normalize_latex(predicted_answer)
+    gt_latex = normalize_latex(gt_str)
+    if pred_latex == gt_latex:
+        logger.info(f"Math verification (latex normalized): pred={predicted_answer}, gt={ground_truth}, correct=True")
+        return 1.0
+
+    # 3. Multiple choice: compare extracted letters
+    pred_letter = extract_choice_letter(predicted_answer)
+    gt_letter = extract_choice_letter(gt_str)
+    if pred_letter and gt_letter and pred_letter == gt_letter:
+        logger.info(f"Math verification (choice letter): pred={pred_letter}, gt={gt_letter}, correct=True")
+        return 1.0
+
+    # 4. Try math_verify for mathematical expressions
+    try:
+        parsed_gt = parse(gt_str)
+        is_correct = verify(predicted_answer, parsed_gt)
+        if is_correct:
+            logger.info(f"Math verification (math_verify): pred={predicted_answer}, gt={ground_truth}, correct=True")
+            return 1.0
+    except Exception as e:
+        logger.debug(f"math_verify failed: {e}")
+
+    # 5. Try with normalized versions
+    try:
+        parsed_gt = parse(gt_latex)
+        is_correct = verify(pred_latex, parsed_gt)
+        if is_correct:
+            logger.info(f"Math verification (math_verify normalized): pred={predicted_answer}, gt={ground_truth}, correct=True")
+            return 1.0
+    except Exception as e:
+        logger.debug(f"math_verify normalized failed: {e}")
+
+    logger.info(f"Math verification: pred={predicted_answer}, gt={ground_truth}, correct=False")
+    return 0.0
 
 
 def code_reward_function(summary: str, env_data: Env) -> float:

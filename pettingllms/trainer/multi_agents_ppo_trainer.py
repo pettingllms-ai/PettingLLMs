@@ -869,7 +869,8 @@ class MultiAgentsPPOTrainer:
 
             
 
-            if self.global_steps % self.config.training.val_freq == 0 and self.global_steps != 0:
+            # Run validation at step 0 (before training) and at every val_freq steps
+            if self.global_steps % self.config.training.val_freq == 0:
                 val_metrics = self._validate(global_steps=self.global_steps)
                 metrics.update(val_metrics)
                 agent_summary = {}

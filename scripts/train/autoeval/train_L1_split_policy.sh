@@ -56,7 +56,7 @@ model_1_resource="$model_1_config_path.trainer.n_gpus_per_node=$GPU_per_model $m
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_split_policy \
     $model_0_resource \
     $model_1_resource \
-    base_models.policy_0.path="Mercury7353/masrlnothink0128"\
+    base_models.policy_0.path="Mercury7353/masrl0206_notool"\
     base_models.policy_1.path="Qwen/Qwen3-8B"\
     training.experiment_name=autoeval_L1_split_policy\
     training.total_training_steps=400\

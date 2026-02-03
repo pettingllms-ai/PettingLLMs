@@ -104,7 +104,7 @@ async def get_shared_session() -> aiohttp.ClientSession:
     return _shared_session
 
 
-async def get_llm_semaphore(max_concurrent: int = 50) -> asyncio.Semaphore:
+async def get_llm_semaphore(max_concurrent: int = 16) -> asyncio.Semaphore:
 
     global _llm_request_semaphore, _semaphore_lock
     
@@ -136,7 +136,7 @@ async def cleanup_shared_session():
 async def poll_completions_openai(address: str, timeout: Optional[float] = None, **completions_request) -> Completion:
    
     session = await get_shared_session()
-    semaphore = await get_llm_semaphore(max_concurrent=50)
+    semaphore = await get_llm_semaphore(max_concurrent=16)
     
     if address.startswith(('http://', 'https://')):
         base_url = f"{address}/v1/completions"

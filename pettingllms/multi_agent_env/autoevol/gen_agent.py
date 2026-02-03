@@ -439,34 +439,75 @@ except Exception as e:
     def _extract_final_answer(self, output_text: str) -> str:
         """
         Extract final answer from MAS execution output.
-        
-        Looks for **Final Answer** marker and extracts the last number.
-        
+
+        Priority:
+        1. \boxed{...} format (preferred)
+        2. **Final Answer** markers
+        3. WORKFLOW_SUMMARY markers
+        4. Fallback to last content
+
         Args:
             output_text: Output from MAS execution
-            
+
         Returns:
             Extracted final answer string
         """
         import re
-        
-        # Strategy 1: Look for **Final Answer** or FINAL ANSWER: format and extract last number
+
+        # Strategy 0 (HIGHEST PRIORITY): Look for \boxed{...} format
+        # Use brace-counting to handle nested braces like \dfrac{2}{9}
+        def extract_boxed_content(text):
+            """Extract all \boxed{...} contents using brace counting.
+
+            Handles both \boxed{} and \\boxed{} (escaped backslash).
+            """
+            results = []
+            # Try both single and double backslash patterns
+            for pattern in ['\\boxed{', '\\\\boxed{']:
+                i = 0
+                while i < len(text):
+                    boxed_start = text.find(pattern, i)
+                    if boxed_start == -1:
+                        break
+                    # Find matching closing brace
+                    content_start = boxed_start + len(pattern)
+                    brace_count = 1
+                    j = content_start
+                    while j < len(text) and brace_count > 0:
+                        if text[j] == '{':
+                            brace_count += 1
+                        elif text[j] == '}':
+                            brace_count -= 1
+                        j += 1
+                    if brace_count == 0:
+                        content = text[content_start:j-1]
+                        # Skip if we already found this content (avoid duplicates from overlapping patterns)
+                        if content not in [r for r in results]:
+                            results.append(content)
+                    i = j if brace_count == 0 else boxed_start + 1
+            return results
+
+        boxed_matches = extract_boxed_content(output_text)
+        if boxed_matches:
+            # Return the LAST boxed answer (final answer)
+            return boxed_matches[-1].strip()
+
+        # Strategy 1: Look for **Final Answer** or FINAL ANSWER: format
         # Try pattern with stars first: **Final Answer** or **Final Answer**: xxx
         final_answer_match = re.search(
             r'\*\*Final\s*Answer\s*\*{0,2}[:\s]*(.*?)(?:={3,}|\Z)',
             output_text,
             re.DOTALL | re.IGNORECASE
         )
-        
+
         # If not found, try pattern without stars: FINAL ANSWER: xxx or FINAL ANSWER:\nxxx
-        # This pattern handles both "FINAL ANSWER: xxx" and "FINAL ANSWER:\nxxx" formats
         if not final_answer_match:
             final_answer_match = re.search(
                 r'(?:^|\n)\s*FINAL\s+ANSWER\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
                 output_text,
                 re.MULTILINE | re.IGNORECASE | re.DOTALL
             )
-        
+
         # Also try case-insensitive pattern: Final Answer: xxx or Final Answer:\nxxx
         if not final_answer_match:
             final_answer_match = re.search(
@@ -474,46 +515,60 @@ except Exception as e:
                 output_text,
                 re.MULTILINE | re.IGNORECASE | re.DOTALL
             )
-        
+
         if final_answer_match:
             final_answer_section = final_answer_match.group(1).strip()
-            
-            # Extract last number from final answer section
-            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-            numbers = re.findall(number_pattern, final_answer_section)
-            if numbers:
-                return numbers[-1]
-        
+
+            # First check for boxed in this section using brace counting
+            boxed_in_section = extract_boxed_content(final_answer_section)
+            if boxed_in_section:
+                return boxed_in_section[-1].strip()
+
+            # Return cleaned text if no boxed found (for text answers)
+            # Remove markdown formatting
+            cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', final_answer_section)
+            cleaned = re.sub(r'\\\[|\\\]|\\\(|\\\)', '', cleaned)  # Remove LaTeX delimiters
+            cleaned = cleaned.strip()
+            if cleaned and len(cleaned) < 200:  # Sanity check
+                # Try to extract a clean answer from the section
+                # Look for patterns like "= X" or ": X" at the end
+                eq_match = re.search(r'[=:]\s*([^\n=:]+?)(?:\s*[.。]?\s*)?$', cleaned)
+                if eq_match:
+                    return eq_match.group(1).strip()
+                return cleaned
+
         # Strategy 2: Look for WORKFLOW_SUMMARY_START/END markers
         workflow_match = re.search(
             r'WORKFLOW_SUMMARY_START\s*(.*?)\s*WORKFLOW_SUMMARY_END',
             output_text,
             re.DOTALL | re.IGNORECASE
         )
-        
+
         if workflow_match:
             summary_content = workflow_match.group(1).strip()
-            
-            # Try to extract the last number from summary
-            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-            numbers = re.findall(number_pattern, summary_content)
-            if numbers:
-                return numbers[-1]
-            
+
+            # Check for boxed in summary using brace counting
+            boxed_in_summary = extract_boxed_content(summary_content)
+            if boxed_in_summary:
+                return boxed_in_summary[-1].strip()
+
             # Fallback to last non-empty line
             lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
             if lines:
                 return lines[-1]
-        
-        # Strategy 3: Extract last number from entire output
-        number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-        numbers = re.findall(number_pattern, output_text)
-        if numbers:
-            return numbers[-1]
-        
-        # Fallback: return last non-empty line
+
+        # Strategy 3: Last resort - look for boxed anywhere in last part of output
+        # Only search in the last 3000 characters
+        search_text = output_text[-3000:] if len(output_text) > 3000 else output_text
+        boxed_in_end = extract_boxed_content(search_text)
+        if boxed_in_end:
+            return boxed_in_end[-1].strip()
+
+        # Fallback: return last non-empty line (avoid returning numbers that could be token counts)
         lines = [line.strip() for line in output_text.split('\n') if line.strip()]
-        return lines[-1] if lines else ""
+        # Filter out lines that look like debug output or token counts
+        filtered_lines = [l for l in lines if not re.match(r'^[\d,]+$', l) and 'token' not in l.lower() and 'max_' not in l.lower()]
+        return filtered_lines[-1] if filtered_lines else (lines[-1] if lines else "")
     
     def _calculate_reward(self, final_answer: str, env_data: Env) -> float:
         """
@@ -893,65 +948,124 @@ except Exception as e:
         return patched
 
     def _extract_final_answer(self, output_text: str) -> str:
-        """Extract final answer from MAS execution output."""
+        """
+        Extract final answer from MAS execution output.
+
+        Priority:
+        1. \boxed{...} format (preferred)
+        2. **Final Answer** markers
+        3. WORKFLOW_SUMMARY markers
+        4. Fallback to last content
+        """
         import re
-        
+
+        # Strategy 0 (HIGHEST PRIORITY): Look for \boxed{...} format
+        # Use brace-counting to handle nested braces like \dfrac{2}{9}
+        def extract_boxed_content(text):
+            """Extract all \boxed{...} contents using brace counting.
+
+            Handles both \boxed{} and \\boxed{} (escaped backslash).
+            """
+            results = []
+            # Try both single and double backslash patterns
+            for pattern in ['\\boxed{', '\\\\boxed{']:
+                i = 0
+                while i < len(text):
+                    boxed_start = text.find(pattern, i)
+                    if boxed_start == -1:
+                        break
+                    # Find matching closing brace
+                    content_start = boxed_start + len(pattern)
+                    brace_count = 1
+                    j = content_start
+                    while j < len(text) and brace_count > 0:
+                        if text[j] == '{':
+                            brace_count += 1
+                        elif text[j] == '}':
+                            brace_count -= 1
+                        j += 1
+                    if brace_count == 0:
+                        content = text[content_start:j-1]
+                        # Skip if we already found this content (avoid duplicates from overlapping patterns)
+                        if content not in [r for r in results]:
+                            results.append(content)
+                    i = j if brace_count == 0 else boxed_start + 1
+            return results
+
+        boxed_matches = extract_boxed_content(output_text)
+        if boxed_matches:
+            return boxed_matches[-1].strip()
+
         # Strategy 1: Look for **Final Answer** or FINAL ANSWER: format
         final_answer_match = re.search(
             r'\*\*Final\s*Answer\s*\*{0,2}[:\s]*(.*?)(?:={3,}|\Z)',
             output_text,
             re.DOTALL | re.IGNORECASE
         )
-        
+
         if not final_answer_match:
             final_answer_match = re.search(
                 r'(?:^|\n)\s*FINAL\s+ANSWER\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
                 output_text,
                 re.MULTILINE | re.IGNORECASE | re.DOTALL
             )
-        
+
         if not final_answer_match:
             final_answer_match = re.search(
                 r'(?:^|\n)\s*Final\s+Answer\s*:?\s*\n?\s*(.*?)(?:\n\n|\n===|\n\s*\n|$|\Z)',
                 output_text,
                 re.MULTILINE | re.IGNORECASE | re.DOTALL
             )
-        
+
         if final_answer_match:
             final_answer_section = final_answer_match.group(1).strip()
-            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-            numbers = re.findall(number_pattern, final_answer_section)
-            if numbers:
-                return numbers[-1]
-        
+
+            # Check for boxed in section using brace counting
+            boxed_in_section = extract_boxed_content(final_answer_section)
+            if boxed_in_section:
+                return boxed_in_section[-1].strip()
+
+            # Return cleaned text for text answers
+            cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', final_answer_section)
+            cleaned = re.sub(r'\\\[|\\\]|\\\(|\\\)', '', cleaned)  # Remove LaTeX delimiters
+            cleaned = cleaned.strip()
+            if cleaned and len(cleaned) < 200:
+                # Try to extract a clean answer from the section
+                eq_match = re.search(r'[=:]\s*([^\n=:]+?)(?:\s*[.。]?\s*)?$', cleaned)
+                if eq_match:
+                    return eq_match.group(1).strip()
+                return cleaned
+
         # Strategy 2: Look for WORKFLOW_SUMMARY_START/END markers
         workflow_match = re.search(
             r'WORKFLOW_SUMMARY_START\s*(.*?)\s*WORKFLOW_SUMMARY_END',
             output_text,
             re.DOTALL | re.IGNORECASE
         )
-        
+
         if workflow_match:
             summary_content = workflow_match.group(1).strip()
-            number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-            numbers = re.findall(number_pattern, summary_content)
-            if numbers:
-                return numbers[-1]
-            
+
+            # Check for boxed in summary using brace counting
+            boxed_in_summary = extract_boxed_content(summary_content)
+            if boxed_in_summary:
+                return boxed_in_summary[-1].strip()
+
             lines = [line.strip() for line in summary_content.split('\n') if line.strip()]
             if lines:
                 return lines[-1]
-        
-        # Strategy 3: Extract last number from entire output
-        number_pattern = r'-?\d+(?:\.\d+)?(?:/\d+)?'
-        numbers = re.findall(number_pattern, output_text)
-        if numbers:
-            return numbers[-1]
-        
-        # Fallback: return last non-empty line
+
+        # Strategy 3: Last resort - look for boxed anywhere in last part of output
+        search_text = output_text[-3000:] if len(output_text) > 3000 else output_text
+        boxed_in_end = extract_boxed_content(search_text)
+        if boxed_in_end:
+            return boxed_in_end[-1].strip()
+
+        # Fallback: return last non-empty line (avoid returning numbers that could be token counts)
         lines = [line.strip() for line in output_text.split('\n') if line.strip()]
-        return lines[-1] if lines else ""
-    
+        filtered_lines = [l for l in lines if not re.match(r'^[\d,]+$', l) and 'token' not in l.lower() and 'max_' not in l.lower()]
+        return filtered_lines[-1] if filtered_lines else (lines[-1] if lines else "")
+
     def _calculate_reward(self, final_answer: str, env_data: Env) -> float:
         """Calculate reward based on task type and answer correctness."""
         reward_function = REWARD_FUNCTIONS.get(self.task_type.lower())
