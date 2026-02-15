@@ -76,12 +76,12 @@ actor_rollout_ref:
     checkpoint:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
     optim:
-      lr: 1e-6
-      lr_warmup_steps: -1 # Prioritized. Negative values mean delegating to lr_warmup_steps_ratio.
+      lr: 1e-5
+      lr_warmup_steps: 10 # Prioritized. Negative values mean delegating to lr_warmup_steps_ratio.
       lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
-      min_lr_ratio: null   # only useful for warmup with cosine
+      min_lr_ratio: 0.3   # only useful for warmup with cosine
       num_cycles: 0.5     # only used with cosine lr scheduler, default to 0.5
-      warmup_style: constant  # select from constant/cosine
+      warmup_style: cosine  # select from constant/cosine
       total_training_steps: -1  # must be override by program
       weight_decay: 0.01
     fsdp_config:
@@ -137,14 +137,14 @@ actor_rollout_ref:
     response_length: ${data.max_response_length}
     # for vllm rollout
     dtype: bfloat16
-    gpu_memory_utilization: 0.6  
+    gpu_memory_utilization: 0.8 
     ignore_eos: False
     enforce_eager: False  
     free_cache_engine: False
     load_format: auto  
     layered_summon: False # for huge model, layered summon can save memory (prevent OOM) but make it slower
     tensor_model_parallel_size: 4
-    max_num_batched_tokens: 16384 #
+    max_num_batched_tokens: 8192 #
     max_model_len: null  
     max_num_seqs: 128
     log_prob_micro_batch_size: 4 # will be deprecated, use log_prob_micro_batch_size_per_gpu

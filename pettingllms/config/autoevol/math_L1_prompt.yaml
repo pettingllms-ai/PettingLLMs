@@ -29,7 +29,7 @@ agent_policy_configs:
       policy_name: shared_model
       train_llm_config:
         enable_thinking: false
-        temperature: 0.8
+        temperature: 1.0
         top_p: 0.9
         top_k: 20
         min_p: 0.0
@@ -59,7 +59,7 @@ training:
   sample_temperature: 1
   val_freq: 20
   max_prompt_length: 4096
-  max_response_length: 2048
+  max_response_length: 4096
   lora_rank: ${lora_rank}  # 0 for full-parameter training
   lora_alpha: ${lora_alpha}
 models:
