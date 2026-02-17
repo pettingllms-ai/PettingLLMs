@@ -77,7 +77,7 @@ actor_rollout_ref:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
     optim:
       lr: 3e-6
-      lr_warmup_steps: 10 # Prioritized. Negative values mean delegating to lr_warmup_steps_ratio.
+      lr_warmup_steps: 30 # Prioritized. Negative values mean delegating to lr_warmup_steps_ratio.
       lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
       min_lr_ratio: 0.3   # only useful for warmup with cosine
       num_cycles: 0.5     # only used with cosine lr scheduler, default to 0.5
