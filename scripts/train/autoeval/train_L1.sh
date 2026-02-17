@@ -75,8 +75,6 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
-    $model_0_config_path.trainer.resume_mode=resume_path\
-    $model_0_config_path.trainer.resume_from_path=checkpoints/20260216/gsm8k/global_step_10\
     +$model_0_config_path.actor.optim.lr=3e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
