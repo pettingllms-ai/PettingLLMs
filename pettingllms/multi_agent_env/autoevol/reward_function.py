@@ -82,6 +82,24 @@ def math_reward_function(summary: str, env_data: Env) -> float:
     ground_truth = env_data.state.ground_truth_answer
     gt_str = str(ground_truth).strip()
 
+    # Helper: strip common non-mathematical decorations so that e.g.
+    # "8:32 AM" matches "8:32", "42 minutes" matches "42", "90°" matches "90".
+    def strip_decorations(s):
+        s = s.strip()
+        # Remove trailing AM/PM (case-insensitive)
+        s = re.sub(r'\s*(?:AM|PM|am|pm|a\.m\.|p\.m\.)\s*$', '', s)
+        # Remove trailing unit words
+        s = re.sub(
+            r'\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?|degrees?|'
+            r'meters?|centimeters?|cm|km|dollars?|USD|\$|%|percent)\s*$',
+            '', s, flags=re.IGNORECASE,
+        )
+        # Remove trailing ° symbol and \circ
+        s = re.sub(r'\s*(?:°|\\circ)\s*$', '', s)
+        # Remove wrapping \text{...}
+        s = re.sub(r'^\\text\{(.*)\}$', r'\1', s)
+        return s.strip()
+
     # Helper: normalize LaTeX for comparison
     def normalize_latex(s):
         s = re.sub(r'\\\\', r'\\', s)  # Double backslash -> single
@@ -91,6 +109,35 @@ def math_reward_function(summary: str, env_data: Env) -> float:
         s = re.sub(r'\\text\{([^}]*)\}', r'\1', s)  # Remove \text{}
         s = re.sub(r'\s+', '', s)  # Remove whitespace
         return s
+
+    # Helper: convert LaTeX fractions to plain fractions (\frac{1}{43} -> 1/43)
+    def latex_frac_to_plain(s):
+        # Iteratively replace \frac{a}{b} with (a)/(b)
+        prev = None
+        while prev != s:
+            prev = s
+            s = re.sub(r'\\frac\{([^{}]*)\}\{([^{}]*)\}', r'(\1)/(\2)', s)
+        # Clean up unnecessary parentheses for simple numerator/denominator
+        s = re.sub(r'\((\w+)\)/\((\w+)\)', r'\1/\2', s)
+        return s
+
+    # Helper: numeric comparison with tolerance (handles rounding like 53.53 vs 53.50)
+    def numeric_equal(a, b, rel_tol=0.005):
+        try:
+            def to_float(s):
+                s = s.strip()
+                if '/' in s and not s.startswith('\\'):
+                    parts = s.split('/')
+                    if len(parts) == 2:
+                        return float(parts[0].strip()) / float(parts[1].strip())
+                return float(s)
+            fa, fb = to_float(a), to_float(b)
+            if fa == fb:
+                return True
+            denom = max(abs(fa), abs(fb), 1e-10)
+            return abs(fa - fb) / denom <= rel_tol
+        except (ValueError, ZeroDivisionError):
+            return False
 
     # Helper: extract multiple choice letter (A-E)
     def extract_choice_letter(s):
@@ -117,12 +164,44 @@ def math_reward_function(summary: str, env_data: Env) -> float:
         logger.info(f"Math verification (exact match): pred={predicted_answer}, gt={ground_truth}, correct=True")
         return 1.0
 
+    # 1.5. Decoration-stripped match (handles "8:32 AM" vs "8:32",
+    #       "90°" vs "90", "42 minutes" vs "42", etc.)
+    pred_stripped = strip_decorations(predicted_answer)
+    gt_stripped = strip_decorations(gt_str)
+    if pred_stripped and gt_stripped and pred_stripped.lower() == gt_stripped.lower():
+        logger.info(f"Math verification (decoration-stripped): pred={predicted_answer}, gt={ground_truth}, correct=True")
+        return 1.0
+
     # 2. Normalized LaTeX match
     pred_latex = normalize_latex(predicted_answer)
     gt_latex = normalize_latex(gt_str)
     if pred_latex == gt_latex:
         logger.info(f"Math verification (latex normalized): pred={predicted_answer}, gt={ground_truth}, correct=True")
         return 1.0
+
+    # 2.5. Decoration-stripped + LaTeX normalized
+    pred_stripped_latex = normalize_latex(pred_stripped)
+    gt_stripped_latex = normalize_latex(gt_stripped)
+    if pred_stripped_latex and gt_stripped_latex and pred_stripped_latex == gt_stripped_latex:
+        logger.info(f"Math verification (stripped+latex): pred={predicted_answer}, gt={ground_truth}, correct=True")
+        return 1.0
+
+    # 2.6. LaTeX fraction to plain fraction (\frac{1}{43} -> 1/43)
+    pred_plain_frac = latex_frac_to_plain(normalize_latex(predicted_answer))
+    gt_plain_frac = latex_frac_to_plain(normalize_latex(gt_str))
+    if pred_plain_frac and gt_plain_frac and pred_plain_frac == gt_plain_frac:
+        logger.info(f"Math verification (frac_to_plain): pred={predicted_answer}, gt={ground_truth}, correct=True")
+        return 1.0
+
+    # 2.7. Numeric tolerance (handles rounding: 53.53 vs 53.50)
+    for a, b, label in [
+        (predicted_answer, gt_str, "numeric"),
+        (pred_stripped, gt_stripped, "numeric stripped"),
+        (pred_plain_frac, gt_plain_frac, "numeric frac"),
+    ]:
+        if numeric_equal(a, b):
+            logger.info(f"Math verification ({label}): pred={predicted_answer}, gt={ground_truth}, correct=True")
+            return 1.0
 
     # 3. Multiple choice: compare extracted letters
     pred_letter = extract_choice_letter(predicted_answer)
@@ -132,24 +211,30 @@ def math_reward_function(summary: str, env_data: Env) -> float:
         return 1.0
 
     # 4. Try math_verify for mathematical expressions
-    try:
-        parsed_gt = parse(gt_str)
-        is_correct = verify(predicted_answer, parsed_gt)
-        if is_correct:
-            logger.info(f"Math verification (math_verify): pred={predicted_answer}, gt={ground_truth}, correct=True")
-            return 1.0
-    except Exception as e:
-        logger.debug(f"math_verify failed: {e}")
-
-    # 5. Try with normalized versions
-    try:
-        parsed_gt = parse(gt_latex)
-        is_correct = verify(pred_latex, parsed_gt)
-        if is_correct:
-            logger.info(f"Math verification (math_verify normalized): pred={predicted_answer}, gt={ground_truth}, correct=True")
-            return 1.0
-    except Exception as e:
-        logger.debug(f"math_verify normalized failed: {e}")
+    for pred_v, gt_v, label in [
+        (predicted_answer, gt_str, "math_verify"),
+        (pred_latex, gt_latex, "math_verify normalized"),
+        (pred_stripped, gt_stripped, "math_verify stripped"),
+        (pred_plain_frac, gt_plain_frac, "math_verify frac"),
+    ]:
+        try:
+            parsed_gt = parse(gt_v)
+            is_correct = verify(pred_v, parsed_gt)
+            if is_correct:
+                logger.info(f"Math verification ({label}): pred={predicted_answer}, gt={ground_truth}, correct=True")
+                return 1.0
+        except Exception as e:
+            logger.debug(f"{label} failed: {e}")
+        # Also try parsing both sides (handles \dfrac{1}{43} vs 1/43)
+        try:
+            parsed_pred = parse(pred_v)
+            parsed_gt = parse(gt_v)
+            is_correct = verify(parsed_pred, parsed_gt)
+            if is_correct:
+                logger.info(f"Math verification ({label} both-parsed): pred={predicted_answer}, gt={ground_truth}, correct=True")
+                return 1.0
+        except Exception as e:
+            logger.debug(f"{label} both-parsed failed: {e}")
 
     logger.info(f"Math verification: pred={predicted_answer}, gt={ground_truth}, correct=False")
     return 0.0

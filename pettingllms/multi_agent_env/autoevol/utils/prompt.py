@@ -3,496 +3,563 @@ Few-shot examples for workflow code generation.
 
 This module contains example workflow code patterns that can be used
 as few-shot examples for LLM-based code generation.
+
+Agent roles are differentiated by **solving strategy** (not mathematical
+subfield) to encourage genuinely diverse reasoning paths:
+  - ForwardSolver:  derives answer from given conditions step by step
+  - BackwardSolver: reasons backwards from what the answer must satisfy
+  - CaseAnalyzer:   enumerates and checks key cases / boundary conditions
+  - Verifier:       checks whether a proposed answer satisfies ALL constraints
+
+Math problems use pure reasoning (no code execution).
 """
 
 # Few-shot examples for different problem categories
 WORKFLOW_EXAMPLES = {
-    "basic_search": {
-        "category": "Basic Search",
-        "description": "Single agent performs web search and provides answer",
-        "code": '''# Example 1: Basic Single-Agent Search
+    "math_single_agent": {
+        "category": "Math Single Agent Solver",
+        "description": "Single agent solves math problem through pure reasoning, outputs answer in \\boxed{} format",
+        "code": '''# Example 1: Single Agent Math Solver (Pure Reasoning)
 from workflow import AgentNode, Workflow, ToolRegistry
-from utils.environments.search_env import SearchEnvironment
 
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
+# No tools needed - pure reasoning
 tool_registry = ToolRegistry()
 
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google. Use this to find current information.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"},
-            "filter_year": {"type": "integer", "description": "Optional: Filter results to a specific year (YYYY)"}
-        },
-        "required": ["query"]
-    }
-)
-
-tool_registry.register(
-    name="fetch_data",
-    func=search_env.fetch,
-    description="Fetch and read content from a specific URL.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "The URL to fetch content from"}
-        },
-        "required": ["url"]
-    }
-)
-
-# Create a search agent with clear tool usage instructions
-search_agent = AgentNode(
-    name="SearchAgent",
+# Create a math solver agent
+math_agent = AgentNode(
+    name="MathSolver",
     system_prompt=(
-        "You are a research assistant that helps find accurate information from the web.\\n\\n"
-        
-        "IMPORTANT - YOU MUST USE TOOLS:\\n"
-        "You have access to tools that you MUST use. Do NOT answer from memory.\\n\\n"
-        
-        "RESPONSE FORMAT:\\n"
-        "When you need to use a tool, respond in this format:\\n"
-        "<think>Your reasoning about what information you need and which tool to use</think>\\n"
-        '<tool_call>{"name": "tool_name", "parameters": {"param": "value"}}</tool_call>\\n\\n'
-        
-        "AVAILABLE TOOLS:\\n"
-        "1. google-search(query, filter_year): Search the web for information\\n"
-        "2. fetch_data(url): Fetch and read content from a specific URL\\n\\n"
-        
-        "EXAMPLE:\\n"
-        "Human: What is the capital of France?\\n"
-        "Assistant: <think>I need to search for the capital of France to provide accurate information.</think>\\n"
-        '<tool_call>{"name": "google-search", "parameters": {"query": "capital of France"}}</tool_call>\\n'
-        "[Tool returns: Paris is the capital of France...]\\n"
-        "Assistant: <think>The search confirms Paris is the capital. I now have enough information to answer.</think>\\n"
-        "Based on the search results, the capital of France is Paris.\\n\\n"
-        
-        "WORKFLOW:\\n"
-        "1. READ the question\\n"
-        "2. THINK about what information you need\\n"
-        "3. CALL the appropriate tool (with <think> before <tool_call>)\\n"
-        "4. ANALYZE the tool results\\n"
-        "5. If you need more info, repeat steps 2-4\\n"
-        "6. PROVIDE your final answer\\n\\n"
-        
-        "Remember: Always show your thinking process with <think> tags!"
-    ),
-    tool_registry=tool_registry,
-    max_turns=5,
-    enable_conversation_logging=True
-)
+        "You are an expert mathematician who solves problems through careful reasoning.\\n\\n"
 
-# Create workflow
-workflow = Workflow(name="basic_search")
-workflow.add_node(search_agent)
+        "APPROACH:\\n"
+        "1. Read the problem carefully and identify what is being asked\\n"
+        "2. Identify the key constraints and relationships\\n"
+        "3. Choose an appropriate strategy (direct computation, algebraic manipulation, case analysis, etc.)\\n"
+        "4. Execute the solution step by step, showing all work\\n"
+        "5. Verify your answer satisfies ALL original constraints\\n\\n"
 
-# Run workflow
-result = workflow.run(question)
-print(result.content)
-'''
-    },
-    
-    "ensemble_search": {
-        "category": "Ensemble Search",
-        "description": "Multiple agents with different approaches reach consensus",
-        "code": '''# Example 2: Ensemble Search with Multiple Agents
-from workflow import AgentNode, Workflow, ToolRegistry
-from workflow.nodes import EnsembleNode
-from utils.environments.search_env import SearchEnvironment
+        "OUTPUT FORMAT:\\n"
+        "- Show your complete reasoning process\\n"
+        "- After reaching an answer, verify it against the problem statement\\n"
+        "- Put your final numerical answer in \\\\boxed{} format\\n"
+        "- Example: The answer is \\\\boxed{42}\\n\\n"
 
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
-tool_registry = ToolRegistry()
-
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"]
-    }
-)
-
-# Create multiple search agents with different approaches
-agent1 = AgentNode(
-    name="ThoroughSearchAgent",
-    system_prompt=(
-        "You are a thorough researcher. Search multiple sources and "
-        "cross-reference information before providing an answer."
-    ),
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-agent2 = AgentNode(
-    name="QuickSearchAgent",
-    system_prompt=(
-        "You are an efficient researcher. Quickly find the most relevant "
-        "information and provide a concise answer."
-    ),
-    tool_registry=tool_registry,
-    max_turns=3
-)
-
-agent3 = AgentNode(
-    name="CriticalSearchAgent",
-    system_prompt=(
-        "You are a critical researcher. Evaluate source credibility and "
-        "provide well-verified information."
-    ),
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-# Create consensus synthesizer
-consensus_agent = AgentNode(
-    name="ConsensusAgent",
-    system_prompt=(
-        "You are a synthesis expert. Review multiple research results and "
-        "create a comprehensive, accurate answer that captures the best insights."
-    ),
-    tool_registry=tool_registry,
-    max_turns=2
-)
-
-# Create ensemble node
-ensemble = EnsembleNode(
-    name="SearchEnsemble",
-    agents=[agent1, agent2, agent3],
-    strategy="consensus",
-    consensus_agent=consensus_agent
-)
-
-# Create workflow
-workflow = Workflow(name="ensemble_search")
-workflow.add_node(ensemble)
-
-# Run workflow
-result = workflow.run(question)
-print(result.content)
-'''
-    },
-    
-    "debate_search": {
-        "category": "Debate Search",
-        "description": "Multiple agents debate different perspectives, then a judge synthesizes",
-        "code": '''# Example 3: Multi-Agent Debate Search
-from workflow import AgentNode, Workflow, ToolRegistry
-from workflow.nodes import DebateNode
-from utils.environments.search_env import SearchEnvironment
-
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
-tool_registry = ToolRegistry()
-
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"]
-    }
-)
-
-# Create debaters with different perspectives
-debater1 = AgentNode(
-    name="ProDebater",
-    system_prompt=(
-        "You are a debater focusing on positive aspects and benefits. "
-        "Use search to find supporting evidence."
-    ),
-    tool_registry=tool_registry,
-    max_turns=4
-)
-
-debater2 = AgentNode(
-    name="ConDebater",
-    system_prompt=(
-        "You are a debater focusing on challenges and concerns. "
-        "Use search to find counterpoints and issues."
-    ),
-    tool_registry=tool_registry,
-    max_turns=4
-)
-
-judge = AgentNode(
-    name="Judge",
-    system_prompt=(
-        "You are an impartial judge. Review the debate and synthesize "
-        "a balanced, comprehensive answer."
-    ),
-    tool_registry=tool_registry,
-    max_turns=2
-)
-
-# Create debate node
-debate = DebateNode(
-    name="SearchDebate",
-    debaters=[debater1, debater2],
-    judge=judge,
-    num_rounds=2
-)
-
-# Create workflow
-workflow = Workflow(name="debate_search")
-workflow.add_node(debate)
-
-# Run workflow
-result = workflow.run(question)
-print(result.content)
-'''
-    },
-    
-    "reflection_search": {
-        "category": "Reflection Search",
-        "description": "Agent performs search and iteratively refines answer through self-reflection",
-        "code": '''# Example 4: Reflection-based Search
-from workflow import AgentNode, Workflow, ToolRegistry
-from workflow.nodes import ReflectionNode
-from utils.environments.search_env import SearchEnvironment
-
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
-tool_registry = ToolRegistry()
-
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"]
-    }
-)
-
-# Create a search agent
-search_agent = AgentNode(
-    name="ReflectiveSearchAgent",
-    system_prompt=(
-        "You are a careful researcher. Search for information and provide "
-        "well-thought-out answers. You are capable of self-reflection and improvement."
-    ),
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-# Create reflection node
-reflection = ReflectionNode(
-    name="SearchReflection",
-    agent=search_agent,
-    num_iterations=2
-)
-
-# Create workflow
-workflow = Workflow(name="reflection_search")
-workflow.add_node(reflection)
-
-# Run workflow
-result = workflow.run(question)
-print(result.content)
-'''
-    },
-    
-    "complex_workflow": {
-        "category": "Complex Multi-Stage Workflow",
-        "description": "Multi-stage pipeline: research -> fact-check -> write",
-        "code": '''# Example 5: Complex Multi-Stage Workflow
-from workflow import AgentNode, Workflow, ToolRegistry
-from utils.environments.search_env import SearchEnvironment
-
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
-tool_registry = ToolRegistry()
-
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"]
-    }
-)
-
-tool_registry.register(
-    name="fetch_data",
-    func=search_env.fetch,
-    description="Fetch and read content from a specific URL.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "The URL to fetch content from"}
-        },
-        "required": ["url"]
-    }
-)
-
-# Stage 1: Initial research
-researcher = AgentNode(
-    name="Researcher",
-    system_prompt=(
-        "You are a research assistant. Search for comprehensive information "
-        "about the topic and gather key facts."
-    ),
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-# Stage 2: Fact checker
-fact_checker = AgentNode(
-    name="FactChecker",
-    system_prompt=(
-        "You are a fact checker. Review the research and verify key claims "
-        "by searching for additional sources. Identify any inconsistencies."
-    ),
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-# Stage 3: Writer
-writer = AgentNode(
-    name="Writer",
-    system_prompt=(
-        "You are a professional writer. Take the researched and verified information "
-        "and create a clear, well-structured final answer."
-    ),
-    tool_registry=tool_registry,
-    max_turns=2
-)
-
-# Create workflow
-workflow = Workflow(name="complex_search")
-workflow.add_nodes([researcher, fact_checker, writer])
-
-# Run workflow
-result = workflow.run(question)
-print(result.content)
-'''
-    },
-    
-    "graph_conditional": {
-        "category": "Graph with Conditional Routing",
-        "description": "Agent graph with conditional routing based on content",
-        "code": '''# Example 6: Graph with Conditional Routing
-from workflow import AgentNode, AgentGraph, ToolRegistry
-from utils.environments.search_env import SearchEnvironment
-
-# Setup search tools
-search_env = SearchEnvironment(serper_key=os.getenv("SERPER_KEY"))
-tool_registry = ToolRegistry()
-
-tool_registry.register(
-    name="google-search",
-    func=search_env.search,
-    description="Search the web using Google.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"]
-    }
-)
-
-# Create router agent
-router = AgentNode(
-    name="Router",
-    system_prompt=(
-        "Analyze the question and decide the type. "
-        "Reply ONLY with one word: 'FACTUAL' for factual questions, "
-        "'ANALYTICAL' for analysis questions, or 'OPINION' for opinion questions."
+        "IMPORTANT: Your final answer MUST be in \\\\boxed{answer} format."
     ),
     tool_registry=tool_registry,
     max_turns=1
 )
 
-# Create specialized agents
-factual_agent = AgentNode(
-    name="FactualAgent",
-    system_prompt="You are a factual researcher. Provide accurate, well-sourced facts.",
-    tool_registry=tool_registry,
-    max_turns=5
-)
+# Create workflow
+workflow = Workflow(name="math_single_solver")
+workflow.add_node(math_agent)
 
-analytical_agent = AgentNode(
-    name="AnalyticalAgent",
-    system_prompt="You are an analytical researcher. Provide in-depth analysis with evidence.",
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-opinion_agent = AgentNode(
-    name="OpinionAgent",
-    system_prompt="You are a balanced researcher. Present multiple perspectives fairly.",
-    tool_registry=tool_registry,
-    max_turns=5
-)
-
-# Create graph
-graph = AgentGraph(max_steps=10)
-graph.add_node("router", router)
-graph.add_node("factual", factual_agent)
-graph.add_node("analytical", analytical_agent)
-graph.add_node("opinion", opinion_agent)
-
-# Define routing logic
-def route_by_type(context):
-    decision = context.get_latest_message().content.upper()
-    if "FACTUAL" in decision:
-        return "factual"
-    elif "ANALYTICAL" in decision:
-        return "analytical"
-    elif "OPINION" in decision:
-        return "opinion"
-    return "factual"  # default
-
-graph.add_conditional_edges("router", route_by_type)
-
-# Set entry and finish points
-graph.set_entry_point("router")
-graph.set_finish_point("factual")
-graph.set_finish_point("analytical")
-graph.set_finish_point("opinion")
-
-# Run graph
-result = graph.run(question)
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
 print(result.content)
+print("================================================")
+'''
+    },
+
+    "math_ensemble_vote": {
+        "category": "Math Ensemble with Majority Vote + Judge",
+        "description": "Three strategy-diverse solvers solve independently, majority-voted; if votes split, a judge reviews reasoning and picks the best answer",
+        "code": '''# Example 2: Math Ensemble — Vote first, Judge on disagreement
+from workflow import AgentNode, Workflow, ToolRegistry
+from workflow.nodes import EnsembleNode
+
+# No tools needed - pure reasoning
+tool_registry = ToolRegistry()
+
+# --- Strategy-based agent differentiation ---
+
+solver_forward = AgentNode(
+    name="ForwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by FORWARD REASONING.\\n\\n"
+        "STRATEGY: Start from the given conditions and derive the answer step by step.\\n"
+        "- Translate the problem into equations or expressions\\n"
+        "- Simplify and compute forward until you reach the answer\\n"
+        "- Double-check each algebraic step\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_backward = AgentNode(
+    name="BackwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by BACKWARD REASONING.\\n\\n"
+        "STRATEGY: Think about what the answer must look like, then work backwards.\\n"
+        "- What form must the answer take? What constraints must it satisfy?\\n"
+        "- Work backwards from the desired conclusion to the given conditions\\n"
+        "- Verify the chain of reasoning is reversible and complete\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_cases = AgentNode(
+    name="CaseAnalyzer",
+    system_prompt=(
+        "You are a mathematician who solves problems by SYSTEMATIC CASE ANALYSIS.\\n\\n"
+        "STRATEGY: Identify the key branching points and enumerate cases.\\n"
+        "- What are the critical cases or boundary conditions?\\n"
+        "- Enumerate and analyze each case separately\\n"
+        "- Combine results or identify which case yields the answer\\n"
+        "- Verify no cases are missed\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Judge agent — only called when solvers disagree
+judge_agent = AgentNode(
+    name="MathJudge",
+    system_prompt=(
+        "You are a senior mathematician acting as a judge.\\n\\n"
+        "You receive the ORIGINAL QUESTION and solutions from multiple solvers "
+        "who gave DIFFERENT answers. Your task is to:\\n"
+        "1. Re-read the original question carefully\\n"
+        "2. Check each solution's reasoning and calculations step by step\\n"
+        "3. Identify which solution (if any) is correct\\n"
+        "4. If none is correct, derive the right answer yourself\\n\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Majority vote with judge fallback:
+#   - If all solvers agree → accept immediately (fast path)
+#   - If votes split → judge reviews all solutions and decides
+ensemble = EnsembleNode(
+    name="MathEnsemble",
+    agents=[solver_forward, solver_backward, solver_cases],
+    strategy="majority_vote",
+    consensus_agent=judge_agent
+)
+
+# Create workflow
+workflow = Workflow(name="math_ensemble_vote")
+workflow.add_node(ensemble)
+
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
+print(result.content)
+print("================================================")
+'''
+    },
+
+    "math_ensemble_judge": {
+        "category": "Math Ensemble with Judge",
+        "description": "Three strategy-diverse solvers solve independently, then a judge reviews all solutions with the original question and selects the best",
+        "code": '''# Example 3: Math Ensemble with Judge Selection
+from workflow import AgentNode, Workflow, ToolRegistry
+from workflow.nodes import EnsembleNode
+
+# No tools needed - pure reasoning
+tool_registry = ToolRegistry()
+
+# --- Strategy-based agent differentiation ---
+
+solver_forward = AgentNode(
+    name="ForwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by FORWARD REASONING.\\n\\n"
+        "STRATEGY: Start from the given conditions and derive the answer step by step.\\n"
+        "- Translate the problem into equations or expressions\\n"
+        "- Simplify and compute forward until you reach the answer\\n"
+        "- Double-check each algebraic step\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_backward = AgentNode(
+    name="BackwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by BACKWARD REASONING.\\n\\n"
+        "STRATEGY: Think about what the answer must look like, then work backwards.\\n"
+        "- What form must the answer take? What constraints must it satisfy?\\n"
+        "- Work backwards from the desired conclusion to the given conditions\\n"
+        "- Verify the chain of reasoning is reversible and complete\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_cases = AgentNode(
+    name="CaseAnalyzer",
+    system_prompt=(
+        "You are a mathematician who solves problems by SYSTEMATIC CASE ANALYSIS.\\n\\n"
+        "STRATEGY: Identify the key branching points and enumerate cases.\\n"
+        "- What are the critical cases or boundary conditions?\\n"
+        "- Enumerate and analyze each case separately\\n"
+        "- Combine results or identify which case yields the answer\\n"
+        "- Verify no cases are missed\\n\\n"
+        "Show your complete reasoning. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Judge reviews all solutions WITH the original question
+judge_agent = AgentNode(
+    name="MathJudge",
+    system_prompt=(
+        "You are a senior mathematician acting as a judge.\\n\\n"
+
+        "You will receive the ORIGINAL QUESTION together with solutions from "
+        "multiple solvers. Your task is to:\\n"
+        "1. Re-read the original question carefully\\n"
+        "2. Check each solution's reasoning and calculations step by step\\n"
+        "3. Identify errors, unjustified leaps, or missing cases\\n"
+        "4. Select the correct answer (or fix it if all solutions have errors)\\n\\n"
+
+        "OUTPUT FORMAT:\\n"
+        "- Point out key errors or strengths in each solution\\n"
+        "- State your chosen (or corrected) answer with brief justification\\n"
+        "- Put the final answer in \\\\boxed{} format\\n\\n"
+
+        "IMPORTANT: You must output exactly ONE answer in \\\\boxed{answer} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Consensus strategy passes original question to judge
+ensemble = EnsembleNode(
+    name="MathEnsemble",
+    agents=[solver_forward, solver_backward, solver_cases],
+    strategy="consensus",
+    consensus_agent=judge_agent
+)
+
+# Create workflow
+workflow = Workflow(name="math_ensemble_judge")
+workflow.add_node(ensemble)
+
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
+print(result.content)
+print("================================================")
+'''
+    },
+
+    "math_solver_critic_reflection": {
+        "category": "Math Solver with Critic Reflection",
+        "description": "Solver solves, Verifier checks against ALL constraints, Solver refines - repeat 2 rounds",
+        "code": '''# Example 4: Math Solver + Verifier Reflection (2 rounds)
+from workflow import AgentNode, Workflow, ToolRegistry
+from workflow.nodes import ReflectionNode
+
+# No tools needed - pure reasoning
+tool_registry = ToolRegistry()
+
+# Create the main solver agent
+solver_agent = AgentNode(
+    name="MathSolver",
+    system_prompt=(
+        "You are an expert mathematician who solves problems through careful reasoning.\\n\\n"
+
+        "APPROACH:\\n"
+        "1. Read the problem carefully and list ALL constraints\\n"
+        "2. Choose a strategy and execute step by step\\n"
+        "3. Show all intermediate calculations\\n"
+        "4. Before finalizing, verify your answer against every constraint\\n\\n"
+
+        "If you receive feedback from a verifier, carefully consider their points and:\\n"
+        "- Re-examine the specific steps they flagged\\n"
+        "- Fix any errors they identified\\n"
+        "- Re-verify the corrected solution against ALL constraints\\n\\n"
+
+        "OUTPUT: Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Verifier checks the solution against ALL original constraints
+critic_agent = AgentNode(
+    name="Verifier",
+    system_prompt=(
+        "You are a meticulous math verifier. Your ONLY job is to check whether "
+        "a proposed solution is correct.\\n\\n"
+
+        "VERIFICATION PROCESS:\\n"
+        "1. Re-read the ORIGINAL QUESTION (provided at the top)\\n"
+        "2. List every constraint the problem states\\n"
+        "3. BACK-SUBSTITUTE: plug the proposed answer back into EACH "
+        "original constraint and verify it holds numerically\\n"
+        "4. Re-derive key calculations independently (compute from scratch, "
+        "don't just re-read the solver's work)\\n"
+        "5. Check common errors: off-by-one in ranges, sign errors, "
+        "forgotten edge cases, integer vs fraction\\n"
+        "6. Verify the answer is a non-negative integer (AIME format)\\n\\n"
+
+        "OUTPUT FORMAT:\\n"
+        "- For each constraint: PASS or FAIL with the substitution result\\n"
+        "- List specific calculation errors (if any) with corrections\\n"
+        "- Final verdict: CORRECT or INCORRECT\\n"
+        "- If INCORRECT, state what needs to be fixed\\n\\n"
+
+        "Be rigorous. Do NOT rubber-stamp the solution."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Solver -> Verifier -> Solver refines -> Verifier -> final
+reflection = ReflectionNode(
+    name="SolverVerifierReflection",
+    agent=solver_agent,
+    critic_agent=critic_agent,
+    num_iterations=2
+)
+
+# Create workflow
+workflow = Workflow(name="math_solver_verifier")
+workflow.add_node(reflection)
+
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
+print(result.content)
+print("================================================")
+'''
+    },
+
+    "math_self_consistency": {
+        "category": "Math Self-Consistency (Same Solver x3 + Vote + Judge)",
+        "description": "Run the same solver agent 3 times independently; if unanimous accept, if split a judge decides. High accuracy with low design overhead.",
+        "code": '''# Example 5: Self-Consistency (Same Solver x3 + Vote, Judge on split)
+from workflow import AgentNode, Workflow, ToolRegistry
+from workflow.nodes import EnsembleNode
+
+# No tools needed - pure reasoning
+tool_registry = ToolRegistry()
+
+# Three instances of the same solver (will produce diverse reasoning via sampling)
+solver_a = AgentNode(
+    name="Solver_A",
+    system_prompt=(
+        "You are an expert mathematician. Solve the problem step by step.\\n"
+        "Show your complete reasoning and verify your answer.\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_b = AgentNode(
+    name="Solver_B",
+    system_prompt=(
+        "You are an expert mathematician. Solve the problem step by step.\\n"
+        "Show your complete reasoning and verify your answer.\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_c = AgentNode(
+    name="Solver_C",
+    system_prompt=(
+        "You are an expert mathematician. Solve the problem step by step.\\n"
+        "Show your complete reasoning and verify your answer.\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Judge — only invoked when the three runs disagree
+judge_agent = AgentNode(
+    name="MathJudge",
+    system_prompt=(
+        "You are a senior mathematician acting as a judge.\\n\\n"
+        "Multiple solvers produced DIFFERENT answers for the same problem.\\n"
+        "1. Check each solution's reasoning step by step\\n"
+        "2. Identify calculation errors or logical gaps\\n"
+        "3. Select the correct answer or derive it yourself\\n\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Vote + judge fallback: unanimous → accept; split → judge decides
+ensemble = EnsembleNode(
+    name="SelfConsistency",
+    agents=[solver_a, solver_b, solver_c],
+    strategy="majority_vote",
+    consensus_agent=judge_agent
+)
+
+# Create workflow
+workflow = Workflow(name="math_self_consistency")
+workflow.add_node(ensemble)
+
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
+print(result.content)
+print("================================================")
+'''
+    },
+
+    "math_ensemble_verify": {
+        "category": "Math Ensemble + Verifier Pipeline",
+        "description": "Three solvers -> judge picks best -> verifier checks -> if wrong, solver refines. Most thorough pattern.",
+        "code": '''# Example 6: Ensemble + Judge + Verifier (Comprehensive)
+from workflow import AgentNode, Workflow, ToolRegistry
+from workflow.nodes import EnsembleNode
+
+# No tools needed - pure reasoning
+tool_registry = ToolRegistry()
+
+# --- Three diverse solvers ---
+
+solver_forward = AgentNode(
+    name="ForwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by FORWARD REASONING.\\n"
+        "Start from given conditions, derive step by step. Show all work.\\n"
+        "Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_backward = AgentNode(
+    name="BackwardSolver",
+    system_prompt=(
+        "You are a mathematician who solves problems by BACKWARD REASONING.\\n"
+        "Think about what the answer must satisfy, then work backwards to confirm.\\n"
+        "Show all work. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+solver_cases = AgentNode(
+    name="CaseAnalyzer",
+    system_prompt=(
+        "You are a mathematician who solves problems by CASE ANALYSIS.\\n"
+        "Enumerate key cases or boundary conditions systematically.\\n"
+        "Show all work. Put your final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# --- Judge selects best answer (sees original question + all solutions) ---
+
+judge_agent = AgentNode(
+    name="MathJudge",
+    system_prompt=(
+        "You are a senior mathematician judge.\\n\\n"
+        "You receive the ORIGINAL QUESTION and multiple solutions.\\n"
+        "1. Check each solution's reasoning step by step\\n"
+        "2. Identify calculation errors or logical gaps\\n"
+        "3. Select the correct answer or fix errors if needed\\n\\n"
+        "Output your chosen/corrected answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+ensemble = EnsembleNode(
+    name="MathEnsemble",
+    agents=[solver_forward, solver_backward, solver_cases],
+    strategy="consensus",
+    consensus_agent=judge_agent
+)
+
+# --- Verifier checks the judge's answer ---
+
+verifier = AgentNode(
+    name="Verifier",
+    system_prompt=(
+        "You are a meticulous math verifier.\\n\\n"
+        "You will see the original question and a proposed solution from previous agents.\\n"
+        "1. List ALL constraints from the original problem\\n"
+        "2. BACK-SUBSTITUTE: plug the proposed answer into each constraint numerically\\n"
+        "3. Re-derive key calculations independently (compute from scratch)\\n"
+        "4. Check: is the answer a non-negative integer? (AIME requires 0-999)\\n"
+        "5. If correct: restate the answer in \\\\boxed{} format\\n"
+        "6. If incorrect: provide the corrected answer in \\\\boxed{} format\\n\\n"
+        "IMPORTANT: Always output a final answer in \\\\boxed{} format."
+    ),
+    tool_registry=tool_registry,
+    max_turns=1
+)
+
+# Pipeline: Ensemble(3 solvers -> judge) -> Verifier
+# The Verifier automatically receives the original question + the ensemble's
+# <delivery> summary (not full reasoning), keeping its input compact.
+workflow = Workflow(name="math_ensemble_verify")
+workflow.add_node(ensemble)
+workflow.add_node(verifier)
+
+# Run workflow
+print("================================================")
+print("FINAL ANSWER:")
+result = workflow.run(question)
+print(result.content)
+print("================================================")
 '''
     }
 }
 
 
 # Prompt template for code generation
-CODE_GENERATION_PROMPT_TEMPLATE = """You are an expert Python developer specializing in multi-agent workflow systems. Your task is to generate workflow code based on the user's question category and specific question.
+CODE_GENERATION_PROMPT_TEMPLATE = """You are an expert Python developer specializing in multi-agent workflow systems. Your task is to generate workflow code for solving math problems.
+
+## Problem Type: MATH
+
+All problems are mathematical and should be solved through pure reasoning (NO code execution tools).
 
 ## Available Workflow Patterns
 
-You have access to the following workflow patterns. Choose the most appropriate one based on the question:
+Choose the most appropriate pattern based on problem complexity:
 
-1. **basic_search**: Single agent performs web search (for straightforward questions)
-2. **ensemble_search**: Multiple agents reach consensus (for questions requiring multiple perspectives)
-3. **debate_search**: Agents debate different sides (for controversial or multi-sided questions)
-4. **reflection_search**: Agent refines answer through self-reflection (for complex questions requiring careful thought)
-5. **complex_workflow**: Multi-stage pipeline (for questions requiring research, verification, and synthesis)
-6. **graph_conditional**: Conditional routing based on question type (for questions that need different handling based on type)
+1. **math_single_agent**: Single agent solves through reasoning (for straightforward problems)
+2. **math_ensemble_vote**: Three strategy-diverse solvers + vote; if unanimous accept, if split a judge reviews reasoning and picks the best (for moderate problems)
+3. **math_ensemble_judge**: Three strategy-diverse solvers + judge always reviews all solutions (for hard problems)
+4. **math_solver_critic_reflection**: Solver + Verifier with 2 rounds of constraint-checking refinement (for problems needing careful verification)
+5. **math_self_consistency**: Same solver x3 + vote + judge on disagreement (high accuracy, good when diverse strategies aren't needed)
+6. **math_ensemble_verify**: Three solvers + judge + verifier pipeline (most thorough, for competition-level problems)
+
+## Agent Role Design Principles
+
+Differentiate agents by **solving strategy**, NOT by mathematical subfield:
+- **ForwardSolver**: derives answer from given conditions step by step
+- **BackwardSolver**: reasons backwards from what the answer must satisfy
+- **CaseAnalyzer**: enumerates and checks key cases / boundary conditions
+- **Verifier**: checks whether a proposed answer satisfies ALL original constraints (does NOT solve from scratch)
+
+## Key Requirements
+
+1. **NO code execution tools** - solve through pure mathematical reasoning
+2. **Final answer MUST be in \\boxed{{}} format** - e.g., \\boxed{{42}} or \\boxed{{\\frac{{1}}{{2}}}}
+3. **Show reasoning steps clearly** before the final answer
+4. **Every agent sees the original question** via shared context (the framework handles this automatically)
+5. **Inter-agent communication**: The framework automatically asks each agent to output a `<delivery>` block at the end of its response summarising key findings and answer. Downstream agents receive ONLY the `<delivery>` content from upstream agents (not the full reasoning), keeping prompts compact. You do NOT need to add `<delivery>` instructions to system prompts — the framework injects them automatically.
 
 ## Few-Shot Examples
 
@@ -501,54 +568,28 @@ You have access to the following workflow patterns. Choose the most appropriate 
 ## Task
 
 Given:
-- **Question Category**: {category}
 - **Specific Question**: {question}
 
 Generate complete, runnable Python code that:
-1. Imports all necessary modules at the top
+1. Imports necessary modules
 2. Sets up the appropriate workflow pattern
-3. Configures agents with suitable system prompts for the question
+3. Configures agents with strategy-based system prompts
 4. Runs the workflow and prints the result
-5. Is self-contained and can be executed directly
-
-## Requirements
-
-1. Start with all imports:
-```python
-import os
-import sys
-# Add more imports as needed
-```
-
-2. Use the workflow pattern that best fits the question category
-3. Design general agent that can be used for different questions.
-4. Include proper error handling
-5. Make sure the code is complete and runnable
 
 ## Output Format
 
-IMPORTANT: You must first reason about the workflow design in a <think> block, then provide the code in a <code> block.
+First analyze the problem, then provide code:
 
-In your <think> block, you MUST answer these questions:
-1. **Problem Analysis**: What is this question asking? What kind of information is needed?
-2. **Workflow Pattern Selection**: Which workflow pattern is most suitable and why?
-   - Is this a straightforward factual question? → basic_search
-   - Does it need multiple perspectives or verification? → ensemble_search or complex_workflow
-   - Is it controversial with multiple viewpoints? → debate_search
-   - Does it require deep thinking and iteration? → reflection_search
-   - Does it need different handling based on question type? → graph_conditional
-3. **Agent Design**: What agents are needed? What should their roles and system prompts be?
-4. **Tool Requirements**: What tools do the agents need? (search, fetch, etc.)
-5. **Expected Workflow**: How should information flow through the agents?
+Problem Type: MATH
 
-Format:
-<think>
-1. Problem Analysis: [Your analysis of what the question needs]
-2. Workflow Pattern: [Selected pattern and justification]
-3. Agent Design: [Description of agents needed and their roles]
-4. Tool Requirements: [What tools are needed]
-5. Workflow Flow: [How agents will interact]
-</think>
+Problem Analysis: [What is this question asking? What mathematical concepts are involved?]
+
+Workflow Pattern: [Selected pattern and why]
+
+Agent Design: [What agents are needed and their strategic roles]
+
+Workflow Flow: [How agents will interact]
+
 <code>
 ```python
 ...
@@ -565,7 +606,7 @@ def get_code_generation_prompt(question: str, include_examples: list = None,
 
     Args:
         question: The specific question to answer
-        include_examples: List of example categories to include (default: randomly sampled)
+        include_examples: List of example categories to include (default: all math examples)
         use_simple_format: If True, return simple format without detailed guide (for SFT data)
         random_sample_examples: If True, randomly sample examples for diversity (default: True)
         force_nested: If True, instruct LLM to create nested/combined workflows
@@ -577,23 +618,18 @@ def get_code_generation_prompt(question: str, include_examples: list = None,
 
     # Simple format for SFT data collection (just question)
     if use_simple_format:
-        return f"Question: {question}", []
+        return f"Design Multi Agent System for the Question: {question}", []
 
-    # Determine which examples to include
+    # For math, always use all three examples
     if include_examples is None:
         all_examples = list(WORKFLOW_EXAMPLES.keys())
 
-        # Define sampling weights: basic_search gets 10% probability, others share 90%
-        weights = []
-        for ex in all_examples:
-            if ex == "basic_search":
-                weights.append(0.1)  # 10% weight for basic_search
-            else:
-                weights.append(0.9 / (len(all_examples) - 1))  # Share remaining 90%
-
-        # Sample with weighted probabilities
-        num_to_sample = max(2, len(all_examples) // 2)  # At least 2 examples
-        include_examples = random.choices(all_examples, weights=weights, k=num_to_sample)
+        if random_sample_examples:
+            # Randomly sample 2-3 examples
+            num_to_sample = random.randint(2, 3)
+            include_examples = random.sample(all_examples, num_to_sample)
+        else:
+            include_examples = all_examples
 
     # Build examples section
     examples_text = ""
@@ -604,54 +640,32 @@ def get_code_generation_prompt(question: str, include_examples: list = None,
             examples_text += f"**Description**: {ex['description']}\n\n"
             examples_text += f"```python\n{ex['code']}\n```\n"
 
-    # Add instruction for nested/combined workflows if requested
-    nested_instruction = ""
-    if force_nested:
-        nested_instruction = """
-
-IMPORTANT: For this question, create a NESTED/COMBINED workflow by combining multiple patterns.
-For example:
-- Use ensemble search where each agent uses reflection
-- Use complex workflow where each stage uses ensemble
-- Use debate where each debater uses complex multi-stage process
-- Combine graph conditional with any of the above patterns
-
-Be creative and create a sophisticated multi-layered workflow that combines 2-3 patterns."""
-
-    # Format the prompt (no category specified - let LLM decide from examples)
+    # Format the prompt
     prompt = CODE_GENERATION_PROMPT_TEMPLATE.format(
         examples=examples_text,
-        category="auto-detect from question",
         question=question
-    ) + nested_instruction
+    )
 
     return prompt, include_examples
 
 
-# Category selection prompt
-CATEGORY_SELECTION_PROMPT = """Given a question, determine the most appropriate workflow pattern.
+# Category selection prompt (simplified for math only)
+CATEGORY_SELECTION_PROMPT = """Given a math question, determine the most appropriate workflow pattern.
 
 Available patterns:
-- **basic_search**: ONLY for extremely simple, single-fact questions (e.g., "What is the capital of France?"). Use sparingly - less than 10% of questions.
-- **ensemble_search**: For questions that benefit from multiple perspectives and consensus. Use for most factual questions requiring verification.
-- **debate_search**: For controversial questions or questions with multiple sides that need balanced analysis.
-- **reflection_search**: For complex questions requiring careful thought and iterative refinement.
-- **complex_workflow**: For questions requiring multi-stage processing (research, verify, write). PREFER this for most research questions.
-- **graph_conditional**: For questions that need to be routed to different handlers based on question type.
-
-IMPORTANT GUIDELINES:
-- AVOID basic_search unless the question is trivially simple
-- PREFER complex_workflow or ensemble_search for most questions
-- Use reflection_search for questions requiring deep analysis
-- Use debate_search for questions with multiple viewpoints
+- **math_single_agent**: Single agent solves through reasoning (for straightforward problems)
+- **math_ensemble_vote**: Three strategy-diverse solvers + vote; if unanimous accept, if split a judge decides (for moderate problems)
+- **math_ensemble_judge**: Three strategy-diverse solvers + judge always reviews all solutions (for hard problems where reasoning quality matters)
+- **math_solver_critic_reflection**: Solver + Verifier with 2 rounds of refinement (for problems needing careful verification)
+- **math_self_consistency**: Same solver x3 + vote + judge on disagreement (high accuracy with low overhead, good default for moderate problems)
+- **math_ensemble_verify**: Three solvers + judge + verifier pipeline (most thorough, for competition-level problems)
 
 Question: {question}
 
-Analyze the question complexity and reply with ONLY the pattern name (one of: basic_search, ensemble_search, debate_search, reflection_search, complex_workflow, graph_conditional).
+Reply with ONLY the pattern name (one of: math_single_agent, math_ensemble_vote, math_ensemble_judge, math_solver_critic_reflection, math_self_consistency, math_ensemble_verify).
 """
 
 
 def get_category_selection_prompt(question: str) -> str:
     """Get prompt for selecting the appropriate workflow category."""
     return CATEGORY_SELECTION_PROMPT.format(question=question)
-

@@ -24,6 +24,41 @@ warnings.filterwarnings("ignore", category=ResourceWarning, message=".*unclosed.
 
 logger = logging.getLogger(__name__)
 from pettingllms.multi_agent_env.autoevol.reward_function import REWARD_FUNCTIONS
+
+
+def _detect_gibberish(text: str, ngram_size: int = 3, threshold: float = 0.4) -> float:
+    """Detect repetitive gibberish in text by measuring n-gram repetition ratio.
+
+    Returns a penalty in [-0.5, 0.0].  The more repetitive the text, the
+    larger the (negative) penalty.
+
+    Args:
+        text: The text to check.
+        ngram_size: Size of character n-grams to use.
+        threshold: Repetition ratio above which we start penalising.
+
+    Returns:
+        Float penalty: 0.0 (clean) to -0.5 (extremely repetitive).
+    """
+    if not text or len(text) < 100:
+        return 0.0
+
+    # Use last 2000 chars (where gibberish usually appears)
+    sample = text[-2000:]
+
+    # Character-level n-gram repetition
+    ngrams = [sample[i:i + ngram_size] for i in range(len(sample) - ngram_size + 1)]
+    if not ngrams:
+        return 0.0
+    unique_ratio = len(set(ngrams)) / len(ngrams)
+    repetition_ratio = 1.0 - unique_ratio  # 0 = all unique, 1 = all same
+
+    if repetition_ratio <= threshold:
+        return 0.0
+
+    # Scale: threshold→0, 1.0→-0.5
+    penalty = -0.5 * (repetition_ratio - threshold) / (1.0 - threshold)
+    return max(penalty, -0.5)
 from pettingllms.multi_agent_env.autoevol.data_utils import load_and_tokenize_jsonl
 
 class MASGenerator(Agent):
@@ -228,6 +263,7 @@ except Exception as e:
         workflow_dataproto_list = []
         final_answer = ""
         reward = 0.0
+        designer_reward = 0.0
 
         try:
             # Use Ray worker for execution (better resource management)
@@ -272,10 +308,45 @@ except Exception as e:
             print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
             print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
 
-            # Calculate reward based on task type
-            reward = self._calculate_reward(final_answer, env_data)
-            print(f"[EXECUTOR RESULT] Calculated reward: {reward}")
-            logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
+            # Calculate correctness reward (0 or 1)
+            correctness_reward = self._calculate_reward(final_answer, env_data)
+
+            # --- Format reward: +0.1 if model used \boxed{} with a real answer ---
+            import re as _re
+            has_boxed = '\\boxed{' in output_text
+            # Reject template placeholders like {{total_cost}}, {variable}, pure alphabetic names
+            _is_placeholder = bool(_re.match(
+                r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
+            )) if final_answer.strip() else True
+            format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+
+            # --- Length penalty: -0.1 if any agent response > 4096 tokens ---
+            length_penalty = 0.0
+            if workflow_dataproto_list:
+                for dpr in workflow_dataproto_list:
+                    try:
+                        token_counts = dpr.non_tensor_batch.get("response_token_count", None)
+                        if token_counts is not None and int(token_counts[0]) > 3072:
+                            length_penalty = -0.1
+                            print(f"[EXECUTOR PENALTY] Agent response too long: {int(token_counts[0])} tokens > 3072")
+                            break
+                    except Exception:
+                        pass
+
+            # --- Code block penalty: -0.1 if agent nodes output <code> or ```python ---
+            code_block_penalty = 0.0
+            if output_text:
+                if '<code>' in output_text or '```python' in output_text:
+                    code_block_penalty = -0.1
+                    print(f"[EXECUTOR PENALTY] Agent node output contains code blocks")
+
+            # Designer reward: only correctness + format (no penalties)
+            designer_reward = correctness_reward + format_reward
+            # Agent node reward: correctness + format + penalties
+            reward = correctness_reward + format_reward + length_penalty + code_block_penalty
+            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty}, code_block={code_block_penalty})")
+            logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
 
         except asyncio.TimeoutError:
             logger.warning(f"MAS execution timed out after {step_timeout}s")
@@ -289,6 +360,7 @@ except Exception as e:
             "workflow_dpr": workflow_dataproto_list,
             "execution_success": execution_success,
             "reward": reward,
+            "designer_reward": designer_reward,
             "trajectory": workflow_dataproto_list
         }
 
@@ -782,6 +854,7 @@ except Exception as e:
         workflow_dataproto_list = []
         final_answer = ""
         reward = 0.0
+        designer_reward = 0.0
 
         try:
             # Use Ray worker for execution (better resource management)
@@ -826,10 +899,45 @@ except Exception as e:
             print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
             print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
 
-            # Calculate reward based on task type
-            reward = self._calculate_reward(final_answer, env_data)
-            print(f"[EXECUTOR RESULT] Calculated reward: {reward}")
-            logger.info(f"Calculated reward: {reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
+            # Calculate correctness reward (0 or 1)
+            correctness_reward = self._calculate_reward(final_answer, env_data)
+
+            # --- Format reward: +0.1 if model used \boxed{} with a real answer ---
+            import re as _re
+            has_boxed = '\\boxed{' in output_text
+            # Reject template placeholders like {{total_cost}}, {variable}, pure alphabetic names
+            _is_placeholder = bool(_re.match(
+                r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
+            )) if final_answer.strip() else True
+            format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+
+            # --- Length penalty: -0.1 if any agent response > 4096 tokens ---
+            length_penalty = 0.0
+            if workflow_dataproto_list:
+                for dpr in workflow_dataproto_list:
+                    try:
+                        token_counts = dpr.non_tensor_batch.get("response_token_count", None)
+                        if token_counts is not None and int(token_counts[0]) > 3072:
+                            length_penalty = -0.1
+                            print(f"[EXECUTOR PENALTY] Agent response too long: {int(token_counts[0])} tokens > 3072")
+                            break
+                    except Exception:
+                        pass
+
+            # --- Code block penalty: -0.1 if agent nodes output <code> or ```python ---
+            code_block_penalty = 0.0
+            if output_text:
+                if '<code>' in output_text or '```python' in output_text:
+                    code_block_penalty = -0.1
+                    print(f"[EXECUTOR PENALTY] Agent node output contains code blocks")
+
+            # Designer reward: only correctness + format (no penalties)
+            designer_reward = correctness_reward + format_reward
+            # Agent node reward: correctness + format + penalties
+            reward = correctness_reward + format_reward + length_penalty + code_block_penalty
+            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty}, code_block={code_block_penalty})")
+            logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer} and golden answer: {env_data.state.ground_truth_answer}")
 
         except asyncio.TimeoutError:
             logger.warning(f"MAS execution timed out after {step_timeout}s")
@@ -843,6 +951,7 @@ except Exception as e:
             "workflow_dpr": workflow_dataproto_list,
             "execution_success": execution_success,
             "reward": reward,
+            "designer_reward": designer_reward,
             "trajectory": workflow_dataproto_list
         }
 

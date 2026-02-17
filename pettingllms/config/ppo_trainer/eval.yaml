@@ -76,7 +76,7 @@ actor_rollout_ref:
     checkpoint:
       contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
     optim:
-      lr: 1e-5
+      lr: 3e-6
       lr_warmup_steps: 10 # Prioritized. Negative values mean delegating to lr_warmup_steps_ratio.
       lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
       min_lr_ratio: 0.3   # only useful for warmup with cosine
@@ -395,7 +395,7 @@ trainer:
   # auto: find the last ckpt to resume. If can't find, start from scratch
   resume_mode: auto # or disable or resume_path if resume_from_path is set
   resume_from_path: null
-  val_before_train: True
+  val_before_train: False
   test_freq: -1
   critic_warmup: 0
   default_hdfs_dir: null

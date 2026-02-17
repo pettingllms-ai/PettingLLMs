@@ -4,6 +4,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+import re
 from typing import List, Dict, Any, Optional
 import json
 from workflow.core import WorkflowNode, Context, Message, MessageType, ToolRegistry
@@ -11,16 +12,58 @@ from utils.BaseOpenAI import AIClient
 from utils.conversation_logger import get_global_tracker
 
 
+# Instruction appended to every agent's system prompt so they produce
+# a final answer in a parseable format.
+# NOTE: Keep this minimal.  Verbose summary requests (Approach / Confidence /
+# Key-steps) can hurt accuracy, and multi-agent language ("Inter-Agent",
+# "downstream agents") triggers designer-mode in fine-tuned models.
+DELIVERY_INSTRUCTION = (
+    "\n\nAfter solving, restate your final answer clearly as: "
+    "FINAL ANSWER: \\boxed{your_answer}"
+)
+
+
+def _extract_delivery(text: str) -> Optional[str]:
+    """Extract the compact delivery block from an agent response.
+
+    Tries several formats (newest first):
+      1. ``FINAL ANSWER: \\boxed{...}``  (V3 – current default)
+      2. ``Approach: / Answer: / Confidence:`` trailing block (V1 – legacy)
+      3. ``<delivery>...</delivery>`` XML tags (oldest legacy)
+
+    Returns the extracted string, or None if nothing matched.
+    """
+    # V3: FINAL ANSWER: \boxed{...}
+    match = re.search(r"FINAL ANSWER:\s*(.*)", text)
+    if match:
+        return match.group(1).strip()
+
+    # V1 legacy: trailing Approach/Answer/Confidence block
+    match = re.search(
+        r"(Approach:.*(?:\nAnswer:.*)?(?:\nConfidence:.*)?)\s*$",
+        text,
+    )
+    if match:
+        return match.group(1).strip()
+
+    # Oldest legacy: <delivery>...</delivery> XML tags
+    match = re.search(r"<delivery>(.*?)</delivery>", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
 class AgentNode(WorkflowNode):
     """A node that wraps an AI agent with tool calling capabilities.
-    
+
     This node:
     - Uses structured message passing instead of string parsing
     - Automatically handles tool calls through ToolRegistry
     - Manages conversation history
     - Provides clean interface for custom agents
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -32,7 +75,7 @@ class AgentNode(WorkflowNode):
         **kwargs
     ):
         """Initialize the agent node.
-        
+
         Args:
             name: Node name
             system_prompt: System prompt for the agent
@@ -43,7 +86,7 @@ class AgentNode(WorkflowNode):
             **kwargs: Additional configuration
         """
         super().__init__(name, **kwargs)
-        
+
         self.system_prompt = system_prompt
         self.tool_registry = tool_registry or ToolRegistry()
         self.max_turns = max_turns
@@ -52,13 +95,12 @@ class AgentNode(WorkflowNode):
         # Store ai_client if provided, otherwise will use workflow's client
         self.ai_client = ai_client
         self._client_from_workflow = (ai_client is None)
-    
+
     def _build_initial_messages(self, context: Context) -> List[Dict[str, str]]:
         """Build initial message list from context.
 
-        All agents can globally see the original user query to maintain alignment
-        with the task objective. If there's output from a previous agent, it will
-        be included as context after the original query.
+        Builds a shared-context view: the agent always sees the original question
+        plus all previous agents' outputs, enabling full information sharing.
 
         Args:
             context: Workflow context
@@ -78,49 +120,90 @@ class AgentNode(WorkflowNode):
                 "When you need to call a tool, output it in the following format:\n"
                 "<tool_call>{\n"
                 '  "name": "tool_name",\n'
-                '  "parameters": {\n'
-                '    "parameter_name": "parameter_value"\n'
+                '  "arguments": {\n'
+                '    "argument_name": "argument_value"\n'
                 "  }\n"
                 "}</tool_call>\n"
+                "Make sure to include ALL required arguments in the tool call.\n"
             )
+
+        # Auto-inject delivery format instruction
+        system_prompt += DELIVERY_INSTRUCTION
+
+        # In evaluate mode (AIME), remind agents the answer must be an integer
+        # and prevent designer-format output
+        if os.getenv("EVALUATE_MODE") == "True":
+            system_prompt += (
+                "\nIMPORTANT: The answer MUST be an integer between 0 and 999."
+                " If you get a non-integer, re-examine your work."
+                "\nDo NOT output Problem Type, Problem Analysis, or Workflow Pattern."
+                " You are a math solver, not a designer. Solve the problem directly."
+            )
+
+        # Add /no_think suffix if enabled (only during execution, not design)
+        if os.getenv("EXECUTOR_NO_THINK") == "True":
+            system_prompt = system_prompt + " /no_think"
 
         messages = [{"role": "system", "content": system_prompt}]
 
-        # Get the original user query (first USER_INPUT message)
-        user_inputs = context.get_messages_by_type(MessageType.USER_INPUT)
-        original_query = None
-        if user_inputs:
-            first_input = user_inputs[0]
-            if isinstance(first_input.content, str):
-                original_query = first_input.content
-            elif isinstance(first_input.content, dict):
-                original_query = json.dumps(first_input.content, ensure_ascii=False)
+        # --- Shared Context: original question + delivery-extracted prior outputs ---
+        original_input = None
+        agent_responses = []
+        for msg in context.messages:
+            if msg.message_type == MessageType.USER_INPUT and original_input is None:
+                original_input = msg
+            elif msg.message_type == MessageType.AGENT_RESPONSE:
+                agent_responses.append(msg)
+
+        if original_input:
+            if isinstance(original_input.content, str):
+                content = original_input.content
+            elif isinstance(original_input.content, dict):
+                content = json.dumps(original_input.content, ensure_ascii=False)
             else:
-                original_query = str(first_input.content)
+                content = str(original_input.content)
 
-            messages.append({"role": "user", "content": original_query})
-
-        # Get the latest message (could be from previous agent)
-        latest_msg = context.get_latest_message()
-
-        # If latest message is different from original query, include previous agent's output
-        if latest_msg and latest_msg.message_type != MessageType.USER_INPUT:
-            if isinstance(latest_msg.content, str):
-                prev_content = latest_msg.content
-            elif isinstance(latest_msg.content, dict):
-                prev_content = json.dumps(latest_msg.content, ensure_ascii=False)
+            if agent_responses:
+                # Build shared-context: original question + extracted deliveries
+                parts = [f"**Original Question:**\n{content}\n"]
+                parts.append("**Previous Agents' Analysis:**\n")
+                for resp in agent_responses:
+                    sender = resp.sender or "Agent"
+                    resp_content = resp.content if isinstance(resp.content, str) else str(resp.content)
+                    # Prefer <delivery> block; fall back to tail truncation
+                    delivery = _extract_delivery(resp_content)
+                    if delivery:
+                        summary = delivery
+                    elif len(resp_content) > 1200:
+                        summary = (
+                            resp_content[:200] + "\n...(reasoning omitted)...\n"
+                            + resp_content[-800:]
+                        )
+                    else:
+                        summary = resp_content
+                    parts.append(f"[{sender}]:\n{summary}\n")
+                parts.append(
+                    "Based on the original question and the analysis above, "
+                    "provide your own solution."
+                )
+                messages.append({"role": "user", "content": "\n".join(parts)})
             else:
-                prev_content = str(latest_msg.content)
-
-            # Add previous agent's output as assistant message, then prompt for next step
-            messages.append({"role": "assistant", "content": prev_content})
-            messages.append({
-                "role": "user",
-                "content": "Based on the above analysis and the original question, please continue with your task."
-            })
+                # First agent in the chain — just the question
+                messages.append({"role": "user", "content": content})
+        else:
+            # Fallback: use latest message (for non-workflow direct calls)
+            latest_msg = context.get_latest_message()
+            if latest_msg:
+                if isinstance(latest_msg.content, str):
+                    content = latest_msg.content
+                elif isinstance(latest_msg.content, dict):
+                    content = json.dumps(latest_msg.content, ensure_ascii=False)
+                else:
+                    content = str(latest_msg.content)
+                messages.append({"role": "user", "content": content})
 
         return messages
-    
+
     def _handle_tool_calls(self, messages: List[Dict[str, str]]) -> tuple[str, int, List[Dict[str, str]]]:
         """Handle agent tool calls in a loop.
 
@@ -150,37 +233,63 @@ class AgentNode(WorkflowNode):
                 )
             else:
                 response, prompt_tokens, completion_tokens = self.ai_client.chat(messages)
-            
+
             total_tokens += prompt_tokens + completion_tokens
-            
+
             # Check if response contains tool calls (native OpenAI format)
             # For now, we support both native and custom format
-            
+
             # Try to parse custom format first (for backward compatibility)
             if "<tool_call>" in response and "</tool_call>" in response:
                 # Add assistant's tool call to messages
                 messages.append({"role": "assistant", "content": response})
-                
+
                 try:
                     tool_call_str = response.split("<tool_call>")[1].split("</tool_call>")[0].strip()
+
+                    # Check for empty tool call
+                    if not tool_call_str:
+                        self.logger.error("Empty tool call content received")
+                        messages.append({
+                            "role": "user",
+                            "content": "Error: Empty tool call. Please provide a valid tool call with proper JSON format, or provide your final answer without using tools."
+                        })
+                        continue
+
                     tool_call = json.loads(tool_call_str)
-                    tool_name = tool_call["name"]
-                    tool_params = tool_call.get("parameters", {})
-                    
+                    tool_name = tool_call.get("name")
+                    # Accept both "parameters" and "arguments" (OpenAI uses "arguments")
+                    tool_params = tool_call.get("parameters") or tool_call.get("arguments") or {}
+
+                    # Validate tool call structure
+                    if not tool_name:
+                        self.logger.error("Tool call missing 'name' field")
+                        messages.append({
+                            "role": "user",
+                            "content": "Error: Tool call is missing the 'name' field. Please provide a valid tool call in the format: <tool_call>{\"name\": \"tool_name\", \"parameters\": {...}}</tool_call>"
+                        })
+                        continue
+
                     self.logger.info(f"Calling tool: {tool_name} with params: {tool_params}")
-                    
+
                     # Execute tool
                     tool_result = self.tool_registry.call_tool(tool_name, tool_params)
-                    
+
                     # Add tool result to messages
                     tool_response = f"Tool '{tool_name}' returned: {tool_result}"
                     messages.append({
                         "role": "user",
                         "content": tool_response
                     })
-                    
+
                     self.logger.debug(f"Tool response: {tool_response[:200]}...")
-                    
+
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"Invalid JSON in tool call: {e}")
+                    messages.append({
+                        "role": "user",
+                        "content": f"Error: Invalid JSON format in tool call. Please ensure your tool call uses valid JSON format: <tool_call>{{\"name\": \"tool_name\", \"parameters\": {{...}}}}</tool_call>\nJSON error: {str(e)}"
+                    })
                 except Exception as e:
                     self.logger.error(f"Error executing tool: {e}")
                     error_msg = f"Error executing tool: {str(e)}"
@@ -188,17 +297,17 @@ class AgentNode(WorkflowNode):
                         "role": "user",
                         "content": error_msg
                     })
-                
+
                 # Continue to next turn
                 continue
-            
+
             # No tool call in response - this is the final answer
             # Add final response to messages
             messages.append({"role": "assistant", "content": response})
-            
+
             # Return final response and full message history
             return response, total_tokens, messages
-        
+
         # Max turns reached, force final answer
         messages.append({
             "role": "user",
@@ -207,9 +316,9 @@ class AgentNode(WorkflowNode):
         response, pt, ct = self.ai_client.chat(messages)
         total_tokens += pt + ct
         messages.append({"role": "assistant", "content": response})
-        
+
         return response, total_tokens, messages
-    
+
     def process(self, context: Context) -> Message:
         """Process the context and generate agent response.
 
@@ -221,24 +330,37 @@ class AgentNode(WorkflowNode):
         """
         workflow = context.state.get('workflow')
         self.ai_client = workflow.ai_client
-            
+
         # Build message history
         initial_messages = self._build_initial_messages(context)
-        
+
         # Handle tool calls and get final response with full message history
         response, total_tokens, full_messages = self._handle_tool_calls(initial_messages)
-        
+
+        # Print agent node details to stdout (captured in output.txt)
+        try:
+            sys_prompt = next((m.get("content", "") for m in initial_messages if m.get("role") == "system"), "")
+            user_input = next((m.get("content", "") for m in initial_messages if m.get("role") == "user"), "")
+            print(f"\n========== AGENT NODE: {self.name} ==========")
+            print(f"[SYSTEM PROMPT]: {sys_prompt[:500]}")
+            print(f"[USER INPUT]: {user_input[:500]}")
+            print(f"[AGENT RESPONSE]: {response[:2000]}")
+            print(f"[TOKENS]: {total_tokens}")
+            print(f"=============================================\n")
+        except Exception:
+            pass
+
         # Log conversation to ShareGPT format if enabled
         if self.enable_conversation_logging:
             try:
                 tracker = get_global_tracker()
                 logger = tracker.get_logger(self.name)
-                
+
                 # Log all messages in the conversation (including tool calls and responses)
                 for msg in full_messages:
                     role = msg.get("role", "user")
                     content = msg.get("content", "")
-                    
+
                     # Map OpenAI roles to ShareGPT format
                     if role == "system":
                         sharegpt_role = "system"
@@ -248,15 +370,15 @@ class AgentNode(WorkflowNode):
                         sharegpt_role = "gpt"
                     else:
                         sharegpt_role = "human"
-                    
+
                     logger.add_message(sharegpt_role, content)
-                
+
             except Exception as e:
                 self.logger.warning(f"Failed to log conversation: {e}")
-        
+
         # Store token usage in metadata
         self.logger.info(f"Total tokens used: {total_tokens}")
-        
+
         # Create result message
         result = Message(
             content=response,
@@ -266,6 +388,5 @@ class AgentNode(WorkflowNode):
                 "agent_name": self.name
             }
         )
-        
-        return result
 
+        return result

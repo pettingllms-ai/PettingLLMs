@@ -143,6 +143,11 @@ class AIClient:
             asyncio.set_event_loop(loop)
             loop.close()
 
+        # Store actual response token count for length-penalty bookkeeping.
+        import numpy as np
+        response_token_count = len(self.tokenizer.encode(response))
+        output_dpr.non_tensor_batch["response_token_count"] = np.array([response_token_count])
+
         self.workflow.dataproto_list.append(output_dpr)
 
         # Calculate token usage from DataProto

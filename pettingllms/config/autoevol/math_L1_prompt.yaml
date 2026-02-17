@@ -20,7 +20,7 @@ env:
   batched_init: true
 base_models:
   policy_0:
-    path: Mercury7353/masrlnothink0128
+    path: Mercury7353/masrl0206_notool
     name: shared_model
 agent_policy_configs:
   agent_configs:
@@ -33,6 +33,7 @@ agent_policy_configs:
         top_p: 0.9
         top_k: 20
         min_p: 0.0
+        repetition_penalty: 1.10
       val_llm_config:
         enable_thinking: false
         temperature: 0

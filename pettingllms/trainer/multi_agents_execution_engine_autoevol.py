@@ -31,6 +31,25 @@ logger = logging.getLogger(__name__)
 _DEBUG_ENGINE = False
 
 
+def _align_non_tensor_batch_keys(dpr_a: DataProto, dpr_b: DataProto) -> tuple:
+    """Align non_tensor_batch keys between two DataProtos before concat.
+
+    DataProto.concat requires all items to have the same keys.  Workflow
+    DataProtos may carry extra keys (e.g. response_token_count) that the
+    designer DataProto does not have, causing an AssertionError.  This
+    helper adds missing keys (filled with None) so concat succeeds.
+    """
+    keys_a = set(dpr_a.non_tensor_batch.keys()) if dpr_a.non_tensor_batch else set()
+    keys_b = set(dpr_b.non_tensor_batch.keys()) if dpr_b.non_tensor_batch else set()
+
+    for key in keys_b - keys_a:
+        dpr_a.non_tensor_batch[key] = np.array([None] * len(dpr_a), dtype=object)
+    for key in keys_a - keys_b:
+        dpr_b.non_tensor_batch[key] = np.array([None] * len(dpr_b), dtype=object)
+
+    return dpr_a, dpr_b
+
+
 def set_debug_engine(enabled: bool):
     """Enable or disable debug output for execution engine"""
     global _DEBUG_ENGINE
@@ -609,9 +628,10 @@ class MultiAgentsExecutionEngineAutoEvol:
             workflow_dataproto_list = step_result.get("workflow_dpr", [])
             mas_execution_success = step_result.get("execution_success", False)
             final_reward = step_result.get("reward", 0.0)
-            
+            designer_reward = step_result.get("designer_reward", final_reward)
+
             print(f"[EXECUTOR STEP RESULT] MAS execution success: {mas_execution_success}")
-            print(f"[EXECUTOR STEP RESULT] Final reward: {final_reward}")
+            print(f"[EXECUTOR STEP RESULT] Agent reward: {final_reward}, Designer reward: {designer_reward}")
             print(f"[EXECUTOR STEP RESULT] Number of workflow DataProtos: {len(workflow_dataproto_list)}")
 
             self.multi_logger.log_env_agent_info(
@@ -655,12 +675,12 @@ class MultiAgentsExecutionEngineAutoEvol:
         # Step 11: Merge all DataProtos and assign outcome rewards
         # Both Designer and Executor use the same outcome reward (final_reward)
         
-        # Designer's DataProto - reward based on final outcome
+        # Designer's DataProto - only correctness + format reward (no penalties)
         if designer_output_dpr is not None:
             designer_batch_size = len(designer_output_dpr)
-            designer_output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["reward"] = np.array([designer_reward] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["agent_name"] = np.array([designer_name] * designer_batch_size, dtype=object)
-            designer_output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["env_final_reward"] = np.array([designer_reward] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["turn_idx"] = np.array([0] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * designer_batch_size)
@@ -673,6 +693,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             if trajectory_per_task_dict[designer_policy].batch is None:
                 trajectory_per_task_dict[designer_policy] = designer_output_dpr
             else:
+                _align_non_tensor_batch_keys(trajectory_per_task_dict[designer_policy], designer_output_dpr)
                 trajectory_per_task_dict[designer_policy] = DataProto.concat([
                     trajectory_per_task_dict[designer_policy],
                     designer_output_dpr
@@ -698,6 +719,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             if trajectory_per_task_dict[executor_policy].batch is None:
                 trajectory_per_task_dict[executor_policy] = executor_output_dpr
             else:
+                _align_non_tensor_batch_keys(trajectory_per_task_dict[executor_policy], executor_output_dpr)
                 trajectory_per_task_dict[executor_policy] = DataProto.concat([
                     trajectory_per_task_dict[executor_policy],
                     executor_output_dpr
@@ -722,6 +744,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 if trajectory_per_task_dict[executor_policy].batch is None:
                     trajectory_per_task_dict[executor_policy] = workflow_dpr
                 else:
+                    _align_non_tensor_batch_keys(trajectory_per_task_dict[executor_policy], workflow_dpr)
                     trajectory_per_task_dict[executor_policy] = DataProto.concat([
                         trajectory_per_task_dict[executor_policy],
                         workflow_dpr
@@ -857,6 +880,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                             if aggregated_results[policy_name].batch is None:
                                 aggregated_results[policy_name] = policy_data
                             else:
+                                aggregated_results[policy_name], policy_data = _align_non_tensor_batch_keys(
+                                    aggregated_results[policy_name], policy_data
+                                )
                                 aggregated_results[policy_name] = DataProto.concat([
                                     aggregated_results[policy_name],
                                     policy_data

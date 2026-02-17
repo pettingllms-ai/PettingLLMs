@@ -52,17 +52,17 @@ model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
 # /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-1854
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838
+# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838 # this is 0206 no tool
 # Mercury7353/masrlnothink0128
 # Mercury7353/masrl0206_notool
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838"\
+    base_models.policy_0.path="Mercury7353/masrl0206_notool"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_L1_prompt_large_lr\
-    training.total_training_steps=300\
-    training.train_batch_size=16\
+    training.experiment_name=autoeval_L1_prompt\
+    training.total_training_steps=400\
+    training.train_batch_size=32\
     training.train_sample_num=8\
     training.validate_sample_num=3\
     training.max_prompt_length=4096\
@@ -70,17 +70,19 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.val_freq=10\
     env.dataset=polaris\
     env.benchmark=AIME24\
+    $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
     $model_0_config_path.trainer.resume_mode=resume_path\
     $model_0_config_path.trainer.resume_from_path=checkpoints/20260216/gsm8k/global_step_10\
+    +$model_0_config_path.actor.optim.lr=3e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
-    +$model_0_config_path.actor.entropy_coeff=0.01\
-    +$model_0_config_path.actor.clip_ratio_low=0.2\
-    +$model_0_config_path.actor.clip_ratio_high=0.28\
-    +$model_0_config_path.filter_method=dapo\
-    +$model_0_config_path.filter_ratio=1.0\
+    +$model_0_config_path.actor.entropy_coeff=0.00\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
+
+
+# +$model_0_config_path.actor.clip_ratio_low=0.15\
+#    +$model_0_config_path.actor.clip_ratio_high=0.28\

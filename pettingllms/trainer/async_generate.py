@@ -453,7 +453,7 @@ async def llm_async_generate(
         'stop': None,
         'presence_penalty': 0.0,
         'frequency_penalty': 0.0,
-        'repetition_penalty': 1.0,
+        'repetition_penalty': 1.2,
         'best_of': None,
         'ignore_eos': False,
         'skip_special_tokens': True,
