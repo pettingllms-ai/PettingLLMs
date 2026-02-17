@@ -817,7 +817,9 @@ class MultiAgentsPPOTrainer:
                             
                             # Merge trainer metrics by agent
                             trainer_metrics = result["metrics"]
-                        
+                            for k, v in trainer_metrics.items():
+                                if isinstance(v, (int, float)):
+                                    all_trainer_metrics[f"{model_name}/{k}"] = v
 
                             # Replace the trainer's batch with the updated version for downstream metrics
                             if "updated_batch" in result and result["updated_batch"] is not None:
@@ -856,7 +858,22 @@ class MultiAgentsPPOTrainer:
                 for metric_name, metric_value in compute_timing_metrics(batch=batch, timing_raw=timing_raw).items():
                     metric_name_policy= model_name + "_" + metric_name
                     metrics[metric_name_policy] = metric_value
-            
+
+                # Per-agent reward breakdown
+                if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'agent_name' in batch.non_tensor_batch and 'reward' in batch.non_tensor_batch:
+                    agent_names = batch.non_tensor_batch['agent_name']
+                    rewards = batch.non_tensor_batch['reward']
+                    from collections import defaultdict
+                    agent_rewards = defaultdict(list)
+                    for name, r in zip(agent_names, rewards):
+                        agent_rewards[name].append(float(r) if r is not None else 0.0)
+                    for agent_name, rews in agent_rewards.items():
+                        rews_arr = np.array(rews)
+                        metrics[f"{model_name}/reward_by_agent/{agent_name}/mean"] = float(np.mean(rews_arr))
+                        metrics[f"{model_name}/reward_by_agent/{agent_name}/std"] = float(np.std(rews_arr))
+                        metrics[f"{model_name}/reward_by_agent/{agent_name}/count"] = len(rews)
+                        metrics[f"{model_name}/reward_by_agent/{agent_name}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
+
             # Standard data and timing metrics
             #metrics.update(compute_data_metrics(batch=first_batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())))
             #metrics.update(compute_timing_metrics(batch=first_batch, timing_raw=timing_raw))
