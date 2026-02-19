@@ -60,7 +60,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     base_models.policy_0.path="Mercury7353/masrl0206_notool"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_L1_prompt\
+    training.experiment_name=autoeval_L1_prompt_5e_6_8k\
     training.total_training_steps=400\
     training.train_batch_size=32\
     training.train_sample_num=8\
