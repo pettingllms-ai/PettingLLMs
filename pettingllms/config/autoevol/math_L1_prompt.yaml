@@ -82,6 +82,7 @@ models:
         trainer:
           n_gpus_per_node: ${resource.n_gpus_per_node}
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
+          experiment_name: ${training.experiment_name}
       actor:
         ppo_micro_batch_size: null  # Set to null to use ppo_micro_batch_size_per_gpu directly
         ppo_micro_batch_size_per_gpu: 4  # Set a reasonable value for full-parameter training

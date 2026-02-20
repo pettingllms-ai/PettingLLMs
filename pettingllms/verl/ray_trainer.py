@@ -799,10 +799,9 @@ class RayPPOTrainer:
 
     def _save_checkpoint(self, save_base=True):
         # path: checkpoints/{experiment_name}/{model_name}/global_step_{global_steps}/actor
-        date_time_str = datetime.now().strftime("%Y%m%d")
         experiment_name = getattr(self.config.trainer, 'experiment_name', 'default_experiment')
         checkpoint_base = getattr(self.config, 'checkpoint_dir', 'checkpoints')
-        experiment_folder = os.path.join(checkpoint_base, date_time_str, experiment_name)
+        experiment_folder = os.path.join(checkpoint_base, experiment_name)
         
         local_global_step_folder = os.path.join(experiment_folder, f'global_step_{self.global_steps}')
         # Make dirs from this absolute path

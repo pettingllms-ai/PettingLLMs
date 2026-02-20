@@ -898,6 +898,15 @@ class MultiAgentsPPOTrainer:
             self.global_steps += 1
             for ppo_trainer in self.ppo_trainer_dict.values():
                 ppo_trainer.global_steps = self.global_steps
+
+            # Periodic checkpoint saving based on save_freq
+            save_freq = getattr(self.config.training, 'save_freq', -1)
+            if save_freq > 0 and self.global_steps % save_freq == 0:
+                colorful_print(f"Periodic checkpoint save at step {self.global_steps}", "cyan")
+                save_base = self.config.specialization != "lora"
+                for trainer in self.ppo_trainer_dict.values():
+                    trainer._save_checkpoint(save_base=save_base)
+
             try:
                 logger.log(data=metrics, step=self.global_steps)
             except Exception as e:
