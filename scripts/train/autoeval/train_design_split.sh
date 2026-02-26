@@ -57,12 +57,12 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # Mercury7353/masrl0206_notool
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl0206_notool"\
+    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838"\
     lora_rank=0\
     lora_alpha=16\
     training.experiment_name=autoeval_L1_prompt_4design_8execution\
     training.total_training_steps=400\
-    training.train_batch_size=16\
+    training.train_batch_size=8\
     training.design_sample_num=4\
     training.execute_sample_num=8\
     training.validate_sample_num=3\
@@ -72,7 +72,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.save_freq=10\
     env.dataset=polaris\
     env.benchmark=AIME24\
-    $model_0_config_path.trainer.val_before_train=True\
+    $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
