@@ -139,15 +139,13 @@ def is_valid_checkpoint(ckpt_path):
     Adjust the checks below to match your own project requirements.
     """
 
-    # 1) Check for required top-level files
-    required_pt_files = [
-        'data.pt'
-    ]
-    for fname in required_pt_files:
+    # 1) Check for optional top-level files (data.pt may not exist in MASRL mode
+    #    where data is regenerated each step)
+    optional_pt_files = ['data.pt']
+    for fname in optional_pt_files:
         full_file = os.path.join(ckpt_path, fname)
         if not os.path.exists(full_file):
-            print(f"Checkpoint {ckpt_path} is missing required file: {fname}")
-            return False
+            print(f"Checkpoint {ckpt_path} is missing optional file: {fname} (will skip dataloader restore)")
 
     # 2) Check for 'actor' folder
     actor_dir = os.path.join(ckpt_path, "actor")

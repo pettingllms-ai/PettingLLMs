@@ -63,7 +63,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.experiment_name=autoeval_L1_prompt\
     training.total_training_steps=400\
     training.train_batch_size=32\
-    training.train_sample_num=8\
+    training.train_sample_num=4\
     training.validate_sample_num=3\
     training.max_prompt_length=4096\
     training.max_response_length=4096\

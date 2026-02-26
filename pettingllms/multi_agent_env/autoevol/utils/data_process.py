@@ -442,35 +442,36 @@ math_agent = AgentNode(
     name="MathSolver",
     system_prompt=(
         "You are an expert mathematician who solves problems using Python code.\\n\\n"
-        
-        "IMPORTANT - YOU MUST USE THE PYTHON CODE EXECUTOR:\\n"
+
+        "IMPORTANT - YOU MUST USE PYTHON CODE:\\n"
         "For any calculation, you MUST write and execute Python code. Do NOT compute in your head.\\n\\n"
-        
-        "RESPONSE FORMAT:\\n"
-        "When you need to solve a problem, respond in this format:\\n"
-        "<think>Your reasoning about the mathematical approach</think>\\n"
-        '<tool_call>{"name": "python_execute", "parameters": {"code": "your_python_code"}}</tool_call>\\n\\n'
-        
-        "AVAILABLE TOOLS:\\n"
-        "1. python_execute(code): Execute Python code. Has access to numpy, scipy, sympy, math, etc.\\n\\n"
-        
+
+        "HOW TO USE PYTHON:\\n"
+        "Simply write your code in a ```python block. It will be automatically executed\\n"
+        "and the output will be returned to you. Each execution is ISOLATED - include\\n"
+        "ALL imports and definitions in EACH block.\\n\\n"
+
         "EXAMPLE:\\n"
         "Human: What is the integral of x^2 from 0 to 1?\\n"
-        "Assistant: <think>I need to compute the definite integral of x^2 from 0 to 1. I'll use sympy for symbolic integration.</think>\\n"
-        '<tool_call>{"name": "python_execute", "parameters": {"code": "from sympy import symbols, integrate\\nx = symbols(\\'x\\')\\nresult = integrate(x**2, (x, 0, 1))\\nprint(f\\'The integral is: {result}\\')"}}</tool_call>\\n'
-        "[Tool returns: Code executed successfully.\\nOutput: The integral is: 1/3]\\n"
-        "Assistant: <think>The code executed successfully and gave the answer 1/3.</think>\\n"
-        "The integral of x² from 0 to 1 is **1/3**.\\n\\n"
-        
+        "Assistant: I need to compute the definite integral. Let me use sympy:\\n"
+        "```python\\n"
+        "from sympy import symbols, integrate\\n"
+        "x = symbols('x')\\n"
+        "result = integrate(x**2, (x, 0, 1))\\n"
+        "print(f'The integral is: {result}')\\n"
+        "```\\n"
+        "[Result: Code executed successfully.\\nOutput: The integral is: 1/3]\\n"
+        "The integral of x^2 from 0 to 1 is 1/3.\\n\\n"
+
         "WORKFLOW:\\n"
         "1. READ the problem carefully\\n"
         "2. THINK about the mathematical approach\\n"
-        "3. WRITE Python code to solve the problem\\n"
-        "4. EXECUTE the code using python_execute\\n"
-        "5. INTERPRET the results\\n"
-        "6. PROVIDE the final answer\\n\\n"
-        
-        "Remember: Always show your thinking process and always use code for calculations!"
+        "3. WRITE Python code in a ```python block\\n"
+        "4. Read the execution output\\n"
+        "5. PROVIDE the final answer\\n\\n"
+
+        "Libraries available: numpy, scipy, sympy, math, itertools, etc.\\n"
+        "Remember: Always use code for calculations!"
     ),
     tool_registry=tool_registry,
     max_turns=8,
@@ -520,7 +521,8 @@ algebraic_solver = AgentNode(
     name="AlgebraicSolver",
     system_prompt=(
         "You are a mathematician who prefers algebraic and symbolic approaches. "
-        "Use sympy for symbolic computation. Always write Python code to solve."
+        "Use sympy for symbolic computation. Write your Python code in ```python blocks "
+        "and it will be executed automatically. Each execution is isolated - include all imports."
     ),
     tool_registry=tool_registry,
     max_turns=6
@@ -530,7 +532,8 @@ numerical_solver = AgentNode(
     name="NumericalSolver",
     system_prompt=(
         "You are a mathematician who prefers numerical methods. "
-        "Use numpy and scipy for numerical computation. Always write Python code to solve."
+        "Use numpy and scipy for numerical computation. Write your Python code in ```python blocks "
+        "and it will be executed automatically. Each execution is isolated - include all imports."
     ),
     tool_registry=tool_registry,
     max_turns=6
@@ -540,7 +543,8 @@ verification_solver = AgentNode(
     name="VerificationSolver",
     system_prompt=(
         "You are a careful mathematician who double-checks every step. "
-        "Solve the problem step by step, verify intermediate results with code."
+        "Solve the problem step by step, verify intermediate results with code. "
+        "Write your Python code in ```python blocks and it will be executed automatically."
     ),
     tool_registry=tool_registry,
     max_turns=6
@@ -551,7 +555,8 @@ consensus_agent = AgentNode(
     name="MathConsensus",
     system_prompt=(
         "You are a senior mathematician. Review the solutions from multiple solvers. "
-        "Verify the answers match. If they differ, run your own calculation to determine the correct answer."
+        "Verify the answers match. If they differ, run your own calculation to determine the correct answer. "
+        "Write Python code in ```python blocks to verify."
     ),
     tool_registry=tool_registry,
     max_turns=4
@@ -608,6 +613,8 @@ math_agent = AgentNode(
     name="ReflectiveMathSolver",
     system_prompt=(
         "You are a meticulous mathematician. Solve problems using Python code. "
+        "Write your code in ```python blocks and it will be executed automatically. "
+        "Each execution is isolated - include all imports in each block. "
         "After getting a result, reflect on whether the approach was correct and "
         "verify the answer using a different method if possible."
     ),
@@ -775,8 +782,8 @@ symbolic_solver = AgentNode(
     name="SymbolicSolver",
     system_prompt=(
         "You are a mathematician who uses symbolic computation. "
-        "Use sympy for exact algebraic solutions. Always include all imports in your code. "
-        "Each code execution is isolated - define all functions and imports in each code block."
+        "Use sympy for exact algebraic solutions. Write your Python code in ```python blocks "
+        "and it will be executed automatically. Each execution is isolated - include all imports."
     ),
     tool_registry=tool_registry,
     max_turns=6
@@ -786,8 +793,8 @@ numerical_solver = AgentNode(
     name="NumericalSolver",
     system_prompt=(
         "You are a mathematician who uses numerical methods. "
-        "Use numpy and scipy for numerical solutions. Always include all imports in your code. "
-        "Each code execution is isolated - define all functions and imports in each code block."
+        "Use numpy and scipy for numerical solutions. Write your Python code in ```python blocks "
+        "and it will be executed automatically. Each execution is isolated - include all imports."
     ),
     tool_registry=tool_registry,
     max_turns=6
@@ -798,7 +805,8 @@ math_consensus = AgentNode(
     name="MathConsensus",
     system_prompt=(
         "You are a senior mathematician. Compare solutions from symbolic and numerical approaches. "
-        "If they agree, synthesize the answer. If they differ, run your own verification."
+        "If they agree, synthesize the answer. If they differ, run your own verification. "
+        "Write Python code in ```python blocks to verify."
     ),
     tool_registry=tool_registry,
     max_turns=4
@@ -818,7 +826,8 @@ verifier = AgentNode(
     system_prompt=(
         "You are a meticulous math verifier. Check the solution step by step. "
         "Verify by substituting back into original equations or using alternative methods. "
-        "Each code execution is isolated - include all imports and definitions."
+        "Write your Python code in ```python blocks and it will be executed automatically. "
+        "Each execution is isolated - include all imports."
     ),
     tool_registry=tool_registry,
     max_turns=4

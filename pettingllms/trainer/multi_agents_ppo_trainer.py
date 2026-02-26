@@ -125,11 +125,11 @@ class MultiAgentsPPOTrainer:
         ppo_config = model_config.ppo_trainer_config
         ppo_config.actor_rollout_ref.model.lora_rank = config.get("lora_rank", 0)
         ppo_config.actor_rollout_ref.model.lora_alpha = config.get("lora_alpha", 16)
+        ppo_config.trainer.experiment_name = config.training.experiment_name
         if ppo_config.actor_rollout_ref.model.lora_rank > 0:
             print("Enabling LoRA in single PPO trainer")
             ppo_config.actor_rollout_ref.rollout.enable_lora = True
             ppo_config.actor_rollout_ref.rollout.max_loras = self.lora_num
-            ppo_config.trainer.experiment_name = config.training.experiment_name
             ppo_config.actor_rollout_ref.rollout.max_lora_rank = config.get("lora_rank", 0)
         else:
             ppo_config.actor_rollout_ref.rollout.enable_lora = False
@@ -594,8 +594,8 @@ class MultiAgentsPPOTrainer:
                     dump_path=rollout_data_dir,
                 )
 
-            # Return the potentially updated batch so caller can keep latest fields
-            return batch
+        # Return the updated batch so caller can keep latest fields (advantages, returns, etc.)
+        return batch
 
     
 
@@ -735,6 +735,11 @@ class MultiAgentsPPOTrainer:
                 with simple_timer("update_parameters", timing_raw):
                     # Apply UID assignment and filtering for each model
                     sample_num = self.config.training.train_sample_num
+                    design_sample_num = getattr(self.config.training, 'design_sample_num', None)
+                    execute_sample_num = getattr(self.config.training, 'execute_sample_num', None)
+                    # Auto-calculate sample_num for tree design mode
+                    if design_sample_num and execute_sample_num:
+                        sample_num = design_sample_num * execute_sample_num
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         if model_name in batch_per_trainer and batch_per_trainer[model_name].batch is not None:
                             filter_ratio = getattr(trainer.config, 'filter_ratio', 0.0)
@@ -744,7 +749,9 @@ class MultiAgentsPPOTrainer:
                                 filter_ratio=filter_ratio,
                                 mode=filter_method,
                                 sample_num=sample_num,
-                                rollout_mode=self.config.get("rollout_mode","tree")
+                                rollout_mode=self.config.get("rollout_mode","tree"),
+                                design_sample_num=design_sample_num,
+                                execute_sample_num=execute_sample_num,
                             )
 
                     import sys
@@ -851,15 +858,23 @@ class MultiAgentsPPOTrainer:
                 if batch is None or batch.batch is None:
                     print(f"[PRINT DEBUG] ERROR: Cannot compute metrics - batch is None or batch.batch is None!")
                     continue
-                for metric_name, metric_value in compute_data_metrics(batch=batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())).items():
-                    metric_name_policy= model_name + "_" + metric_name
-                    metrics[metric_name_policy] = metric_value
-                
-                for metric_name, metric_value in compute_timing_metrics(batch=batch, timing_raw=timing_raw).items():
-                    metric_name_policy= model_name + "_" + metric_name
-                    metrics[metric_name_policy] = metric_value
+                try:
+                    for metric_name, metric_value in compute_data_metrics(batch=batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())).items():
+                        metric_name_policy= model_name + "_" + metric_name
+                        metrics[metric_name_policy] = metric_value
+                except Exception as e:
+                    print(f"[METRICS WARNING] compute_data_metrics failed for {model_name}: {e}")
+
+                try:
+                    for metric_name, metric_value in compute_timing_metrics(batch=batch, timing_raw=timing_raw).items():
+                        metric_name_policy= model_name + "_" + metric_name
+                        metrics[metric_name_policy] = metric_value
+                except Exception as e:
+                    print(f"[METRICS WARNING] compute_timing_metrics failed for {model_name}: {e}")
 
                 # Per-agent reward breakdown
+                ntb_keys = list(batch.non_tensor_batch.keys()) if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None else []
+                print(f"[METRICS DEBUG] {model_name} non_tensor_batch keys: {ntb_keys}")
                 if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'agent_name' in batch.non_tensor_batch and 'reward' in batch.non_tensor_batch:
                     agent_names = batch.non_tensor_batch['agent_name']
                     rewards = batch.non_tensor_batch['reward']
@@ -874,6 +889,65 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/count"] = len(rews)
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
 
+                # Tree design-specific metrics
+                design_sample_num = getattr(self.config.training, 'design_sample_num', None)
+                execute_sample_num = getattr(self.config.training, 'execute_sample_num', None)
+                has_design_idx = 'design_idx' in batch.non_tensor_batch
+                if has_design_idx and design_sample_num and execute_sample_num and execute_sample_num > 1:
+                    design_indices = batch.non_tensor_batch['design_idx']
+                    env_indices = batch.non_tensor_batch['env_idx']
+                    agent_idx_arr = batch.non_tensor_batch['agent_idx']
+                    uid_arr = batch.non_tensor_batch.get('uid', np.array([]))
+
+                    metrics[f"{model_name}/tree_design/design_sample_num"] = design_sample_num
+                    metrics[f"{model_name}/tree_design/execute_sample_num"] = execute_sample_num
+
+                    # Split rewards by Designer vs Executor
+                    designer_mask = (agent_idx_arr == 0)
+                    executor_mask = (agent_idx_arr == 1)
+                    designer_rewards = rewards[designer_mask] if designer_mask.any() else np.array([])
+                    executor_rewards = rewards[executor_mask] if executor_mask.any() else np.array([])
+
+                    if len(designer_rewards) > 0:
+                        metrics[f"{model_name}/tree_design/designer_reward_mean"] = float(np.mean(designer_rewards))
+                        metrics[f"{model_name}/tree_design/designer_reward_std"] = float(np.std(designer_rewards))
+                        metrics[f"{model_name}/tree_design/designer_sample_count"] = len(designer_rewards)
+                        # Debug: show reward distribution for designer
+                        unique_rewards, counts = np.unique(np.round(designer_rewards, 4), return_counts=True)
+                        print(f"[METRICS DEBUG] {model_name} designer_rewards distribution: "
+                              f"{dict(zip(unique_rewards.tolist(), counts.tolist()))}")
+                    if len(executor_rewards) > 0:
+                        metrics[f"{model_name}/tree_design/executor_reward_mean"] = float(np.mean(executor_rewards))
+                        metrics[f"{model_name}/tree_design/executor_reward_std"] = float(np.std(executor_rewards))
+                        metrics[f"{model_name}/tree_design/executor_sample_count"] = len(executor_rewards)
+
+                    # Per-design reward analysis (executor side: intra vs inter design variance)
+                    from collections import defaultdict as _dd
+                    design_reward_groups = _dd(list)
+                    for i in range(len(batch)):
+                        if agent_idx_arr[i] == 1:  # Executor
+                            d_key = (int(env_indices[i]), int(design_indices[i]))
+                            design_reward_groups[d_key].append(float(rewards[i]) if rewards[i] is not None else 0.0)
+
+                    if design_reward_groups:
+                        # Intra-design std: average std within each design's executions
+                        intra_stds = [float(np.std(rews)) for rews in design_reward_groups.values() if len(rews) > 1]
+                        if intra_stds:
+                            metrics[f"{model_name}/tree_design/intra_design_reward_std"] = float(np.mean(intra_stds))
+
+                        # Inter-design std: std of per-design mean rewards
+                        design_means = [float(np.mean(rews)) for rews in design_reward_groups.values()]
+                        if len(design_means) > 1:
+                            metrics[f"{model_name}/tree_design/inter_design_reward_std"] = float(np.std(design_means))
+                            metrics[f"{model_name}/tree_design/inter_design_reward_mean"] = float(np.mean(design_means))
+
+                    # GRPO group counts from UIDs
+                    if len(uid_arr) > 0:
+                        designer_uids = set(uid_arr[designer_mask]) if designer_mask.any() else set()
+                        executor_uids = set(uid_arr[executor_mask]) if executor_mask.any() else set()
+                        metrics[f"{model_name}/tree_design/num_grpo_groups_designer"] = len(designer_uids)
+                        metrics[f"{model_name}/tree_design/num_grpo_groups_executor"] = len(executor_uids)
+
             # Standard data and timing metrics
             #metrics.update(compute_data_metrics(batch=first_batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())))
             #metrics.update(compute_timing_metrics(batch=first_batch, timing_raw=timing_raw))
@@ -886,8 +960,18 @@ class MultiAgentsPPOTrainer:
 
             
 
-            # Run validation at step 0 (before training) and at every val_freq steps
-            if self.global_steps % self.config.training.val_freq == 0:
+            # Run validation at every val_freq steps (skip step 0 if val_before_train is False)
+            val_before_train = self.config.get("val_before_train", True)
+            # Also check per-trainer config
+            for trainer in self.ppo_trainer_dict.values():
+                vbt = getattr(trainer.config, 'trainer', None)
+                if vbt is not None:
+                    val_before_train = vbt.get("val_before_train", val_before_train)
+                    break
+            should_validate = (self.global_steps % self.config.training.val_freq == 0)
+            if self.global_steps == 0 and not val_before_train:
+                should_validate = False
+            if should_validate:
                 val_metrics = self._validate(global_steps=self.global_steps)
                 metrics.update(val_metrics)
                 agent_summary = {}
@@ -906,6 +990,10 @@ class MultiAgentsPPOTrainer:
                 save_base = self.config.specialization != "lora"
                 for trainer in self.ppo_trainer_dict.values():
                     trainer._save_checkpoint(save_base=save_base)
+
+            # Debug: show all metric keys being logged
+            reward_keys = [k for k in metrics.keys() if 'reward_by_agent' in k or 'tree_design' in k]
+            print(f"[METRICS DEBUG] Logging {len(metrics)} metrics total, reward/tree keys: {reward_keys}")
 
             try:
                 logger.log(data=metrics, step=self.global_steps)
@@ -1095,16 +1183,20 @@ class MultiAgentsPPOTrainer:
         # for the padded dataproto, make the traj mask to 0. is_last_step also False
         return batch
     
-    def _assign_consistent_uids(self, data_proto, filter_ratio=0.0, mode="mean", sample_num=1, rollout_mode="tree"):
+    def _assign_consistent_uids(self, data_proto, filter_ratio=0.0, mode="mean", sample_num=1, rollout_mode="tree",
+                                design_sample_num=None, execute_sample_num=None):
         """
         Assign consistent UIDs to data and optionally filter based on rewards.
-        
+
         Args:
             data_proto: DataProto object containing trajectory data
             filter_ratio: Ratio of samples to filter (0.0 to 1.0)
             mode: Filtering mode - "mean", "std", "dapo", or "uid"
             sample_num: Number of samples per environment
-        
+            rollout_mode: Rollout mode ("tree" or "no_tree")
+            design_sample_num: Number of designs per problem (tree design mode)
+            execute_sample_num: Number of executions per design (tree design mode)
+
         Returns:
             Filtered DataProto object
         """
@@ -1130,13 +1222,28 @@ class MultiAgentsPPOTrainer:
         agent_indices = non_tensor_batch["agent_idx"]
         rewards = non_tensor_batch.get("reward", [])
         
-        print(f"[DEBUG UID] Input: len={len(data_proto)}, rollout_mode={rollout_mode}, sample_num={sample_num}")
+        # Detect tree design mode from design_idx in non_tensor_batch
+        has_design_idx = "design_idx" in non_tensor_batch
+        use_tree_grouping = (has_design_idx and execute_sample_num is not None and execute_sample_num > 1)
+
+        print(f"[DEBUG UID] Input: len={len(data_proto)}, rollout_mode={rollout_mode}, sample_num={sample_num}, "
+              f"use_tree_grouping={use_tree_grouping}, design_sample_num={design_sample_num}, execute_sample_num={execute_sample_num}")
         print(f"[DEBUG UID] Rewards: len={len(rewards)}, mean={np.mean(rewards) if len(rewards) > 0 else 'N/A'}, nonzero={np.count_nonzero(rewards) if len(rewards) > 0 else 0}")
-        
+
+        design_indices = non_tensor_batch.get("design_idx", None)
+
         uids = []
         for i in range(len(data_proto)):
             if rollout_mode == "no_tree":
                 key = (rollout_indices[i],)
+            elif use_tree_grouping:
+                base_env = rollout_indices[i] // sample_num
+                if agent_indices[i] == 0:
+                    # Designer: same problem's all designs share one GRPO group
+                    key = (base_env, 0, 0)
+                else:
+                    # Executor: same design's executions share one GRPO group
+                    key = (base_env, int(design_indices[i]), 1)
             else:
                 key = (rollout_indices[i]//sample_num, turn_indices[i], agent_indices[i])
             if key not in uid_mapping:

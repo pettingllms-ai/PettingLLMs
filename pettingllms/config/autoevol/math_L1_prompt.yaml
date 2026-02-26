@@ -56,9 +56,12 @@ training:
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
   train_sample_num: 8
+  design_sample_num: null    # null = degrade to current behavior (=train_sample_num)
+  execute_sample_num: null   # null = degrade to current behavior (=1)
   validate_sample_num: 5
   sample_temperature: 1
   val_freq: 20
+  save_freq: -1
   max_prompt_length: 4096
   max_response_length: 4096
   lora_rank: ${lora_rank}  # 0 for full-parameter training

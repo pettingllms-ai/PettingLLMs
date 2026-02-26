@@ -204,8 +204,24 @@ class AgentNode(WorkflowNode):
 
         return messages
 
+    @staticmethod
+    def _extract_python_code_block(response: str):
+        """Extract Python code from ```python ... ``` blocks in the response.
+
+        Returns the first matched code string, or None if no block found.
+        """
+        match = re.search(r"```python\s*\n(.*?)```", response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return None
+
     def _handle_tool_calls(self, messages: List[Dict[str, str]]) -> tuple[str, int, List[Dict[str, str]]]:
         """Handle agent tool calls in a loop.
+
+        Supports two tool-calling formats:
+          1. ```python ... ``` blocks  –  code is extracted and executed
+             directly via the ``python_execute`` tool in the registry (preferred).
+          2. <tool_call>{...}</tool_call> JSON tags  –  legacy / generic tools.
 
         Args:
             messages: Current message history
@@ -236,10 +252,34 @@ class AgentNode(WorkflowNode):
 
             total_tokens += prompt_tokens + completion_tokens
 
-            # Check if response contains tool calls (native OpenAI format)
-            # For now, we support both native and custom format
+            # ----- Format 1: ```python code blocks (preferred for Python tool) -----
+            python_code = self._extract_python_code_block(response)
+            if python_code is not None:
+                messages.append({"role": "assistant", "content": response})
 
-            # Try to parse custom format first (for backward compatibility)
+                try:
+                    # Execute via python_execute tool if registered, else direct call
+                    if self.tool_registry.get_tool("python_execute"):
+                        tool_result = self.tool_registry.call_tool(
+                            "python_execute", {"code": python_code}
+                        )
+                    else:
+                        # Fallback: try to import and run MathEnvironment directly
+                        from pettingllms.multi_agent_env.autoevol.utils.environments.math_env import python_execute
+                        tool_result = python_execute(python_code)
+
+                    self.logger.info(f"Executed ```python block ({len(python_code)} chars)")
+                except Exception as e:
+                    self.logger.error(f"Error executing python code block: {e}")
+                    tool_result = f"Error executing code: {type(e).__name__}: {str(e)}"
+
+                messages.append({
+                    "role": "user",
+                    "content": tool_result
+                })
+                continue
+
+            # ----- Format 2: <tool_call> JSON tags (legacy / generic tools) -----
             if "<tool_call>" in response and "</tool_call>" in response:
                 # Add assistant's tool call to messages
                 messages.append({"role": "assistant", "content": response})
