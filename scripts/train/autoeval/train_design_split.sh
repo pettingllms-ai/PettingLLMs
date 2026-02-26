@@ -57,7 +57,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # Mercury7353/masrl0206_notool
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838"\
+    base_models.policy_0.path="Mercury7353/masrl0206_notool"\
     lora_rank=0\
     lora_alpha=16\
     training.experiment_name=autoeval_L1_prompt_4design_8execution\
