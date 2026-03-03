@@ -62,10 +62,10 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
+    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mixcoldstart_8design_4execution_5e_6_trainall\
+    training.experiment_name=autoeval_mixcoldstart_4design_8execution_5e_6_trainall_wostage\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=4\
@@ -78,7 +78,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.train_data_mode=all\
     env.dataset=polaris\
     env.benchmark=AIME24\
-    $model_0_config_path.trainer.val_before_train=False\
+    $model_0_config_path.trainer.val_before_train=True\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2\
