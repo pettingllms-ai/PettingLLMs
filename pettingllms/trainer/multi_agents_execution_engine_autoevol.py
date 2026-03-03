@@ -286,7 +286,8 @@ class MultiAgentsExecutionEngineAutoEvol:
                 'env_idx': rollout_idx,
                 'agent_sample_idx': rollout_idx,
                 'rollout_idx': rollout_idx,
-                'task_type': getattr(self.config.env, 'task_type', 'math')
+                'task_type': getattr(self.envs[rollout_idx], 'problem_type',
+                             getattr(self.config.env, 'task_type', 'math'))
             }
             agent_init_params['benchmark'] = getattr(self.config.env, 'benchmark', 'AIME24') if hasattr(self.config, 'env') else 'AIME24'
 

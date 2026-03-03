@@ -80,6 +80,17 @@ class MultiAgentsPPOTrainer:
             self.agent_untrained = config.multi_agent_interaction.agent_untrained
             colorful_print(f"Agents excluded from training: {self.agent_untrained}", "yellow")
 
+        # train_data_mode: "all" | "designer_only" | "executor_only"
+        train_data_mode = getattr(config.training, 'train_data_mode', 'all') if hasattr(config, 'training') else 'all'
+        if train_data_mode == "designer_only":
+            self.agent_untrained = list(set(self.agent_untrained) | {"WorkflowAgent"})
+            colorful_print(f"train_data_mode=designer_only: excluding WorkflowAgent from training", "yellow")
+        elif train_data_mode == "executor_only":
+            self.agent_untrained = list(set(self.agent_untrained) | {"Designer"})
+            colorful_print(f"train_data_mode=executor_only: excluding Designer from training", "yellow")
+        else:
+            colorful_print(f"train_data_mode=all: training on all agent data", "yellow")
+
         if config.specialization =="lora":
             self.lora_num = len(self.agent_policy_mapping)
             self.lora_differ_mode = True
@@ -948,10 +959,28 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/tree_design/num_grpo_groups_designer"] = len(designer_uids)
                         metrics[f"{model_name}/tree_design/num_grpo_groups_executor"] = len(executor_uids)
 
+            # Per problem_type reward metrics (for mixed training)
+            if hasattr(self, 'agent_execution_engine') and hasattr(self.agent_execution_engine, 'envs'):
+                envs = self.agent_execution_engine.envs
+                for ptype in ["math", "code"]:
+                    typed_indices = [
+                        i for i, e in enumerate(envs)
+                        if getattr(e, 'problem_type', None) == ptype
+                    ]
+                    if typed_indices and 'env_idx' in batch.non_tensor_batch:
+                        env_idx_arr = batch.non_tensor_batch['env_idx']
+                        typed_mask = np.isin(env_idx_arr, typed_indices)
+                        if typed_mask.any():
+                            typed_rewards = rewards[typed_mask]
+                            metrics[f"{model_name}/reward_by_type/{ptype}_mean"] = float(np.mean(typed_rewards))
+                            metrics[f"{model_name}/reward_by_type/{ptype}_nonzero_ratio"] = float(
+                                np.count_nonzero(typed_rewards) / len(typed_rewards)
+                            )
+
             # Standard data and timing metrics
             #metrics.update(compute_data_metrics(batch=first_batch, use_critic=any(trainer.use_critic for trainer in self.ppo_trainer_dict.values())))
             #metrics.update(compute_timing_metrics(batch=first_batch, timing_raw=timing_raw))
-                    
+
             # Add training step metrics
             metrics.update({
                 "training/global_step": self.global_steps,
@@ -1170,7 +1199,15 @@ class MultiAgentsPPOTrainer:
             validation_metrics["validation/average/avg_turns"] = sum(avg_turns_list) / len(avg_turns_list)
         
         validation_metrics["validation/env_state_success_rate"] = env_success_rate
-        
+
+        # Per problem_type validation metrics (backward compatible)
+        for ptype in ["math", "code"]:
+            typed_envs = [e for e in self.agent_execution_engine.envs
+                          if getattr(e, 'problem_type', None) == ptype]
+            if typed_envs:
+                typed_success = sum(1 for e in typed_envs if getattr(e, 'success', False))
+                validation_metrics[f"validation/{ptype}_success_rate"] = typed_success / len(typed_envs)
+
         # Save checkpoint if this is the best validation result
         if global_steps > 0:
             self._save_best_checkpoint(env_success_rate)

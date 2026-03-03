@@ -57,12 +57,12 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # Mercury7353/masrl0206_notool
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl0206_notool"\
+    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_L1_prompt_5e_6_8k_warmup_10\
+    training.experiment_name=autoeval_mixcoldstart_trainmath_only_8_1\
     training.total_training_steps=400\
-    training.train_batch_size=32\
+    training.train_batch_size=8\
     training.train_sample_num=8\
     training.validate_sample_num=3\
     training.max_prompt_length=4096\
@@ -71,16 +71,16 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.save_freq=10\
     env.dataset=polaris\
     env.benchmark=AIME24\
-    $model_0_config_path.trainer.val_before_train=False\
+    $model_0_config_path.trainer.val_before_train=True\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
-    $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=2\
-    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4\
+    $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
+    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
     +$model_0_config_path.actor.optim.lr=5e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
 
 
 # +$model_0_config_path.actor.clip_ratio_low=0.15\

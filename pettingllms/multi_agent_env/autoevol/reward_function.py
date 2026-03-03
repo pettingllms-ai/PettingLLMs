@@ -244,21 +244,136 @@ def code_reward_function(summary: str, env_data: Env) -> float:
     """
     Calculate reward for code generation tasks.
 
+    Extracts code from the MAS summary, runs it against ground-truth test
+    cases stored in ``env_data.state``, and returns the pass ratio.
+
     Args:
-        summary: The result summary from MAS execution
-        env_data: Environment data containing test cases or expected output
+        summary: The result summary / final answer from MAS execution
+        env_data: Environment data containing ``state.ground_truth_test_input``
+                  and ``state.ground_truth_test_output``
 
     Returns:
-        Reward score based on code correctness
+        Reward score (pass ratio across test cases, 0.0 – 1.0)
     """
-    # TODO: Implement code verification logic
-    # This would typically involve:
-    # 1. Extract generated code from summary
-    # 2. Run test cases from env_data
-    # 3. Calculate pass rate
+    import subprocess
+    import tempfile
+    import os
 
-    logger.warning("code_reward_function not fully implemented yet")
-    return 0.0
+    # --- 1. Extract code from summary ---
+    code = _extract_code_block(summary)
+    if not code:
+        logger.info("code_reward_function: no code block found in summary")
+        return 0.0
+
+    # --- 2. Get ground-truth test cases ---
+    test_inputs = getattr(env_data.state, "ground_truth_test_input", None) or []
+    test_outputs = getattr(env_data.state, "ground_truth_test_output", None) or []
+
+    if not test_inputs or not test_outputs:
+        logger.warning("code_reward_function: no test cases available, returning 0.0")
+        return 0.0
+
+    n_tests = min(len(test_inputs), len(test_outputs))
+    passed = 0
+    timeout_per_case = 10  # seconds
+
+    for i in range(n_tests):
+        try:
+            # Write code to a temp file and execute with subprocess
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False
+            ) as f:
+                f.write(code)
+                tmp_path = f.name
+
+            result = subprocess.run(
+                ["python3", tmp_path],
+                input=str(test_inputs[i]),
+                capture_output=True,
+                text=True,
+                timeout=timeout_per_case,
+            )
+            actual = result.stdout.strip()
+            expected = str(test_outputs[i]).strip()
+
+            # Whitespace-normalized comparison
+            if " ".join(actual.split()) == " ".join(expected.split()):
+                passed += 1
+            else:
+                logger.debug(
+                    f"Test {i} failed: expected={expected!r}, got={actual!r}"
+                )
+        except subprocess.TimeoutExpired:
+            logger.debug(f"Test {i} timed out after {timeout_per_case}s")
+        except Exception as e:
+            logger.debug(f"Test {i} execution error: {e}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+    reward = passed / n_tests if n_tests > 0 else 0.0
+    logger.info(
+        f"code_reward_function: {passed}/{n_tests} tests passed, reward={reward:.2f}"
+    )
+    return reward
+
+
+def _extract_code_block(text: str) -> str:
+    """Extract code from text, trying multiple formats.
+
+    Priority:
+    1. <solution>...</solution> tags
+    2. <code>```python...```</code> tags
+    3. ```python ... ``` blocks
+    4. Generic ``` ... ``` blocks
+    5. Raw text if it looks like code
+    """
+    # 1. <solution>...</solution> tags (may contain ```python inside)
+    solution_matches = re.findall(
+        r"<solution>\s*(.*?)\s*</solution>", text, re.DOTALL
+    )
+    if solution_matches:
+        inner = solution_matches[-1].strip()
+        # Strip inner ```python fences if present
+        inner_code = re.findall(r"```python\s*(.*?)```", inner, re.DOTALL)
+        if inner_code:
+            return inner_code[-1].strip()
+        inner_code = re.findall(r"```\s*(.*?)```", inner, re.DOTALL)
+        if inner_code:
+            return inner_code[-1].strip()
+        return inner
+
+    # 2. <code>...</code> tags
+    code_tag_matches = re.findall(
+        r"<code>\s*(.*?)\s*</code>", text, re.DOTALL
+    )
+    if code_tag_matches:
+        inner = code_tag_matches[-1].strip()
+        inner_code = re.findall(r"```python\s*(.*?)```", inner, re.DOTALL)
+        if inner_code:
+            return inner_code[-1].strip()
+        inner_code = re.findall(r"```\s*(.*?)```", inner, re.DOTALL)
+        if inner_code:
+            return inner_code[-1].strip()
+        return inner
+
+    # 3. ```python ... ``` blocks
+    python_matches = re.findall(r"```python\s*(.*?)```", text, re.DOTALL)
+    if python_matches:
+        return python_matches[-1].strip()
+
+    # 4. Generic ``` ... ``` blocks
+    generic_matches = re.findall(r"```\s*(.*?)```", text, re.DOTALL)
+    if generic_matches:
+        return generic_matches[-1].strip()
+
+    # 5. If the whole text looks like code, use it directly
+    if any(kw in text for kw in ("def ", "import ", "print(", "for ", "while ")):
+        return text.strip()
+
+    return ""
 
 
 def qa_reward_function(summary: str, env_data: Env) -> float:

@@ -57,7 +57,7 @@ actor_rollout_ref:
     use_dynamic_mini_batch: False
     ppo_micro_batch_size: 4 # will be deprecated, use ppo_micro_batch_size_per_gpu
     ppo_micro_batch_size_per_gpu: 49152
-    ppo_max_token_len_per_gpu: 8192 # n * ${data.max_prompt_length} + ${data.max_response_length}
+    ppo_max_token_len_per_gpu: 16384 # n * ${data.max_prompt_length} + ${data.max_response_length}
     grad_clip: 1.0
     # pg_losses2 = -advantages * torch.clamp(ratio, 1 - cliprange_low, 1 + cliprange_high)
     clip_ratio: 0.2 # default value if clip_ratio_low and clip_ratio_high are not specified

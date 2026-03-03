@@ -3,17 +3,21 @@ defaults:
 - _self_
 workflow_type: autoevol
 specialization: prompt
-task_type: math
+task_type: mixed
 resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-lora_rank: 0  # Set to 0 for full-parameter training, > 0 for LoRA training
+lora_rank: 0
 lora_alpha: 16
 env:
-  name: math_env
-  dataset: dapo_math
-  benchmark: AIME24
+  name: mixed_env
+  task_type: mixed
+  dataset_math: polaris
+  dataset_code: code_contests
+  benchmark_math: AIME24
+  benchmark_code: code_contests
+  math_ratio: 0.5
   max_turns: 1
   resolve: false
   multi_modal: false
@@ -48,7 +52,7 @@ training:
   device: cuda
   total_training_steps: 200
   project_name: pettingllms
-  experiment_name: math_eval_single_policy
+  experiment_name: mixed_code_math
   logger:
   - console
   - wandb
@@ -56,16 +60,15 @@ training:
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
   train_sample_num: 8
-  design_sample_num: null    # null = degrade to current behavior (=train_sample_num)
-  execute_sample_num: null   # null = degrade to current behavior (=1)
+  design_sample_num: null
+  execute_sample_num: null
   validate_sample_num: 5
   sample_temperature: 1
   val_freq: 20
   save_freq: -1
-  train_data_mode: "all"  # Options: "all", "designer_only", "executor_only"
   max_prompt_length: 4096
   max_response_length: 4096
-  lora_rank: ${lora_rank}  # 0 for full-parameter training
+  lora_rank: ${lora_rank}
   lora_alpha: ${lora_alpha}
 models:
   model_0:
@@ -88,5 +91,5 @@ models:
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
           experiment_name: ${training.experiment_name}
       actor:
-        ppo_micro_batch_size: null  # Set to null to use ppo_micro_batch_size_per_gpu directly
-        ppo_micro_batch_size_per_gpu: 4  # Set a reasonable value for full-parameter training
+        ppo_micro_batch_size: null
+        ppo_micro_batch_size_per_gpu: 4
