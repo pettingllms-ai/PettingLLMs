@@ -77,8 +77,8 @@ class MASGenerator(Agent):
     def update_from_env(self, env_data: Env):
         """Update agent from environment data and generate prompt"""
         self.env_data = env_data
-        user_prompt_text = "Design Multi Agent System for the Question:" + env_data.state.problem
-        system_prompt_text = "You are an expert in designing Multi-Agent System workflows."
+        user_prompt_text = "Design Multi Agent System for the Question: " + env_data.state.problem
+        system_prompt_text = "You are an expert Python developer specializing in multi-agent workflow systems."
 
         self.current_prompt = {"text": user_prompt_text, "image": None, "system": system_prompt_text}
 
@@ -87,11 +87,7 @@ class MASGenerator(Agent):
     def update_from_model(self, response: str):
         code = ""
         self.current_response = response
-        
-        # Enhanced debugging
-        print(f"[DEBUG] MASGenerator.update_from_model called",response)
-        
-        
+
         # Strategy 1: Try <code>...</code> tags first
         code_match = re.search(r"<code>\s*(.*?)\s*</code>", response, re.DOTALL)
         if code_match:
@@ -108,6 +104,19 @@ class MASGenerator(Agent):
                 else:
                     # No code blocks inside, use the content as-is
                     code = code_content
+
+        # Strategy 2: Fallback to ```python...``` blocks in the full response
+        if not code:
+            python_matches = re.findall(r"```python\s*(.*?)\s*```", response, re.DOTALL)
+            if python_matches:
+                code = python_matches[-1].strip()
+
+        # Strategy 3: Fallback to generic ```...``` blocks
+        if not code:
+            generic_matches = re.findall(r"```\s*(.*?)\s*```", response, re.DOTALL)
+            if generic_matches:
+                code = generic_matches[-1].strip()
+
         self.generated_code = code
         self.current_action = code
 
@@ -272,13 +281,16 @@ except Exception as e:
             
             from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
             import ray
-            
+
             timeout_buffer = 20
             total_timeout = step_timeout + timeout_buffer
-            
+
             obj_ref = env_worker.run.remote(script_content, step_timeout)
-            output_text = await _await_ray_object_ref(obj_ref, total_timeout)
-            
+            try:
+                output_text = await _await_ray_object_ref(obj_ref, total_timeout)
+            finally:
+                del obj_ref  # Release Ray object reference to free object store memory
+
             # Print executor output for debugging
             print("=" * 80)
             print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
@@ -327,18 +339,8 @@ except Exception as e:
                 )) if final_answer.strip() else True
                 format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
 
-            # --- Length penalty: -0.1 if any agent response > 4096 tokens ---
+            # --- Length penalty: disabled ---
             length_penalty = 0.0
-            if workflow_dataproto_list:
-                for dpr in workflow_dataproto_list:
-                    try:
-                        token_counts = dpr.non_tensor_batch.get("response_token_count", None)
-                        if token_counts is not None and int(token_counts[0]) > 3072:
-                            length_penalty = -0.1
-                            print(f"[EXECUTOR PENALTY] Agent response too long: {int(token_counts[0])} tokens > 3072")
-                            break
-                    except Exception:
-                        pass
 
             # --- Code block penalty: -0.1 if agent nodes output <code> or ```python (math only) ---
             code_block_penalty = 0.0
@@ -870,13 +872,16 @@ except Exception as e:
             
             from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
             import ray
-            
+
             timeout_buffer = 20
             total_timeout = step_timeout + timeout_buffer
-            
+
             obj_ref = env_worker.run.remote(script_content, step_timeout)
-            output_text = await _await_ray_object_ref(obj_ref, total_timeout)
-            
+            try:
+                output_text = await _await_ray_object_ref(obj_ref, total_timeout)
+            finally:
+                del obj_ref  # Release Ray object reference to free object store memory
+
             # Print executor output for debugging
             print("=" * 80)
             print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
@@ -925,18 +930,8 @@ except Exception as e:
                 )) if final_answer.strip() else True
                 format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
 
-            # --- Length penalty: -0.1 if any agent response > 4096 tokens ---
+            # --- Length penalty: disabled ---
             length_penalty = 0.0
-            if workflow_dataproto_list:
-                for dpr in workflow_dataproto_list:
-                    try:
-                        token_counts = dpr.non_tensor_batch.get("response_token_count", None)
-                        if token_counts is not None and int(token_counts[0]) > 3072:
-                            length_penalty = -0.1
-                            print(f"[EXECUTOR PENALTY] Agent response too long: {int(token_counts[0])} tokens > 3072")
-                            break
-                    except Exception:
-                        pass
 
             # --- Code block penalty: -0.1 if agent nodes output <code> or ```python (math only) ---
             code_block_penalty = 0.0

@@ -196,9 +196,8 @@ class MultiAgentsExecutionEngineAutoEvol:
         import gc
 
         try:
-            # Force garbage collection periodically to release memory
-            # Do this every 10 rollouts to avoid overhead
-            if rollout_idx % 10 == 0:
+            # Force garbage collection every 4 rollouts (more frequent for tree design mode)
+            if rollout_idx % 4 == 0:
                 gc.collect()
 
         except Exception as e:
@@ -594,7 +593,11 @@ class MultiAgentsExecutionEngineAutoEvol:
 
             # Prepare output directory for MAS execution
             import os
-            output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode)
+            benchmark_name = getattr(self.config.env, 'benchmark', '') if hasattr(self.config, 'env') else ''
+            if self.mode == "validate" and benchmark_name:
+                output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode, str(benchmark_name))
+            else:
+                output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode)
             output_dir = os.path.abspath(os.path.join(
                 output_base_dir,
                 f'rollout_{rollout_idx}'
@@ -972,14 +975,15 @@ class MultiAgentsExecutionEngineAutoEvol:
             design_result: Dict from _generate_single_design containing designer_code, etc.
 
         Returns:
-            dict with reward, executor_output_dpr, workflow_dataproto_list, designer_output_dpr_copy
+            dict with reward, executor_output_dpr, workflow_dataproto_list, designer_output_dpr_ref
         """
         designer_code = design_result["designer_code"]
         designer_address = design_result["designer_address"]
         designer_model_name = design_result["designer_model_name"]
-        # Deep copy designer_output_dpr to avoid aliasing issues across executions
-        designer_output_dpr_orig = design_result["designer_output_dpr"]
-        designer_output_dpr_copy = copy.deepcopy(designer_output_dpr_orig) if designer_output_dpr_orig is not None else None
+        # Note: We no longer deep copy here to save memory. The designer_output_dpr
+        # is only used read-only during execution; the single deep copy happens in
+        # generate_tree_rollout Phase 3 when assembling the training batch.
+        designer_output_dpr_ref = design_result["designer_output_dpr"]
 
         env = self.envs[rollout_idx]
         agent_group = self.agent_groups_list[rollout_idx]
@@ -1035,7 +1039,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         executor_response = ""
 
         if not has_executor:
-            executor_output_dpr = designer_output_dpr_copy
+            executor_output_dpr = designer_output_dpr_ref
             executor_response = design_result["designer_response"]
         elif executor_format_prompt is not None:
             try:
@@ -1102,7 +1106,11 @@ class MultiAgentsExecutionEngineAutoEvol:
                 env.state.assigned_worker_id = env_worker_id
                 env.state.gpu_group_id = self.gpu_group_id
 
-            output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode)
+            benchmark_name = getattr(self.config.env, 'benchmark', '') if hasattr(self.config, 'env') else ''
+            if self.mode == "validate" and benchmark_name:
+                output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode, str(benchmark_name))
+            else:
+                output_base_dir = os.path.join('./tmp_auto_mas', self.experiment_name, self.mode)
             output_dir = os.path.abspath(os.path.join(output_base_dir, f'rollout_{rollout_idx}'))
             os.makedirs(output_dir, exist_ok=True)
 
@@ -1158,7 +1166,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             "designer_reward": designer_reward,
             "executor_output_dpr": executor_output_dpr,
             "workflow_dataproto_list": workflow_dataproto_list,
-            "designer_output_dpr_copy": designer_output_dpr_copy,
+            "designer_output_dpr_ref": designer_output_dpr_ref,
             "mas_execution_success": mas_execution_success,
             "executor_name": executor_name,
             "executor_policy": executor_policy,
@@ -1372,6 +1380,11 @@ class MultiAgentsExecutionEngineAutoEvol:
                 print(f"[TREE DESIGN RETURN] env_idx={env_idx} returning {rollout_len} samples for {policy_name}, "
                       f"rewards={rewards[:5] if len(rewards) > 0 else []}")
 
+        # Cleanup intermediate structures to free memory
+        del designs, exec_results, exec_tasks, exec_task_meta, design_exec_results
+        import gc
+        gc.collect()
+
         return trajectory_per_task_dict
 
     async def generate_multiple_rollouts_concurrent(self, env_idx_list, rollout_mode="tree"):
@@ -1441,8 +1454,15 @@ class MultiAgentsExecutionEngineAutoEvol:
              
                    
                        
+                    # Free the rollout result after aggregation
+                    del rollout_result
                     completed_count += 1
-                    
+
+                    # Periodic GC during aggregation to prevent memory buildup
+                    if completed_count % 2 == 0:
+                        import gc
+                        gc.collect()
+
                     task_pbar.update(1)
                     task_pbar.set_description(f"Rollouts ({completed_count}/{len(tasks)})")
                 except Exception as e:

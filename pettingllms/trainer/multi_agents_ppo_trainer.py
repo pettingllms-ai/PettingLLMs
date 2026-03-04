@@ -728,7 +728,7 @@ class MultiAgentsPPOTrainer:
                     # Always sleep after trajectory collection to maintain strict pairing
                     for model_name,rollout_engine in self.rollout_engine_dict.items():
                         rollout_engine.sleep()
-                    
+
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         dp_world_size = trainer.actor_rollout_wg.world_size
                         batch_per_trainer_temp = self._pad_dataproto_to_world_size(
@@ -742,6 +742,13 @@ class MultiAgentsPPOTrainer:
                                     batch_per_trainer_temp
                                 ])
                 
+                # Free generation results after batch is assembled to prevent OOM
+                # This is critical for tree design mode (4×8) which produces many DataProtos
+                del gen_batch_output_per_policy
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
+
                 timing_raw = {}
                 with simple_timer("update_parameters", timing_raw):
                     # Apply UID assignment and filtering for each model
@@ -1030,6 +1037,14 @@ class MultiAgentsPPOTrainer:
                 pprint(f"Warning: Failed to log metrics to logger: {type(e).__name__}: {e}")
                 pprint(f"Metrics that failed to log: {list(metrics.keys())}")
 
+            # End-of-step memory cleanup: free training batch and force GC
+            # Critical for tree design mode to prevent gradual OOM
+            del batch_per_trainer
+            batch_per_trainer = {}
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+
             # Clean up old image folders if multimodal is enabled
             enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
             if enable_multimodal:
@@ -1130,46 +1145,77 @@ class MultiAgentsPPOTrainer:
 
 
     def _validate(self, global_steps=0):
+        # Support multiple benchmarks: env.benchmark can be a single string or a list
+        benchmark_cfg = getattr(self.config.env, 'benchmark', 'AIME24')
+        from omegaconf import ListConfig
+        if isinstance(benchmark_cfg, (list, tuple, ListConfig)):
+            benchmarks = list(benchmark_cfg)
+        else:
+            benchmarks = [benchmark_cfg]
+
+        all_metrics = {}
+        best_env_success_rate = 0.0
+
+        for benchmark in benchmarks:
+            prefix = f"validation/{benchmark}" if len(benchmarks) > 1 else "validation"
+            # Temporarily override the benchmark in config
+            original_benchmark = self.config.env.benchmark
+            self.config.env.benchmark = benchmark
+
+            metrics, env_success_rate = self._validate_single_benchmark(global_steps, prefix)
+            all_metrics.update(metrics)
+            best_env_success_rate = max(best_env_success_rate, env_success_rate)
+
+            # Restore original benchmark
+            self.config.env.benchmark = original_benchmark
+
+        # Save checkpoint based on best env_success_rate across all benchmarks
+        if global_steps > 0:
+            self._save_best_checkpoint(best_env_success_rate)
+
+        return all_metrics
+
+    def _validate_single_benchmark(self, global_steps, prefix="validation"):
         self.agent_execution_engine.init_agents_and_envs(mode="validate", step_idx=global_steps)
         batch_per_trainer: Dict[str,DataProto]={}
         for model_name in self.ppo_trainer_dict.keys():
             batch_per_trainer[model_name] = DataProto.from_dict({})
-        
 
-        
+
+
         # CRITICAL: Always wake_up before use and sleep after use to maintain strict pairing
         # This ensures wake_up and sleep are always paired 1:1
         for _, rollout_engine in self.rollout_engine_dict.items():
             rollout_engine.wake_up()
-            
+
         gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list, rollout_mode="tree"))
-        
+
         # Always sleep after validation to maintain strict pairing
         for model_name,rollout_engine in self.rollout_engine_dict.items():
             rollout_engine.sleep()
-        
+
         for model_name in self.ppo_trainer_dict.keys():
             if batch_per_trainer[model_name].batch is None:
                 batch_per_trainer[model_name] = gen_batch_output_per_policy[model_name]
             else:
                 batch_per_trainer[model_name] = DataProto.concat([
-                    batch_per_trainer[model_name], 
+                    batch_per_trainer[model_name],
                     gen_batch_output_per_policy[model_name]
                 ])
-        
+
         # Calculate success metrics from env state
         total_rollout_num = len(self.agent_execution_engine.rollout_idx_list)
         success_rollout_rate_dict: Dict[str, float] = {}
         success_turn_ave_dict: Dict[str, float] = {}
         env_state_success_count = 0
-        
+
         # Count success from env.state
         for env in self.agent_execution_engine.envs:
             if hasattr(env, 'success') and env.success:
                 env_state_success_count += 1
-        
+
         env_success_rate = env_state_success_count / total_rollout_num if total_rollout_num > 0 else 0.0
-        
+
         for agent_name in self.agent_execution_engine.turn_order:
             success_rollout_num = len(
                 set(self.agent_execution_engine.success_rollout_idx_list_dict.get(agent_name, []))
@@ -1182,23 +1228,23 @@ class MultiAgentsPPOTrainer:
                 success_rollout_num / total_rollout_num if total_rollout_num > 0 else 0.0
             )
             success_turn_ave_dict[agent_name] = success_ave_turn
-        
+
         validation_metrics = {}
         for agent_name in self.agent_execution_engine.turn_order:
             success_rate = success_rollout_rate_dict.get(agent_name, 0.0)
             avg_turns = success_turn_ave_dict.get(agent_name, 0.0)
-            
-            validation_metrics[f"validation/agent_{agent_name}/success_rate"] = success_rate
-            validation_metrics[f"validation/agent_{agent_name}/avg_turns"] = avg_turns
-        
+
+            validation_metrics[f"{prefix}/agent_{agent_name}/success_rate"] = success_rate
+            validation_metrics[f"{prefix}/agent_{agent_name}/avg_turns"] = avg_turns
+
         if success_rollout_rate_dict:
             success_rates = list(success_rollout_rate_dict.values())
             avg_turns_list = list(success_turn_ave_dict.values())
-            
-            validation_metrics["validation/average/success_rate"] = sum(success_rates) / len(success_rates)
-            validation_metrics["validation/average/avg_turns"] = sum(avg_turns_list) / len(avg_turns_list)
-        
-        validation_metrics["validation/env_state_success_rate"] = env_success_rate
+
+            validation_metrics[f"{prefix}/average/success_rate"] = sum(success_rates) / len(success_rates)
+            validation_metrics[f"{prefix}/average/avg_turns"] = sum(avg_turns_list) / len(avg_turns_list)
+
+        validation_metrics[f"{prefix}/env_state_success_rate"] = env_success_rate
 
         # Per problem_type validation metrics (backward compatible)
         for ptype in ["math", "code"]:
@@ -1206,13 +1252,9 @@ class MultiAgentsPPOTrainer:
                           if getattr(e, 'problem_type', None) == ptype]
             if typed_envs:
                 typed_success = sum(1 for e in typed_envs if getattr(e, 'success', False))
-                validation_metrics[f"validation/{ptype}_success_rate"] = typed_success / len(typed_envs)
+                validation_metrics[f"{prefix}/{ptype}_success_rate"] = typed_success / len(typed_envs)
 
-        # Save checkpoint if this is the best validation result
-        if global_steps > 0:
-            self._save_best_checkpoint(env_success_rate)
-            
-        return validation_metrics
+        return validation_metrics, env_success_rate
     
     def _pad_dataproto_to_world_size(self, batch, world_sizes):
         batch, pad_size = pad_dataproto_to_divisor(batch, world_sizes)

@@ -50,7 +50,7 @@ DATASETS = {
         "subset": None,
         "prefer_splits": ["test", "validation", "dev", "train"],
         "q_keys": ["problem", "question", "prompt", "Problem"],
-        "a_keys": ["answer", "final_answer", "solution", "Solution", "Answer"],
+        "a_keys": ["Answer", "answer", "final_answer", "solution", "Solution"],
     },
     # AIME 2025
     # https://huggingface.co/datasets/yentinglin/aime_2025
@@ -59,7 +59,7 @@ DATASETS = {
         "subset": None,
         "prefer_splits": ["test", "validation", "dev", "train"],
         "q_keys": ["problem", "question", "prompt", "Problem"],
-        "a_keys": ["answer", "final_answer", "solution", "Solution", "Answer"],
+        "a_keys": ["Answer", "answer", "final_answer", "solution", "Solution"],
     },
     # OlympiadBench (English math, competition subset)
     # https://huggingface.co/datasets/Hothan/OlympiadBench
@@ -68,7 +68,7 @@ DATASETS = {
         "subset": "OE_TO_maths_en_COMP",
         "prefer_splits": ["test", "validation", "dev", "train"],
         "q_keys": ["problem", "question", "prompt", "Problem"],
-        "a_keys": ["answer", "final_answer", "solution", "Solution", "Answer"],
+        "a_keys": ["Answer", "answer", "final_answer", "solution", "Solution"],
     },
 }
 
