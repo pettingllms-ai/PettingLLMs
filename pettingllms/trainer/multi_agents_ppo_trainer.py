@@ -666,14 +666,27 @@ class MultiAgentsPPOTrainer:
                 
             metrics = {}
             timing_raw = {}
+
+            # val_before_train: run validation BEFORE the first training step
             if self.global_steps == 0:
-                colorful_print(f"Starting initial validation for multi-agent system (using base model)", "cyan")
-                # Ensure use_lora_for_generation is False for initial validation
-                self.use_lora_for_generation = False
-                self.agent_execution_engine.use_lora_for_generation = False
-                colorful_print(f"use_lora_for_generation set to False for step 0 validation", "yellow")
-                start_time = time.time()
-                
+                val_before_train = self.config.get("val_before_train", True)
+                for trainer in self.ppo_trainer_dict.values():
+                    vbt = getattr(trainer.config, 'trainer', None)
+                    if vbt is not None:
+                        val_before_train = vbt.get("val_before_train", val_before_train)
+                        break
+                if val_before_train:
+                    colorful_print(f"Running validation BEFORE first training step (base model)", "cyan")
+                    if self.lora_differ_mode:
+                        self.use_lora_for_generation = False
+                        self.agent_execution_engine.use_lora_for_generation = False
+                    val_metrics = self._validate(global_steps=self.global_steps)
+                    metrics.update(val_metrics)
+                    # Log val_before_train metrics immediately
+                    try:
+                        logger.log(data=metrics, step=self.global_steps)
+                    except Exception as e:
+                        pprint(f"Warning: Failed to log val_before_train metrics: {e}")
 
             with simple_timer("step", timing_raw):
 
@@ -814,13 +827,13 @@ class MultiAgentsPPOTrainer:
                     import sys
                     print(f"[DEBUG HANG] ========== STARTING TRAINER UPDATE LOOP ==========", flush=True)
                     print(f"[DEBUG HANG] ppo_trainer_dict keys: {list(self.ppo_trainer_dict.keys())}", flush=True)
-                    print(f"[DEBUG HANG] gen_batch_output_per_policy keys: {list(gen_batch_output_per_policy.keys())}", flush=True)
+                    print(f"[DEBUG HANG] gen_batch_output_per_policy: (already freed)", flush=True)
                     print(f"[DEBUG HANG] batch_per_trainer keys: {list(batch_per_trainer.keys())}", flush=True)
                     sys.stdout.flush()
 
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         print(f"[DEBUG HANG] Processing model: {model_name}", flush=True)
-                        if model_name in gen_batch_output_per_policy:
+                        if model_name in batch_per_trainer:
                             # Additional check before calling update_single_trainer
                             if model_name not in batch_per_trainer:
                                 colorful_print(f"Warning: model {model_name} not in batch_per_trainer, skipping", "yellow")
@@ -1005,9 +1018,18 @@ class MultiAgentsPPOTrainer:
                     val_before_train = vbt.get("val_before_train", val_before_train)
                     break
             should_validate = (self.global_steps % self.config.training.val_freq == 0)
-            if self.global_steps == 0 and not val_before_train:
+            # Step 0: skip post-training validation since val_before_train already ran it
+            if self.global_steps == 0:
                 should_validate = False
             if should_validate:
+                # Free training batch BEFORE validation to reclaim GPU memory
+                # for KV cache re-allocation during wake_up()
+                # batch_per_trainer holds 984 × 8192 tensors (~huge GPU memory)
+                del batch_per_trainer
+                batch_per_trainer = {}
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
                 val_metrics = self._validate(global_steps=self.global_steps)
                 metrics.update(val_metrics)
                 agent_summary = {}
@@ -1169,6 +1191,11 @@ class MultiAgentsPPOTrainer:
             # Restore original benchmark
             self.config.env.benchmark = original_benchmark
 
+            # Cleanup between benchmarks to prevent OOM
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+
         # Save checkpoint based on best env_success_rate across all benchmarks
         if global_steps > 0:
             self._save_best_checkpoint(best_env_success_rate)
@@ -1202,6 +1229,12 @@ class MultiAgentsPPOTrainer:
                     batch_per_trainer[model_name],
                     gen_batch_output_per_policy[model_name]
                 ])
+
+        # Free generation output after copying to batch_per_trainer
+        del gen_batch_output_per_policy
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # Calculate success metrics from env state
         total_rollout_num = len(self.agent_execution_engine.rollout_idx_list)
@@ -1254,8 +1287,13 @@ class MultiAgentsPPOTrainer:
                 typed_success = sum(1 for e in typed_envs if getattr(e, 'success', False))
                 validation_metrics[f"{prefix}/{ptype}_success_rate"] = typed_success / len(typed_envs)
 
+        # Free validation batch data before returning
+        del batch_per_trainer
+        import gc
+        gc.collect()
+
         return validation_metrics, env_success_rate
-    
+
     def _pad_dataproto_to_world_size(self, batch, world_sizes):
         batch, pad_size = pad_dataproto_to_divisor(batch, world_sizes)
 

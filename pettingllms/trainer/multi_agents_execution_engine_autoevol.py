@@ -1213,6 +1213,13 @@ class MultiAgentsExecutionEngineAutoEvol:
         ], return_exceptions=True)
 
         # ========== Phase 2: Execute each design M times in parallel ==========
+        # Limit concurrent MAS executions to avoid overwhelming vLLM server
+        mas_semaphore = asyncio.Semaphore(8)
+
+        async def _limited_execute(env_idx, ridx, d, m, design):
+            async with mas_semaphore:
+                return await self._execute_single_design(env_idx, ridx, d, m, design)
+
         exec_tasks = []
         exec_task_meta = []  # Track (design_idx, exec_idx) for each task
         for d, design in enumerate(designs):
@@ -1222,7 +1229,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             for m in range(M):
                 ridx = rollout_idx_list[d * M + m]
                 exec_tasks.append(
-                    self._execute_single_design(env_idx, ridx, d, m, design)
+                    _limited_execute(env_idx, ridx, d, m, design)
                 )
                 exec_task_meta.append((d, m, ridx))
 

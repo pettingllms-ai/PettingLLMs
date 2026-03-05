@@ -62,22 +62,22 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968"\
+    base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
     training.experiment_name=autoeval_mixcoldstart_4design_8execution_5e_6_trainall_wostage\
-    training.total_training_steps=400\
+    training.total_training_steps=100\
     training.train_batch_size=8\
-    training.design_sample_num=4\
-    training.execute_sample_num=8\
+    training.design_sample_num=8\
+    training.execute_sample_num=4\
     training.validate_sample_num=3\
     training.max_prompt_length=4096\
     training.max_response_length=8192\
     training.val_freq=10\
     training.save_freq=10\
-    training.train_data_mode=all\
+    training.train_data_mode=designer_only\
     env.dataset=polaris\
-    env.benchmark=AIME24\
+    'env.benchmark=[AIME24,AIME25]'\
     $model_0_config_path.trainer.val_before_train=True\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
@@ -87,7 +87,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.9\
 
 
 # +$model_0_config_path.actor.clip_ratio_low=0.15\

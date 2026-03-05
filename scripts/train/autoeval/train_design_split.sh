@@ -73,8 +73,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.validate_sample_num=1\
     training.max_prompt_length=4096\
     training.max_response_length=8192\
-    training.val_freq=10\
-    training.save_freq=10\
+    training.val_freq=5\
+    training.save_freq=5\
     training.train_data_mode=all\
     env.dataset=polaris\
     'env.benchmark=[AIME24,AIME25]'\
