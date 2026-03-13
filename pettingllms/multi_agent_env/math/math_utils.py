@@ -111,17 +111,25 @@ def _load_single_dataset_train(parquet_file: Path, n: int) -> List[Dict[str, Any
     return results
 
 
+_UNSET = object()  # sentinel to detect un-passed dataset_name
+
+
 def load_math_problem_batch(
     env_indices: List[int],
     mode: str = "train",
-    dataset_name: str = "polaris",
+    dataset_name=_UNSET,
     config: dict = None,
     benchmark_name: str = "AIME24"
 ) -> List[Dict[str, Any]]:
 
-    # Resolve dataset_name from config if available
-    if config is not None and hasattr(config, "env") and hasattr(config.env, "dataset"):
-        dataset_name = config.env.dataset
+    # Only fall back to config.env.dataset when the caller did NOT pass dataset_name
+    # explicitly. If called from mixed_env.py with dataset_name=dataset_math, that
+    # explicit value is kept and config.env.dataset is ignored.
+    if dataset_name is _UNSET:
+        if config is not None and hasattr(config, "env") and hasattr(config.env, "dataset"):
+            dataset_name = config.env.dataset
+        else:
+            dataset_name = "polaris"
 
     current_dir = Path(__file__).parent.parent.parent.parent
     local_datasets_dir = current_dir / "data" / "math"
