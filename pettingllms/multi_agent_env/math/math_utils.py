@@ -10,6 +10,8 @@ import json
 import random
 import asyncio
 import re
+import subprocess
+import sys
 
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, List, Union
@@ -64,6 +66,51 @@ def extract_code(response: str) -> str:
 
 
 
+def _ensure_math_datasets(datasets_dir: Path, dataset_names: List[str], mode: str = "train") -> None:
+    """Run load_math.py if any required parquet files are missing."""
+    subdir = "train" if mode == "train" else "test"
+    missing = [
+        name for name in dataset_names
+        if not (datasets_dir / subdir / f"{name}.parquet").exists()
+    ]
+    if not missing:
+        return
+    print(f"[math_utils] Missing dataset(s): {missing}. Running load_math.py ...")
+    script = Path(__file__).parent.parent.parent.parent / "scripts" / "dataprocess" / "load_math.py"
+    if not script.exists():
+        raise FileNotFoundError(f"load_math.py not found at: {script}")
+    result = subprocess.run([sys.executable, str(script)], check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"load_math.py failed with return code {result.returncode}")
+    still_missing = [
+        name for name in dataset_names
+        if not (datasets_dir / subdir / f"{name}.parquet").exists()
+    ]
+    if still_missing:
+        raise FileNotFoundError(f"Dataset(s) still missing after running load_math.py: {still_missing}")
+    print("[math_utils] Datasets ready.")
+
+
+def _load_single_dataset_train(parquet_file: Path, n: int) -> List[Dict[str, Any]]:
+    """Load n samples from a single parquet file (train mode)."""
+    if not parquet_file.exists():
+        raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
+    print(f"Loading dataset from: {parquet_file}")
+    ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
+    print(f"Dataset loaded: {len(ds)} samples")
+    if len(ds) < n:
+        print(f"Warning: Dataset has {len(ds)} samples, but {n} requested. Will sample with replacement.")
+        indices = [random.randint(0, len(ds) - 1) for _ in range(n)]
+    else:
+        indices = random.sample(range(len(ds)), n)
+    results = []
+    for idx in indices:
+        problem_dict = _format_math_problem(ds[idx], idx, mode="train")
+        if problem_dict:
+            results.append(problem_dict)
+    return results
+
+
 def load_math_problem_batch(
     env_indices: List[int],
     mode: str = "train",
@@ -71,48 +118,60 @@ def load_math_problem_batch(
     config: dict = None,
     benchmark_name: str = "AIME24"
 ) -> List[Dict[str, Any]]:
-    
+
+    # Resolve dataset_name from config if available
+    if config is not None and hasattr(config, "env") and hasattr(config.env, "dataset"):
+        dataset_name = config.env.dataset
 
     current_dir = Path(__file__).parent.parent.parent.parent
     local_datasets_dir = current_dir / "data" / "math"
-    
-    if mode == "train":
-        parquet_file = local_datasets_dir /"train" /f"{dataset_name}.parquet"
-    else:
-        parquet_file = local_datasets_dir /"test" / f"{benchmark_name}.parquet"
-    
 
-    if not parquet_file.exists():
-        raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
-    
-    print(f"Loading dataset from: {parquet_file}")
-    ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
-    print(f"Dataset loaded: {len(ds)} samples")
-    
-    batch_results = []
-    
-    if mode == "train":
-        # Use modulo operation to ensure indices don't exceed dataset length
-        if len(ds) < len(env_indices):
-            print(f"Warning: Dataset has {len(ds)} samples, but {len(env_indices)} requested. Will cycle through dataset.")
-            # Sample with replacement by using modulo
-            indices = [random.randint(0, len(ds) - 1) for _ in range(len(env_indices))]
-        else:
-            indices = random.sample(range(len(ds)), len(env_indices))
-        
-        for idx in indices:
-            problem_dict = _format_math_problem(ds[idx], idx, mode="train")
-            if problem_dict:
-                batch_results.append(problem_dict)
-    else:
-        # For validate mode, load all samples from the dataset
+    if mode != "train":
+        _ensure_math_datasets(local_datasets_dir, [benchmark_name], mode="test")
+        parquet_file = local_datasets_dir / "test" / f"{benchmark_name}.parquet"
+        if not parquet_file.exists():
+            raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
+        print(f"Loading dataset from: {parquet_file}")
+        ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
+        print(f"Dataset loaded: {len(ds)} samples")
+        batch_results = []
         for i, example in enumerate(ds):
             problem_dict = _format_math_problem(example, i, mode="validate")
             if problem_dict:
                 batch_results.append(problem_dict)
-    
-    print(f"Returning {len(batch_results)} samples")
-    return batch_results
+        print(f"Returning {len(batch_results)} samples")
+        return batch_results
+
+    # Train mode: support single dataset name or list for mixed training
+    n_total = len(env_indices)
+    train_names = list(dataset_name) if isinstance(dataset_name, (list, tuple)) else [dataset_name]
+    _ensure_math_datasets(local_datasets_dir, train_names, mode="train")
+    if isinstance(dataset_name, (list, tuple)) and len(dataset_name) > 1:
+        # Multi-dataset: split evenly across datasets (half-half for 2 datasets)
+        n_datasets = len(dataset_name)
+        base = n_total // n_datasets
+        counts = [base] * n_datasets
+        for i in range(n_total % n_datasets):
+            counts[i] += 1  # distribute remainder
+
+        batch_results = []
+        for ds_name, n in zip(dataset_name, counts):
+            parquet_file = local_datasets_dir / "train" / f"{ds_name}.parquet"
+            samples = _load_single_dataset_train(parquet_file, n)
+            print(f"Sampled {len(samples)} from {ds_name}")
+            batch_results.extend(samples)
+
+        random.shuffle(batch_results)
+        print(f"Returning {len(batch_results)} mixed samples from {list(dataset_name)}")
+        return batch_results
+    else:
+        # Single dataset (string or single-element list)
+        if isinstance(dataset_name, (list, tuple)):
+            dataset_name = dataset_name[0]
+        parquet_file = local_datasets_dir / "train" / f"{dataset_name}.parquet"
+        batch_results = _load_single_dataset_train(parquet_file, n_total)
+        print(f"Returning {len(batch_results)} samples")
+        return batch_results
 
 
 def _format_math_problem(example: Dict, index: int, mode: str = "train") -> Optional[Dict]:

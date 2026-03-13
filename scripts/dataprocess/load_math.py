@@ -161,7 +161,22 @@ def main():
     dapo_std.to_parquet(str(dapo_path))
     print(f"Saved DAPO-Math train to: {dapo_path} ({len(dapo_std)} rows after deduplication)")
 
-    # 2) Test sets: AIME24, AIME25, OlympiadBench
+    # 3) AIME 1983-2024 (historical AIME problems as training data)
+    print("Loading gneubig/aime-1983-2024 ...")
+    aime_past_all = datasets.load_dataset("gneubig/aime-1983-2024")
+    aime_past_split = choose_available_split(aime_past_all, ["train", "test", "validation", "dev"])
+    aime_past_ds = aime_past_all[aime_past_split]
+    print(f"Using split for aime-1983-2024: {aime_past_split} (as train)")
+    aime_past_std = standardize_hf_dataset(
+        aime_past_ds,
+        ["problem", "question", "prompt", "Problem"],
+        ["answer", "Answer", "final_answer", "solution", "Solution"],
+    )
+    aime_past_path = out_train_dir / "aime_past.parquet"
+    aime_past_std.to_parquet(str(aime_past_path))
+    print(f"Saved aime-1983-2024 train to: {aime_past_path} ({len(aime_past_std)} rows)")
+
+    # 4) Test sets: AIME24, AIME25, OlympiadBench
     for benchmark in ["AIME24", "AIME25", "OlympiadBench"]:
         conf = DATASETS[benchmark]
         path = conf["path"]
