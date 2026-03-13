@@ -45,7 +45,7 @@ if [ -n "$CUDA_HOME" ]; then
 fi
 
 # select gpus 
-GPU_num=4
+GPU_num=8
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
@@ -65,7 +65,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mixcoldstart_4design_8execution_5e_6_trainall\
+    training.experiment_name=autoeval_mixrl_4design_8execution_5e_6_trainall\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=4\
@@ -77,7 +77,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.save_freq=10\
     training.train_data_mode=all\
     env.name=mixed_env\
-    'env.dataset_math=[polaris,aime_past]'\
+    'env.dataset_math=[polaris]'\
     env.dataset_code=code_contests\
     'env.benchmark_math=[AIME24,AIME25]'\
     env.benchmark_code=code_contests\

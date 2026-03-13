@@ -79,7 +79,9 @@ def _ensure_math_datasets(datasets_dir: Path, dataset_names: List[str], mode: st
     script = Path(__file__).parent.parent.parent.parent / "scripts" / "dataprocess" / "load_math.py"
     if not script.exists():
         raise FileNotFoundError(f"load_math.py not found at: {script}")
-    result = subprocess.run([sys.executable, str(script)], check=False)
+    env = os.environ.copy()
+    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    result = subprocess.run([sys.executable, str(script)], check=False, env=env)
     if result.returncode != 0:
         raise RuntimeError(f"load_math.py failed with return code {result.returncode}")
     still_missing = [
@@ -134,9 +136,17 @@ def load_math_problem_batch(
     current_dir = Path(__file__).parent.parent.parent.parent
     local_datasets_dir = current_dir / "data" / "math"
 
+    # OmegaConf ListConfig is not a plain list/tuple — normalise to List[str] robustly
+    def _to_str_list(v) -> List[str]:
+        if isinstance(v, str):
+            return [v]
+        try:
+            return [str(x) for x in v]
+        except TypeError:
+            return [str(v)]
+
     if mode != "train":
-        # Support a list of benchmark names (e.g. [AIME24, AIME25])
-        benchmark_list = list(benchmark_name) if isinstance(benchmark_name, (list, tuple)) else [benchmark_name]
+        benchmark_list = _to_str_list(benchmark_name)
         _ensure_math_datasets(local_datasets_dir, benchmark_list, mode="test")
         batch_results = []
         for bname in benchmark_list:
@@ -155,33 +165,30 @@ def load_math_problem_batch(
 
     # Train mode: support single dataset name or list for mixed training
     n_total = len(env_indices)
-    train_names = list(dataset_name) if isinstance(dataset_name, (list, tuple)) else [dataset_name]
+    train_names = _to_str_list(dataset_name)
     _ensure_math_datasets(local_datasets_dir, train_names, mode="train")
-    if isinstance(dataset_name, (list, tuple)) and len(dataset_name) > 1:
-        # Multi-dataset: split evenly across datasets (half-half for 2 datasets)
-        n_datasets = len(dataset_name)
+    if len(train_names) > 1:
+        # Multi-dataset: split evenly (half-half for 2 datasets)
+        n_datasets = len(train_names)
         base = n_total // n_datasets
         counts = [base] * n_datasets
         for i in range(n_total % n_datasets):
-            counts[i] += 1  # distribute remainder
+            counts[i] += 1
 
         batch_results = []
-        for ds_name, n in zip(dataset_name, counts):
+        for ds_name, n in zip(train_names, counts):
             parquet_file = local_datasets_dir / "train" / f"{ds_name}.parquet"
             samples = _load_single_dataset_train(parquet_file, n)
             print(f"Sampled {len(samples)} from {ds_name}")
             batch_results.extend(samples)
 
         random.shuffle(batch_results)
-        print(f"Returning {len(batch_results)} mixed samples from {list(dataset_name)}")
+        print(f"Returning {len(batch_results)} mixed samples from {train_names}")
         return batch_results
     else:
-        # Single dataset (string or single-element list)
-        if isinstance(dataset_name, (list, tuple)):
-            dataset_name = dataset_name[0]
-        parquet_file = local_datasets_dir / "train" / f"{dataset_name}.parquet"
+        parquet_file = local_datasets_dir / "train" / f"{train_names[0]}.parquet"
         batch_results = _load_single_dataset_train(parquet_file, n_total)
-        print(f"Returning {len(batch_results)} samples")
+        print(f"Returning {len(batch_results)} samples from {train_names[0]}")
         return batch_results
 
 

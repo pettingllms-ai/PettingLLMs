@@ -14,6 +14,12 @@ env:
   name: math_env
   dataset: dapo_math
   benchmark: AIME24
+  # mixed_env fields (used when env.name=mixed_env)
+  dataset_math: polaris
+  dataset_code: code_contests
+  benchmark_math: AIME24
+  benchmark_code: code_contests
+  math_ratio: 0.5
   max_turns: 1
   resolve: false
   multi_modal: false

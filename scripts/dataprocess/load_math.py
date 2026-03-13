@@ -2,6 +2,10 @@
 import os
 import re
 from pathlib import Path
+
+# Use HF mirror if huggingface.co is unreachable (set before importing datasets)
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
 import datasets
 
 # ---------- Answer extraction covering common math benchmarks ----------
