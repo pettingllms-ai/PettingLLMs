@@ -135,19 +135,22 @@ def load_math_problem_batch(
     local_datasets_dir = current_dir / "data" / "math"
 
     if mode != "train":
-        _ensure_math_datasets(local_datasets_dir, [benchmark_name], mode="test")
-        parquet_file = local_datasets_dir / "test" / f"{benchmark_name}.parquet"
-        if not parquet_file.exists():
-            raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
-        print(f"Loading dataset from: {parquet_file}")
-        ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
-        print(f"Dataset loaded: {len(ds)} samples")
+        # Support a list of benchmark names (e.g. [AIME24, AIME25])
+        benchmark_list = list(benchmark_name) if isinstance(benchmark_name, (list, tuple)) else [benchmark_name]
+        _ensure_math_datasets(local_datasets_dir, benchmark_list, mode="test")
         batch_results = []
-        for i, example in enumerate(ds):
-            problem_dict = _format_math_problem(example, i, mode="validate")
-            if problem_dict:
-                batch_results.append(problem_dict)
-        print(f"Returning {len(batch_results)} samples")
+        for bname in benchmark_list:
+            parquet_file = local_datasets_dir / "test" / f"{bname}.parquet"
+            if not parquet_file.exists():
+                raise FileNotFoundError(f"Dataset file not found: {parquet_file}")
+            print(f"Loading dataset from: {parquet_file}")
+            ds = hf_load_dataset("parquet", data_files=str(parquet_file), split="train")
+            print(f"Dataset loaded: {len(ds)} samples from {bname}")
+            for i, example in enumerate(ds):
+                problem_dict = _format_math_problem(example, i, mode="validate")
+                if problem_dict:
+                    batch_results.append(problem_dict)
+        print(f"Returning {len(batch_results)} samples from benchmarks: {benchmark_list}")
         return batch_results
 
     # Train mode: support single dataset name or list for mixed training

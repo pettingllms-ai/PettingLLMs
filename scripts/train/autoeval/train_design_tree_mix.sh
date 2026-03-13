@@ -79,7 +79,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.name=mixed_env\
     'env.dataset_math=[polaris,aime_past]'\
     env.dataset_code=code_contests\
-    env.benchmark_math=AIME24\
+    'env.benchmark_math=[AIME24,AIME25]'\
     env.benchmark_code=code_contests\
     $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
