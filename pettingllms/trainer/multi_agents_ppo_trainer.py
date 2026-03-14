@@ -740,7 +740,10 @@ class MultiAgentsPPOTrainer:
 
                     # Always sleep after trajectory collection to maintain strict pairing
                     for model_name,rollout_engine in self.rollout_engine_dict.items():
-                        rollout_engine.sleep()
+                        try:
+                            rollout_engine.sleep()
+                        except Exception as e:
+                            logger.warning(f"[WARNING] rollout_engine.sleep() failed for {model_name}: {e}. Engine may have crashed during rollout; will attempt reinit on next wake_up().")
 
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         dp_world_size = trainer.actor_rollout_wg.world_size
@@ -1219,7 +1222,10 @@ class MultiAgentsPPOTrainer:
 
         # Always sleep after validation to maintain strict pairing
         for model_name,rollout_engine in self.rollout_engine_dict.items():
-            rollout_engine.sleep()
+            try:
+                rollout_engine.sleep()
+            except Exception as e:
+                logger.warning(f"[WARNING] rollout_engine.sleep() failed for {model_name} during validation: {e}")
 
         for model_name in self.ppo_trainer_dict.keys():
             if batch_per_trainer[model_name].batch is None:

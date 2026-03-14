@@ -204,7 +204,8 @@ class AsyncvLLMServer(AsyncServerBase):
             enable_prefix_caching=True,
             trust_remote_code=trust_remote_code,
             seed=self.vllm_dp_rank,
-            max_num_seqs=256,
+            max_num_seqs=config.get("max_num_seqs", 128),
+            swap_space=0,  # Disable CPU swap to prevent system RAM OOM during KV preemption
             hf_overrides={"max_position_embeddings": max_model_len},
             **lora_kwargs,
         )
@@ -369,11 +370,31 @@ class AsyncvLLMServer(AsyncServerBase):
             yield 200, f"data: {data}\n\n"
 
     async def wake_up(self, tags: Optional[list[str]] = None):
+        if getattr(self, '_engine_dead', False):
+            logger.warning("[AsyncvLLMServer] Engine was dead, reinitializing...")
+            try:
+                import torch, gc
+                self.engine = None
+                gc.collect()
+                torch.cuda.empty_cache()
+            except Exception as e:
+                logger.warning(f"[AsyncvLLMServer] GPU cleanup failed: {e}")
+            await self.init_engine()
+            self._engine_dead = False
+            logger.warning("[AsyncvLLMServer] Engine reinitialized successfully.")
         await self.engine.wake_up(tags)
 
     async def sleep(self):
         # TODO: https://github.com/vllm-project/vllm/issues/17103
-        await self.engine.reset_prefix_cache()
-        await self.engine.sleep()
+        try:
+            await self.engine.reset_prefix_cache()
+        except Exception as e:
+            logger.warning(f"[AsyncvLLMServer] reset_prefix_cache failed: {e}. Engine may be dead.")
+        try:
+            await self.engine.sleep()
+            self._engine_dead = False
+        except Exception as e:
+            logger.warning(f"[AsyncvLLMServer] engine.sleep() failed: {e}. Will reinitialize on next wake_up().")
+            self._engine_dead = True
 
    

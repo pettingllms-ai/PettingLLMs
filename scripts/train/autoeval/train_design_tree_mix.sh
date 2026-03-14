@@ -86,11 +86,11 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
-    +$model_0_config_path.actor.optim.lr=4e-6\
+    +$model_0_config_path.actor.optim.lr=5e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.9\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
 
 
 # +$model_0_config_path.actor.clip_ratio_low=0.15\
