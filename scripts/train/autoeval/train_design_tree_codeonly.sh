@@ -80,6 +80,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.dataset_code=code_contests\
     env.benchmark_code=code_contests\
     $model_0_config_path.trainer.val_before_train=False\
+    $model_0_config_path.trainer.resume_mode=resume_path\
+    $model_0_config_path.trainer.resume_from_path=/mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_code_only_4design_4execution_5e_6_trainall/global_step_10\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2\

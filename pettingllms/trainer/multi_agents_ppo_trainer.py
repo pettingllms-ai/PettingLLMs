@@ -654,7 +654,8 @@ class MultiAgentsPPOTrainer:
         self.total_training_steps = self.config.training.total_training_steps
         progress_bar = tqdm(range(self.total_training_steps), desc="Training Progress", position=0, leave=True)
         self.max_steps_duration = 0
-        
+        _is_first_iter = True
+
         while self.global_steps < self.total_training_steps:
             progress_bar.update(1)
             progress_bar.set_description(f"Step {self.global_steps}")
@@ -687,6 +688,16 @@ class MultiAgentsPPOTrainer:
                         logger.log(data=metrics, step=self.global_steps)
                     except Exception as e:
                         pprint(f"Warning: Failed to log val_before_train metrics: {e}")
+            elif _is_first_iter and self.global_steps > 0:
+                # Resumed from checkpoint: run validation at the resumed step so results are visible
+                colorful_print(f"Running validation at resumed step {self.global_steps}", "cyan")
+                val_metrics = self._validate(global_steps=self.global_steps)
+                metrics.update(val_metrics)
+                try:
+                    logger.log(data=metrics, step=self.global_steps)
+                except Exception as e:
+                    pprint(f"Warning: Failed to log val_after_resume metrics: {e}")
+            _is_first_iter = False
 
             with simple_timer("step", timing_raw):
 
