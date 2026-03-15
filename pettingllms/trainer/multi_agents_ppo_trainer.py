@@ -986,13 +986,17 @@ class MultiAgentsPPOTrainer:
             if hasattr(self, 'agent_execution_engine') and hasattr(self.agent_execution_engine, 'envs'):
                 envs = self.agent_execution_engine.envs
                 for ptype in ["math", "code"]:
-                    typed_indices = [
-                        i for i, e in enumerate(envs)
+                    # Use e.env_idx (the problem-level index set in mixed_env.py) rather than
+                    # enumerate position, because DataProto["env_idx"] stores the problem-level
+                    # index (0..n_problems-1), not the rollout-list position (0..n_problems*samples-1).
+                    typed_env_idxs = set(
+                        getattr(e, 'env_idx', None) for e in envs
                         if getattr(e, 'problem_type', None) == ptype
-                    ]
-                    if typed_indices and 'env_idx' in batch.non_tensor_batch:
+                    )
+                    typed_env_idxs.discard(None)
+                    if typed_env_idxs and 'env_idx' in batch.non_tensor_batch:
                         env_idx_arr = batch.non_tensor_batch['env_idx']
-                        typed_mask = np.isin(env_idx_arr, typed_indices)
+                        typed_mask = np.isin(env_idx_arr, list(typed_env_idxs))
                         if typed_mask.any():
                             typed_rewards = rewards[typed_mask]
                             metrics[f"{model_name}/reward_by_type/{ptype}_mean"] = float(np.mean(typed_rewards))

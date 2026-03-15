@@ -291,13 +291,17 @@ except Exception as e:
             finally:
                 del obj_ref  # Release Ray object reference to free object store memory
 
-            # Print executor output for debugging
-            print("=" * 80)
-            print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
-            print("=" * 80)
-            print(output_text)
-            print("=" * 80)
-            print(f"[EXECUTOR OUTPUT END]")
+            # Print executor output summary (set EXECUTOR_VERBOSE_DEBUG=1 for full output)
+            import os as _os
+            if _os.environ.get("EXECUTOR_VERBOSE_DEBUG", "0") == "1":
+                print("=" * 80)
+                print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
+                print("=" * 80)
+                print(output_text)
+                print("=" * 80)
+                print(f"[EXECUTOR OUTPUT END]")
+            else:
+                print(f"[EXECUTOR OUTPUT] length={len(output_text)}, success={'[SUCCESSSAVED]' in output_text}")
             
             # Save output to file
             with open(output_txt_path, 'w') as f:
@@ -882,13 +886,17 @@ except Exception as e:
             finally:
                 del obj_ref  # Release Ray object reference to free object store memory
 
-            # Print executor output for debugging
-            print("=" * 80)
-            print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
-            print("=" * 80)
-            print(output_text)
-            print("=" * 80)
-            print(f"[EXECUTOR OUTPUT END]")
+            # Print executor output summary (set EXECUTOR_VERBOSE_DEBUG=1 for full output)
+            import os as _os
+            if _os.environ.get("EXECUTOR_VERBOSE_DEBUG", "0") == "1":
+                print("=" * 80)
+                print(f"[EXECUTOR OUTPUT] Rollout execution output (length: {len(output_text)}):")
+                print("=" * 80)
+                print(output_text)
+                print("=" * 80)
+                print(f"[EXECUTOR OUTPUT END]")
+            else:
+                print(f"[EXECUTOR OUTPUT] length={len(output_text)}, success={'[SUCCESSSAVED]' in output_text}")
             
             # Save output to file
             with open(output_txt_path, 'w') as f:

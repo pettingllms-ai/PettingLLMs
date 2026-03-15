@@ -104,7 +104,9 @@ async def get_shared_session() -> aiohttp.ClientSession:
     return _shared_session
 
 
-async def get_llm_semaphore(max_concurrent: int = 16) -> asyncio.Semaphore:
+async def get_llm_semaphore(max_concurrent: int = None) -> asyncio.Semaphore:
+    if max_concurrent is None:
+        max_concurrent = int(os.environ.get("LLM_MAX_CONCURRENT", "20"))
 
     global _llm_request_semaphore, _semaphore_lock
     
@@ -136,7 +138,7 @@ async def cleanup_shared_session():
 async def poll_completions_openai(address: str, timeout: Optional[float] = None, **completions_request) -> Completion:
    
     session = await get_shared_session()
-    semaphore = await get_llm_semaphore(max_concurrent=16)
+    semaphore = await get_llm_semaphore()
     
     if address.startswith(('http://', 'https://')):
         base_url = f"{address}/v1/completions"
@@ -536,22 +538,21 @@ async def llm_async_generate(
     tasks = []
     import logging
     logger = logging.getLogger(__name__)
-    print(f"[PRINT DEBUG] ========== llm_async_generate START ==========")
-    print(f"[PRINT DEBUG] address: {address}")
-    print(f"[PRINT DEBUG] model_name (input): {model_name}")
-    print(f"[PRINT DEBUG] actual_model (for API): {actual_model}")
-    print(f"[PRINT DEBUG] lora_id: {lora_id}")
-    print(f"[PRINT DEBUG] timeout: {timeout}")
-    print(f"[PRINT DEBUG] enable_thinking: {enable_thinking}")
-    print(f"[PRINT DEBUG] Preparing {len(prompt_dpr.non_tensor_batch['formatted_prompts'])} API requests")
+    _verbose_debug = os.environ.get("LLM_VERBOSE_DEBUG", "0") == "1"
+    if _verbose_debug:
+        print(f"[PRINT DEBUG] ========== llm_async_generate START ==========")
+        print(f"[PRINT DEBUG] address: {address}")
+        print(f"[PRINT DEBUG] model_name (input): {model_name}")
+        print(f"[PRINT DEBUG] actual_model (for API): {actual_model}")
+        print(f"[PRINT DEBUG] lora_id: {lora_id}")
+        print(f"[PRINT DEBUG] timeout: {timeout}")
+        print(f"[PRINT DEBUG] enable_thinking: {enable_thinking}")
+        print(f"[PRINT DEBUG] Preparing {len(prompt_dpr.non_tensor_batch['formatted_prompts'])} API requests")
     logger.info(f"[DEBUG] llm_async_generate: Preparing {len(prompt_dpr.non_tensor_batch['formatted_prompts'])} API requests")
-    logger.info(f"[DEBUG] llm_async_generate: Address: {address}")
-    logger.info(f"[DEBUG] llm_async_generate: Model: {actual_model}")
-    logger.info(f"[DEBUG] llm_async_generate: Timeout: {timeout}")
-    
+
     for batch_index, formatted_prompt in enumerate(prompt_dpr.non_tensor_batch["formatted_prompts"]):
         # For Completion API, we need to convert the conversation to a prompt string
-        
+
         # Prepare request parameters
         request_kwargs = {
             "address": address,
@@ -562,34 +563,32 @@ async def llm_async_generate(
             "timeout": timeout,
             **kwargs,
         }
-        
-        print(f"[PRINT DEBUG] Request {batch_index}: model='{actual_model}', address='{address}', prompt_length={len(formatted_prompt)}")
+
+        if _verbose_debug:
+            print(f"[PRINT DEBUG] Request {batch_index}: model='{actual_model}', address='{address}', prompt_length={len(formatted_prompt)}")
         tasks.append(submit_completions(**request_kwargs))
 
 
     
     # Use return_exceptions=True to handle failures gracefully
-    print(f"[PRINT DEBUG] Sending {len(tasks)} API requests...")
+    if _verbose_debug:
+        print(f"[PRINT DEBUG] Sending {len(tasks)} API requests...")
     start_time = time.time()
     completions_list = await asyncio.gather(*tasks, return_exceptions=True)
     elapsed_time = time.time() - start_time
-    
+
     success_count = sum(1 for c in completions_list if not isinstance(c, Exception))
     error_count = len(completions_list) - success_count
-    
-    import logging
-    logger = logging.getLogger(__name__)
-    print(f"[PRINT DEBUG] ========== API calls completed ==========")
-    print(f"[PRINT DEBUG] Elapsed time: {elapsed_time:.2f}s")
-    print(f"[PRINT DEBUG] Success: {success_count}, Errors: {error_count}")
-    logger.info(f"[DEBUG] llm_async_generate: API calls completed in {elapsed_time:.2f}s")
-    logger.info(f"[DEBUG] llm_async_generate: Success: {success_count}, Errors: {error_count}")
+
+    if _verbose_debug:
+        print(f"[PRINT DEBUG] ========== API calls completed ==========")
+        print(f"[PRINT DEBUG] Elapsed time: {elapsed_time:.2f}s")
+        print(f"[PRINT DEBUG] Success: {success_count}, Errors: {error_count}")
+    logger.info(f"[DEBUG] llm_async_generate: API calls completed in {elapsed_time:.2f}s, Success: {success_count}, Errors: {error_count}")
     if error_count > 0:
-        print(f"[PRINT DEBUG] ========== ERROR DETAILS ==========")
         logger.error(f"[ERROR] llm_async_generate: {error_count} out of {len(completions_list)} API calls failed!")
         for i, c in enumerate(completions_list):
             if isinstance(c, Exception):
-                print(f"[PRINT DEBUG] Request {i} FAILED: {type(c).__name__}: {str(c)}")
                 logger.error(f"[ERROR] Request {i} failed: {type(c).__name__}: {str(c)}")
     
     

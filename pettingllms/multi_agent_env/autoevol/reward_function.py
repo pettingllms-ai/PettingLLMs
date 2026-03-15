@@ -325,7 +325,8 @@ def _extract_code_block(text: str) -> str:
 
     Priority:
     1. <solution>...</solution> tags
-    2. <code>```python...```</code> tags
+    2. <tool_call> execute_code JSON "code" field (model uses tool call without <solution>)
+    2b. <code>```python...```</code> tags
     3. ```python ... ``` blocks
     4. Generic ``` ... ``` blocks
     5. Raw text if it looks like code
@@ -345,7 +346,36 @@ def _extract_code_block(text: str) -> str:
             return inner_code[-1].strip()
         return inner
 
-    # 2. <code>...</code> tags
+    # 2. execute_code JSON — extract "code" field from tool_call / tool_response blocks
+    # Handles multiple format variants:
+    #   <tool_call>{"name": "execute_code", "parameters": {"code": "..."}}</tool_call>
+    #   <tool_response>{"name":"execute_code","parameters":{"code":"..."}}</tool_response>
+    # Uses JSON-aware pattern ((?:[^"\\]|\\.)*) to handle escaped chars inside strings.
+    tc_code_matches = re.findall(
+        r'"name"\s*:\s*"execute_code".*?"code"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        text, re.DOTALL
+    )
+    if tc_code_matches:
+        # Filter out template placeholders and pick the longest valid code block
+        # (placeholders like "your_python_code_here" are short and contain no real code)
+        _PLACEHOLDER_PATTERNS = ('your_python_code_here', 'your_test_code_here', 'your_code_here')
+        valid_matches = []
+        for m in tc_code_matches:
+            raw = m.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            if any(p in stripped for p in _PLACEHOLDER_PATTERNS):
+                continue
+            # Require at least one Python keyword to avoid log-contaminated blocks
+            if not any(kw in stripped for kw in ('def ', 'import ', 'print(', 'for ', 'while ', 'class ', 'if ')):
+                continue
+            valid_matches.append(stripped)
+        if valid_matches:
+            # Take the longest valid match (most likely the final complete solution)
+            return max(valid_matches, key=len)
+
+    # 2b. <code>...</code> tags
     code_tag_matches = re.findall(
         r"<code>\s*(.*?)\s*</code>", text, re.DOTALL
     )

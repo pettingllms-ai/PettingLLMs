@@ -69,6 +69,9 @@ class MultiAgentsExecutionEngineAutoEvol:
         self.execute_sample_num = getattr(self.config.training, 'execute_sample_num', None)
         # Multi-modal support configuration
         self.enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
+        # Concurrency tuning parameters
+        self.mas_concurrency = getattr(self.config.training, 'mas_concurrency', 10)
+        self.llm_max_concurrent = getattr(self.config.training, 'llm_max_concurrent', 20)
           
         
     def __init__(
@@ -1214,7 +1217,7 @@ class MultiAgentsExecutionEngineAutoEvol:
 
         # ========== Phase 2: Execute each design M times in parallel ==========
         # Limit concurrent MAS executions to avoid overwhelming vLLM server
-        mas_semaphore = asyncio.Semaphore(8)
+        mas_semaphore = asyncio.Semaphore(self.mas_concurrency)
 
         async def _limited_execute(env_idx, ridx, d, m, design):
             async with mas_semaphore:
@@ -1246,6 +1249,10 @@ class MultiAgentsExecutionEngineAutoEvol:
                 design_exec_results[d] = []
             design_exec_results[d].append((m, ridx, result))
 
+        # Collect all DataProtos per policy in lists, then concat once at the end
+        # to avoid O(n^2) incremental concatenation.
+        collected_dprs = {}  # policy_name -> list of DataProto
+
         for d in range(N):
             design = designs[d]
             if isinstance(design, Exception):
@@ -1265,7 +1272,6 @@ class MultiAgentsExecutionEngineAutoEvol:
             # --- Designer DataProto: only 1 per design (not M copies) ---
             designer_output_dpr = design["designer_output_dpr"]
             if designer_output_dpr is not None:
-                # Use a deep copy for safety
                 designer_dpr = copy.deepcopy(designer_output_dpr)
                 designer_batch_size = len(designer_dpr)
                 canonical_ridx = rollout_idx_list[d * M]
@@ -1283,13 +1289,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                         [self.agent_lora_mapping[designer_name]] * designer_batch_size, dtype=object
                     )
 
-                if trajectory_per_task_dict[designer_policy].batch is None:
-                    trajectory_per_task_dict[designer_policy] = designer_dpr
-                else:
-                    _align_non_tensor_batch_keys(trajectory_per_task_dict[designer_policy], designer_dpr)
-                    trajectory_per_task_dict[designer_policy] = DataProto.concat([
-                        trajectory_per_task_dict[designer_policy], designer_dpr
-                    ])
+                collected_dprs.setdefault(designer_policy, []).append(designer_dpr)
 
             # --- Executor DataProtos: one per execution ---
             for (m, ridx, result) in exec_list:
@@ -1316,13 +1316,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                             [self.agent_lora_mapping[exec_executor_name]] * executor_batch_size, dtype=object
                         )
 
-                    if trajectory_per_task_dict[exec_executor_policy].batch is None:
-                        trajectory_per_task_dict[exec_executor_policy] = executor_output_dpr
-                    else:
-                        _align_non_tensor_batch_keys(trajectory_per_task_dict[exec_executor_policy], executor_output_dpr)
-                        trajectory_per_task_dict[exec_executor_policy] = DataProto.concat([
-                            trajectory_per_task_dict[exec_executor_policy], executor_output_dpr
-                        ])
+                    collected_dprs.setdefault(exec_executor_policy, []).append(executor_output_dpr)
 
                 # Workflow DataProtos from MAS workflow execution
                 # Use "WorkflowAgent" as agent_name to distinguish from Designer's own DataProto
@@ -1344,13 +1338,23 @@ class MultiAgentsExecutionEngineAutoEvol:
                                 [self.agent_lora_mapping[exec_executor_name]] * batch_size, dtype=object
                             )
 
-                        if trajectory_per_task_dict[exec_executor_policy].batch is None:
-                            trajectory_per_task_dict[exec_executor_policy] = workflow_dpr
-                        else:
-                            _align_non_tensor_batch_keys(trajectory_per_task_dict[exec_executor_policy], workflow_dpr)
-                            trajectory_per_task_dict[exec_executor_policy] = DataProto.concat([
-                                trajectory_per_task_dict[exec_executor_policy], workflow_dpr
-                            ])
+                        collected_dprs.setdefault(exec_executor_policy, []).append(workflow_dpr)
+
+        # Batch concat: single O(n) concatenation per policy instead of O(n^2) incremental
+        for policy_name, dpr_list in collected_dprs.items():
+            if not dpr_list:
+                continue
+            # Align keys across all collected DataProtos
+            for i in range(1, len(dpr_list)):
+                _align_non_tensor_batch_keys(dpr_list[0], dpr_list[i])
+            merged = DataProto.concat(dpr_list) if len(dpr_list) > 1 else dpr_list[0]
+            if trajectory_per_task_dict[policy_name].batch is None:
+                trajectory_per_task_dict[policy_name] = merged
+            else:
+                _align_non_tensor_batch_keys(trajectory_per_task_dict[policy_name], merged)
+                trajectory_per_task_dict[policy_name] = DataProto.concat([
+                    trajectory_per_task_dict[policy_name], merged
+                ])
 
                 # Validation success tracking
                 if self.mode == "validate":
@@ -1466,7 +1470,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                     completed_count += 1
 
                     # Periodic GC during aggregation to prevent memory buildup
-                    if completed_count % 2 == 0:
+                    if completed_count % 8 == 0:
                         import gc
                         gc.collect()
 
