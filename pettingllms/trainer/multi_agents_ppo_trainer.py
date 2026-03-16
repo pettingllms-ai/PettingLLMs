@@ -655,6 +655,7 @@ class MultiAgentsPPOTrainer:
         progress_bar = tqdm(range(self.total_training_steps), desc="Training Progress", position=0, leave=True)
         self.max_steps_duration = 0
         _is_first_iter = True
+        _ran_resume_val = False
 
         while self.global_steps < self.total_training_steps:
             progress_bar.update(1)
@@ -668,35 +669,32 @@ class MultiAgentsPPOTrainer:
             metrics = {}
             timing_raw = {}
 
-            # val_before_train: run validation BEFORE the first training step
-            if self.global_steps == 0:
-                val_before_train = self.config.get("val_before_train", True)
-                for trainer in self.ppo_trainer_dict.values():
-                    vbt = getattr(trainer.config, 'trainer', None)
-                    if vbt is not None:
-                        val_before_train = vbt.get("val_before_train", val_before_train)
-                        break
-                if val_before_train:
+            # Resolve val_before_train once (controls both fresh-start and resume-time validation)
+            val_before_train = self.config.get("val_before_train", True)
+            for trainer in self.ppo_trainer_dict.values():
+                vbt = getattr(trainer.config, 'trainer', None)
+                if vbt is not None:
+                    val_before_train = vbt.get("val_before_train", val_before_train)
+                    break
+
+            # val_before_train: run validation BEFORE the first training step (fresh or resumed)
+            if _is_first_iter and val_before_train:
+                if self.global_steps == 0:
                     colorful_print(f"Running validation BEFORE first training step (base model)", "cyan")
                     if self.lora_differ_mode:
                         self.use_lora_for_generation = False
                         self.agent_execution_engine.use_lora_for_generation = False
-                    val_metrics = self._validate(global_steps=self.global_steps)
-                    metrics.update(val_metrics)
-                    # Log val_before_train metrics immediately
-                    try:
-                        logger.log(data=metrics, step=self.global_steps)
-                    except Exception as e:
-                        pprint(f"Warning: Failed to log val_before_train metrics: {e}")
-            elif _is_first_iter and self.global_steps > 0:
-                # Resumed from checkpoint: run validation at the resumed step so results are visible
-                colorful_print(f"Running validation at resumed step {self.global_steps}", "cyan")
+                else:
+                    colorful_print(f"Running validation at resumed step {self.global_steps}", "cyan")
                 val_metrics = self._validate(global_steps=self.global_steps)
                 metrics.update(val_metrics)
                 try:
                     logger.log(data=metrics, step=self.global_steps)
                 except Exception as e:
-                    pprint(f"Warning: Failed to log val_after_resume metrics: {e}")
+                    pprint(f"Warning: Failed to log val_before_train metrics: {e}")
+                _ran_resume_val = True
+            else:
+                _ran_resume_val = False
             _is_first_iter = False
 
             with simple_timer("step", timing_raw):
@@ -934,6 +932,20 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/count"] = len(rews)
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
 
+                # Per-task-type reward breakdown (code vs math)
+                if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'task_type' in batch.non_tensor_batch and 'reward' in batch.non_tensor_batch:
+                    task_types = batch.non_tensor_batch['task_type']
+                    rewards_all = batch.non_tensor_batch['reward']
+                    from collections import defaultdict as _dd2
+                    type_rewards = _dd2(list)
+                    for tt, r in zip(task_types, rewards_all):
+                        type_rewards[str(tt)].append(float(r) if r is not None else 0.0)
+                    for ttype, rews in type_rewards.items():
+                        rews_arr = np.array(rews)
+                        metrics[f"{model_name}/reward_by_type/{ttype}/mean"] = float(np.mean(rews_arr))
+                        metrics[f"{model_name}/reward_by_type/{ttype}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
+                        metrics[f"{model_name}/reward_by_type/{ttype}/count"] = len(rews)
+
                 # Tree design-specific metrics
                 design_sample_num = getattr(self.config.training, 'design_sample_num', None)
                 execute_sample_num = getattr(self.config.training, 'execute_sample_num', None)
@@ -1038,6 +1050,9 @@ class MultiAgentsPPOTrainer:
             should_validate = (self.global_steps % self.config.training.val_freq == 0)
             # Step 0: skip post-training validation since val_before_train already ran it
             if self.global_steps == 0:
+                should_validate = False
+            # Skip if we already ran val at the start of this iteration (resume-val)
+            if _ran_resume_val:
                 should_validate = False
             if should_validate:
                 # Free training batch BEFORE validation to reclaim GPU memory

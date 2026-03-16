@@ -324,6 +324,8 @@ def _extract_code_block(text: str) -> str:
     """Extract code from text, trying multiple formats.
 
     Priority:
+    0. If text contains [AGENT RESPONSE]: markers (noisy subprocess stdout),
+       extract the last clean agent response and apply the rest of the logic on it.
     1. <solution>...</solution> tags
     2. <tool_call> execute_code JSON "code" field (model uses tool call without <solution>)
     2b. <code>```python...```</code> tags
@@ -331,6 +333,24 @@ def _extract_code_block(text: str) -> str:
     4. Generic ``` ... ``` blocks
     5. Raw text if it looks like code
     """
+    # 0. Extract from noisy subprocess stdout if [AGENT RESPONSE]: markers present
+    if "[AGENT RESPONSE]:" in text:
+        # Split on [AGENT RESPONSE]: and take the last section
+        parts = text.split("[AGENT RESPONSE]:")
+        if len(parts) > 1:
+            last_response = parts[-1]
+            # Trim at [TOKENS]: marker if present (end of agent response section)
+            tokens_idx = last_response.find("[TOKENS]:")
+            if tokens_idx != -1:
+                last_response = last_response[:tokens_idx]
+            # Also trim at next ========== AGENT NODE line if present
+            node_idx = last_response.find("==========")
+            if node_idx != -1:
+                last_response = last_response[:node_idx]
+            last_response = last_response.strip()
+            if last_response:
+                text = last_response
+
     # 1. <solution>...</solution> tags (may contain ```python inside)
     solution_matches = re.findall(
         r"<solution>\s*(.*?)\s*</solution>", text, re.DOTALL

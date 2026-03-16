@@ -321,22 +321,29 @@ except Exception as e:
 
             # Extract final answer from output
             final_answer = self._extract_final_answer(output_text)
-            print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
 
             # For code tasks, pass full output_text so code_reward_function can
             # extract code blocks; for math/other tasks use extracted answer.
             is_code_task = self.task_type.lower() == "code"
             if is_code_task:
+                from pettingllms.multi_agent_env.autoevol.reward_function import _extract_code_block as _ecb
+                extracted_code = _ecb(output_text)
+                print(f"[EXECUTOR RESULT] Extracted code (first 100 chars): {extracted_code[:100]!r}")
                 correctness_reward = self._calculate_reward(output_text, env_data)
                 print(f"[EXECUTOR RESULT] Code task - correctness_reward: {correctness_reward}")
             else:
                 print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
                 correctness_reward = self._calculate_reward(final_answer, env_data)
 
-            # --- Format reward: +0.1 if model used \boxed{} (math only) ---
+            # --- Format reward ---
             import re as _re
             format_reward = 0.0
-            if not is_code_task:
+            if is_code_task:
+                # +0.3 if final output contains <solution>...</solution>
+                has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
+                format_reward = 0.3 if has_solution_tag else 0.0
+            else:
+                # +0.1 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
@@ -346,19 +353,12 @@ except Exception as e:
             # --- Length penalty: disabled ---
             length_penalty = 0.0
 
-            # --- Code block penalty: -0.1 if agent nodes output <code> or ```python (math only) ---
-            code_block_penalty = 0.0
-            if not is_code_task and output_text:
-                if '<code>' in output_text or '```python' in output_text:
-                    code_block_penalty = -0.1
-                    print(f"[EXECUTOR PENALTY] Agent node output contains code blocks")
-
             # Designer reward: only correctness + format (no penalties)
             designer_reward = correctness_reward + format_reward
-            # Agent node reward: correctness + format + penalties
-            reward = correctness_reward + format_reward + length_penalty + code_block_penalty
+            # Agent node reward: correctness + format
+            reward = correctness_reward + format_reward + length_penalty
             print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
-            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty}, code_block={code_block_penalty})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty})")
             logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer}")
 
         except asyncio.TimeoutError:
@@ -916,22 +916,29 @@ except Exception as e:
 
             # Extract final answer from output
             final_answer = self._extract_final_answer(output_text)
-            print(f"[EXECUTOR RESULT] Extracted final answer: {final_answer}")
 
             # For code tasks, pass full output_text so code_reward_function can
             # extract code blocks; for math/other tasks use extracted answer.
             is_code_task = self.task_type.lower() == "code"
             if is_code_task:
+                from pettingllms.multi_agent_env.autoevol.reward_function import _extract_code_block as _ecb
+                extracted_code = _ecb(output_text)
+                print(f"[EXECUTOR RESULT] Extracted code (first 100 chars): {extracted_code[:100]!r}")
                 correctness_reward = self._calculate_reward(output_text, env_data)
                 print(f"[EXECUTOR RESULT] Code task - correctness_reward: {correctness_reward}")
             else:
                 print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
                 correctness_reward = self._calculate_reward(final_answer, env_data)
 
-            # --- Format reward: +0.1 if model used \boxed{} (math only) ---
+            # --- Format reward ---
             import re as _re
             format_reward = 0.0
-            if not is_code_task:
+            if is_code_task:
+                # +0.3 if final output contains <solution>...</solution>
+                has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
+                format_reward = 0.3 if has_solution_tag else 0.0
+            else:
+                # +0.1 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
@@ -941,19 +948,12 @@ except Exception as e:
             # --- Length penalty: disabled ---
             length_penalty = 0.0
 
-            # --- Code block penalty: -0.1 if agent nodes output <code> or ```python (math only) ---
-            code_block_penalty = 0.0
-            if not is_code_task and output_text:
-                if '<code>' in output_text or '```python' in output_text:
-                    code_block_penalty = -0.1
-                    print(f"[EXECUTOR PENALTY] Agent node output contains code blocks")
-
             # Designer reward: only correctness + format (no penalties)
             designer_reward = correctness_reward + format_reward
-            # Agent node reward: correctness + format + penalties
-            reward = correctness_reward + format_reward + length_penalty + code_block_penalty
+            # Agent node reward: correctness + format
+            reward = correctness_reward + format_reward + length_penalty
             print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
-            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty}, code_block={code_block_penalty})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty})")
             logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer}")
 
         except asyncio.TimeoutError:

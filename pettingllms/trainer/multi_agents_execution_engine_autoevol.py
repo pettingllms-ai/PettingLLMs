@@ -698,6 +698,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         # Both Designer and Executor use the same outcome reward (final_reward)
         
         # Designer's DataProto - only correctness + format reward (no penalties)
+        task_type = getattr(env, 'problem_type', getattr(self.config.env, 'task_type', 'math'))
         if designer_output_dpr is not None:
             designer_batch_size = len(designer_output_dpr)
             designer_output_dpr.non_tensor_batch["reward"] = np.array([designer_reward] * designer_batch_size)
@@ -707,6 +708,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             designer_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["agent_idx"] = np.array([0] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["task_type"] = np.array([task_type] * designer_batch_size, dtype=object)
 
             if self.lora_differ_mode and designer_name in self.agent_lora_mapping:
                 designer_lora_ids = [self.agent_lora_mapping[designer_name]] * designer_batch_size
@@ -733,6 +735,7 @@ class MultiAgentsExecutionEngineAutoEvol:
             executor_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["agent_idx"] = np.array([1] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["task_type"] = np.array([task_type] * executor_batch_size, dtype=object)
 
             if self.lora_differ_mode and executor_name in self.agent_lora_mapping:
                 executor_lora_ids = [self.agent_lora_mapping[executor_name]] * executor_batch_size
@@ -760,6 +763,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 workflow_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
                 workflow_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
                 workflow_dpr.non_tensor_batch["agent_idx"] = np.array([1] * batch_size)
+                workflow_dpr.non_tensor_batch["task_type"] = np.array([task_type] * batch_size, dtype=object)
 
                 if self.lora_differ_mode and executor_name in self.agent_lora_mapping:
                     executor_lora_ids = [self.agent_lora_mapping[executor_name]] * batch_size
@@ -1411,18 +1415,29 @@ class MultiAgentsExecutionEngineAutoEvol:
         # Use tree design sampling when execute_sample_num > 1 and not in validate mode
         use_tree_design = (self.execute_sample_num > 1 and self.mode != "validate")
 
+        # Limit concurrency to avoid overloading the vLLM server with simultaneous requests.
+        # Controlled by MAX_ROLLOUT_CONCURRENCY env var (default: no limit for train, 32 for validate).
+        import os as _os
+        default_concurrency = 32 if self.mode == "validate" else len(rollout_indices) + len(env_idx_list)
+        max_concurrency = int(_os.environ.get("MAX_ROLLOUT_CONCURRENCY", default_concurrency))
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def _with_semaphore(coro):
+            async with semaphore:
+                return await coro
+
         if use_tree_design:
             print(f"[TREE DESIGN] Using tree design sampling: {self.design_sample_num} designs × {self.execute_sample_num} executions")
             tasks = [
                 asyncio.create_task(
-                    self.generate_tree_rollout(env_idx=env_idx)
+                    _with_semaphore(self.generate_tree_rollout(env_idx=env_idx))
                 )
                 for env_idx in env_idx_list
             ]
         else:
             tasks = [
                 asyncio.create_task(
-                    self.generate_single_rollout(rollout_idx=rollout_idx)
+                    _with_semaphore(self.generate_single_rollout(rollout_idx=rollout_idx))
                 )
                 for rollout_idx in rollout_indices
             ]

@@ -57,8 +57,12 @@ class MixedEnvBatch:
 
         if mode == "train":
             n_total = len(safe_env_indices)
-            n_math = max(1, int(n_total * math_ratio))
-            n_code = max(1, n_total - n_math)
+            if math_ratio <= 0.0:
+                n_math = 0
+                n_code = n_total
+            else:
+                n_math = max(1, int(n_total * math_ratio))
+                n_code = max(1, n_total - n_math)
 
             math_indices = safe_env_indices[:n_math]
             code_indices = safe_env_indices[n_math : n_math + n_code]

@@ -448,7 +448,7 @@ async def llm_async_generate(
     # Default LLM config parameters
     default_llm_config = {
         'enable_thinking': enable_thinking,
-        'temperature': 0.8 if mode == "train" else 0.6,
+        'temperature': 1.0 if mode == "train" else 0.0,
         'top_p': 0.9 if mode == "train" else 0.95,
         'top_k': 20,
         'min_p': 0.0,
