@@ -67,7 +67,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mix_4design_4execution_5e_6_trainall_amazon\
+    training.experiment_name=autoeval_mix_4design_4execution_5e_6_trainall_amazondebugvllm\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=4\
@@ -92,7 +92,9 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8
+
+    
 # +$model_0_config_path.actor_rollout_ref.rollout.enforce_eager=True\
 #    env.math_ratio=0\
 # +$model_0_config_path.actor.clip_ratio_low=0.15\
