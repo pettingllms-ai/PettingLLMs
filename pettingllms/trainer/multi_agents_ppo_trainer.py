@@ -91,6 +91,14 @@ class MultiAgentsPPOTrainer:
         else:
             colorful_print(f"train_data_mode=all: training on all agent data", "yellow")
 
+        # Separate learning rates for designer vs executor
+        self.designer_lr = getattr(config.training, 'designer_lr', None) if hasattr(config, 'training') else None
+        self.executor_lr = getattr(config.training, 'executor_lr', None) if hasattr(config, 'training') else None
+        if self.designer_lr is not None and self.executor_lr is not None:
+            colorful_print(f"Separate LRs enabled: designer_lr={self.designer_lr}, executor_lr={self.executor_lr}", "yellow")
+        else:
+            colorful_print(f"Using shared LR for all agents", "yellow")
+
         if config.specialization =="lora":
             self.lora_num = len(self.agent_policy_mapping)
             self.lora_differ_mode = True
@@ -579,8 +587,59 @@ class MultiAgentsPPOTrainer:
                 else:
                     actor_output_metrics = {}
             else:
-                actor_output = ppo_trainer.actor_rollout_wg.update_actor(batch)
-                actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
+                if self.designer_lr is not None and self.executor_lr is not None:
+                    # Split batch by agent name and apply different LRs
+                    agent_names = batch.non_tensor_batch['agent_name']
+                    unique_agents = sorted(set(agent_names))
+
+                    # Filter out untrained agents
+                    if self.agent_untrained:
+                        unique_agents = [agent for agent in unique_agents if agent not in self.agent_untrained]
+
+                    # Build sub-batches with override_lr
+                    agent_batch_list = []
+                    for agent_name in unique_agents:
+                        agent_mask = np.array([name == agent_name for name in agent_names])
+                        agent_indices = np.where(agent_mask)[0].tolist()
+                        if not agent_indices:
+                            continue
+                        sub_batch = batch.select_idxs(agent_indices)
+                        try:
+                            dp_world_size = ppo_trainer.actor_rollout_wg.world_size
+                        except Exception:
+                            dp_world_size = 1
+                        if dp_world_size > 1:
+                            sub_batch, _ = pad_dataproto_to_divisor(sub_batch, dp_world_size)
+                        override_lr = self.designer_lr if agent_name == "Designer" else self.executor_lr
+                        sub_batch.meta_info["override_lr"] = override_lr
+                        agent_batch_list.append((agent_name, sub_batch))
+                        colorful_print(f"Using {'designer' if agent_name == 'Designer' else 'executor'}_lr={override_lr} for {agent_name} ({len(agent_indices)} samples)", "cyan")
+
+                    # Only step LR scheduler on the last sub-batch
+                    for i, (agent_name, sub_batch) in enumerate(agent_batch_list):
+                        sub_batch.meta_info["step_lr_scheduler"] = (i == len(agent_batch_list) - 1)
+
+                    # Update actor for each sub-batch and merge metrics
+                    all_actor_metrics_list = []
+                    for agent_name, sub_batch in agent_batch_list:
+                        agent_output = ppo_trainer.actor_rollout_wg.update_actor(sub_batch)
+                        all_actor_metrics_list.append(agent_output.meta_info["metrics"])
+
+                    if all_actor_metrics_list:
+                        from collections import defaultdict
+                        merged_metrics = defaultdict(list)
+                        for metrics_dict in all_actor_metrics_list:
+                            for key, value in metrics_dict.items():
+                                if isinstance(value, (list, tuple, np.ndarray)):
+                                    merged_metrics[key].append(float(np.mean(value)))
+                                else:
+                                    merged_metrics[key].append(float(value))
+                        actor_output_metrics = reduce_metrics(dict(merged_metrics))
+                    else:
+                        actor_output_metrics = {}
+                else:
+                    actor_output = ppo_trainer.actor_rollout_wg.update_actor(batch)
+                    actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                 
             batch.meta_info["metrics"].update(actor_output_metrics)
 

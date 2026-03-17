@@ -78,6 +78,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.val_freq=10\
     training.save_freq=10\
     training.train_data_mode=all\
+    training.designer_lr=5e-6\
+    training.executor_lr=1e-6\
     env.name=mixed_env\
     env.dataset_code=code_contests\
     env.benchmark_code=code_contests\

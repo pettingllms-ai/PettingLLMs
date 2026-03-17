@@ -69,6 +69,8 @@ training:
   val_freq: 20
   save_freq: -1
   train_data_mode: "all"  # Options: "all", "designer_only", "executor_only"
+  designer_lr: null   # null = use actor.optim.lr for all
+  executor_lr: null   # null = use actor.optim.lr for all
   max_prompt_length: 4096
   max_response_length: 4096
   lora_rank: ${lora_rank}  # 0 for full-parameter training

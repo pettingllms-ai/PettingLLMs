@@ -733,9 +733,23 @@ class ActorRolloutRefWorker(Worker):
             if multi_lora:
                 data.meta_info["multi_lora"] = multi_lora
                 data.meta_info["lora_id"] = lora_id
+            # Override LR if requested (for separate designer/executor LRs)
+            override_lr = data.meta_info.get("override_lr", None)
+            original_lrs = None
+            if override_lr is not None:
+                original_lrs = [pg['lr'] for pg in self.actor_optimizer.param_groups]
+                for pg in self.actor_optimizer.param_groups:
+                    pg['lr'] = override_lr
+
             # perform training
             with Timer(name="update_policy", logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
+
+            # Restore original LR after update
+            if original_lrs is not None:
+                for pg, orig_lr in zip(self.actor_optimizer.param_groups, original_lrs):
+                    pg['lr'] = orig_lr
+
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
@@ -744,9 +758,15 @@ class ActorRolloutRefWorker(Worker):
             metrics["perf/max_memory_reserved_gb"] = get_torch_device().max_memory_reserved() / (1024**3)
             metrics["perf/cpu_memory_used_gb"] = psutil.virtual_memory().used / (1024**3)
 
-            lr = self.actor_lr_scheduler.get_last_lr()[0]
-            metrics["actor/lr"] = lr
-            self.actor_lr_scheduler.step()
+            # Report the effective LR used for this update
+            if override_lr is not None:
+                metrics["actor/lr"] = override_lr
+            else:
+                metrics["actor/lr"] = self.actor_lr_scheduler.get_last_lr()[0]
+
+            # Only step LR scheduler if requested (default: True)
+            if data.meta_info.get("step_lr_scheduler", True):
+                self.actor_lr_scheduler.step()
 
             # TODO: here, we should return all metrics
             output = DataProto(meta_info={"metrics": metrics})
