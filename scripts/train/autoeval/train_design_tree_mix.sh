@@ -17,7 +17,8 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
 export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
 export NCCL_NVLS_ENABLE=0
-export MAX_ROLLOUT_CONCURRENCY=32
+export MAX_ROLLOUT_CONCURRENCY=16
+export VLLM_ENABLE_V1_MULTIPROCESSING=0      
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
     # Try to find CUDA in conda env
@@ -92,7 +93,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
-
+# +$model_0_config_path.actor_rollout_ref.rollout.enforce_eager=True\
 #    env.math_ratio=0\
 # +$model_0_config_path.actor.clip_ratio_low=0.15\
 #    +$model_0_config_path.actor.clip_ratio_high=0.28\

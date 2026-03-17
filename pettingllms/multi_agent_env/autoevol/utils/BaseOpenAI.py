@@ -146,7 +146,8 @@ class AIClient:
         # Store actual response token count for length-penalty bookkeeping.
         import numpy as np
         response_token_count = len(self.tokenizer.encode(response))
-        output_dpr.non_tensor_batch["response_token_count"] = np.array([response_token_count])
+        batch_size = output_dpr.batch.batch_size[0]
+        output_dpr.non_tensor_batch["response_token_count"] = np.array([response_token_count] * batch_size)
 
         self.workflow.dataproto_list.append(output_dpr)
 
