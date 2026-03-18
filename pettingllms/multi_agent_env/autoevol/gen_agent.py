@@ -159,6 +159,10 @@ class MASGenerator(Agent):
                 "workflow_dpr": [],
                 "execution_success": False,
                 "reward": 0.0,
+                "designer_reward": 0.0,
+                "correctness_reward": 0.0,
+                "delivery_reward": 0.0,
+                "solution_reward": 0.0,
                 "trajectory": []
             }
 
@@ -192,6 +196,9 @@ import warnings
 logging.getLogger("autogen").setLevel(logging.ERROR)
 logging.getLogger("aiohttp").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# Set task type for agent delivery instruction
+os.environ["TASK_TYPE"] = "{self.task_type}"
 
 # Import necessary modules for verl integration
 from pettingllms.multi_agent_env.autoevol.utils.BaseOpenAI import AIClient
@@ -335,20 +342,36 @@ except Exception as e:
                 print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
                 correctness_reward = self._calculate_reward(final_answer, env_data)
 
-            # --- Format reward ---
+            # --- Format rewards (split: delivery + solution) ---
             import re as _re
-            format_reward = 0.0
+            import ast as _ast
+            delivery_reward = 0.0
+            solution_reward = 0.0
+
+            # Delivery reward: +0.1 if agent used <delivery>...</delivery> tags
+            has_delivery_tag = bool(_re.search(r'<delivery>.*?</delivery>', output_text, _re.DOTALL))
+            if has_delivery_tag:
+                delivery_reward = 0.1
+
             if is_code_task:
-                # +0.3 if final output contains <solution>...</solution>
+                # Solution reward: +0.3 if <solution> present AND parseable Python
                 has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
-                format_reward = 0.3 if has_solution_tag else 0.0
+                if has_solution_tag:
+                    _code = (extracted_code or '').strip()
+                    try:
+                        _ast.parse(_code)
+                        solution_reward = 0.3 if len(_code) >= 10 else 0.0
+                    except SyntaxError:
+                        solution_reward = 0.0
             else:
-                # +0.1 if model used \boxed{} (math only)
+                # Solution reward: +0.1 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
                 )) if final_answer.strip() else True
-                format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+                solution_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+
+            format_reward = delivery_reward + solution_reward
 
             # --- Length penalty: disabled ---
             length_penalty = 0.0
@@ -357,8 +380,8 @@ except Exception as e:
             designer_reward = correctness_reward + format_reward
             # Agent node reward: correctness + format
             reward = correctness_reward + format_reward + length_penalty
-            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
-            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty})")
+            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, delivery={delivery_reward}, solution={solution_reward})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, delivery={delivery_reward}, solution={solution_reward})")
             logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer}")
 
         except asyncio.TimeoutError:
@@ -374,6 +397,9 @@ except Exception as e:
             "execution_success": execution_success,
             "reward": reward,
             "designer_reward": designer_reward,
+            "correctness_reward": correctness_reward,
+            "delivery_reward": delivery_reward,
+            "solution_reward": solution_reward,
             "trajectory": workflow_dataproto_list
         }
 
@@ -761,6 +787,10 @@ class MASExecutor(Agent):
                 "workflow_dpr": [],
                 "execution_success": False,
                 "reward": 0.0,
+                "designer_reward": 0.0,
+                "correctness_reward": 0.0,
+                "delivery_reward": 0.0,
+                "solution_reward": 0.0,
                 "trajectory": []
             }
 
@@ -795,6 +825,9 @@ import warnings
 logging.getLogger("autogen").setLevel(logging.ERROR)
 logging.getLogger("aiohttp").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=ResourceWarning)
+
+# Set task type for agent delivery instruction
+os.environ["TASK_TYPE"] = "{self.task_type}"
 
 # Import necessary modules for verl integration
 from pettingllms.multi_agent_env.autoevol.utils.BaseOpenAI import AIClient
@@ -930,20 +963,36 @@ except Exception as e:
                 print(f"[EXECUTOR RESULT] Ground truth answer: {env_data.state.ground_truth_answer}")
                 correctness_reward = self._calculate_reward(final_answer, env_data)
 
-            # --- Format reward ---
+            # --- Format rewards (split: delivery + solution) ---
             import re as _re
-            format_reward = 0.0
+            import ast as _ast
+            delivery_reward = 0.0
+            solution_reward = 0.0
+
+            # Delivery reward: +0.1 if agent used <delivery>...</delivery> tags
+            has_delivery_tag = bool(_re.search(r'<delivery>.*?</delivery>', output_text, _re.DOTALL))
+            if has_delivery_tag:
+                delivery_reward = 0.1
+
             if is_code_task:
-                # +0.3 if final output contains <solution>...</solution>
+                # Solution reward: +0.3 if <solution> present AND parseable Python
                 has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
-                format_reward = 0.3 if has_solution_tag else 0.0
+                if has_solution_tag:
+                    _code = (extracted_code or '').strip()
+                    try:
+                        _ast.parse(_code)
+                        solution_reward = 0.3 if len(_code) >= 10 else 0.0
+                    except SyntaxError:
+                        solution_reward = 0.0
             else:
-                # +0.1 if model used \boxed{} (math only)
+                # Solution reward: +0.1 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
                 )) if final_answer.strip() else True
-                format_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+                solution_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+
+            format_reward = delivery_reward + solution_reward
 
             # --- Length penalty: disabled ---
             length_penalty = 0.0
@@ -952,8 +1001,8 @@ except Exception as e:
             designer_reward = correctness_reward + format_reward
             # Agent node reward: correctness + format
             reward = correctness_reward + format_reward + length_penalty
-            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, format={format_reward})")
-            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, format={format_reward}, length={length_penalty})")
+            print(f"[EXECUTOR RESULT] designer_reward: {designer_reward} (correctness={correctness_reward}, delivery={delivery_reward}, solution={solution_reward})")
+            print(f"[EXECUTOR RESULT] agent_reward: {reward} (correctness={correctness_reward}, delivery={delivery_reward}, solution={solution_reward})")
             logger.info(f"Calculated reward: designer={designer_reward}, agent={reward} for final_answer: {final_answer}")
 
         except asyncio.TimeoutError:
@@ -969,6 +1018,9 @@ except Exception as e:
             "execution_success": execution_success,
             "reward": reward,
             "designer_reward": designer_reward,
+            "correctness_reward": correctness_reward,
+            "delivery_reward": delivery_reward,
+            "solution_reward": solution_reward,
             "trajectory": workflow_dataproto_list
         }
 

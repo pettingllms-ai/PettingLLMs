@@ -991,6 +991,26 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/count"] = len(rews)
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
 
+                # Reward component breakdown (correctness / delivery / solution)
+                if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None:
+                    for reward_component in ['correctness_reward', 'delivery_reward', 'solution_reward']:
+                        if reward_component in batch.non_tensor_batch:
+                            vals = np.array([float(v) for v in batch.non_tensor_batch[reward_component]])
+                            metrics[f"{model_name}/reward_breakdown/{reward_component}/mean"] = float(np.mean(vals))
+                            metrics[f"{model_name}/reward_breakdown/{reward_component}/nonzero_ratio"] = float(np.count_nonzero(vals) / len(vals)) if len(vals) > 0 else 0.0
+
+                            # Per-agent breakdown
+                            if 'agent_name' in batch.non_tensor_batch:
+                                agent_names = batch.non_tensor_batch['agent_name']
+                                from collections import defaultdict as _dd_rc
+                                agent_component = _dd_rc(list)
+                                for name, v in zip(agent_names, vals):
+                                    agent_component[name].append(float(v))
+                                for agent_name, agent_vals in agent_component.items():
+                                    arr = np.array(agent_vals)
+                                    metrics[f"{model_name}/reward_breakdown/{agent_name}/{reward_component}/mean"] = float(np.mean(arr))
+                                    metrics[f"{model_name}/reward_breakdown/{agent_name}/{reward_component}/nonzero_ratio"] = float(np.count_nonzero(arr) / len(arr)) if len(arr) > 0 else 0.0
+
                 # Per-task-type reward breakdown (code vs math)
                 if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'task_type' in batch.non_tensor_batch and 'reward' in batch.non_tensor_batch:
                     task_types = batch.non_tensor_batch['task_type']

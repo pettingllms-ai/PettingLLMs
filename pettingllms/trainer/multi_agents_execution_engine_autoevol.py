@@ -651,6 +651,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             mas_execution_success = step_result.get("execution_success", False)
             final_reward = step_result.get("reward", 0.0)
             designer_reward = step_result.get("designer_reward", final_reward)
+            correctness_reward = step_result.get("correctness_reward", 0.0)
+            delivery_reward = step_result.get("delivery_reward", 0.0)
+            solution_reward = step_result.get("solution_reward", 0.0)
 
             print(f"[EXECUTOR STEP RESULT] MAS execution success: {mas_execution_success}")
             print(f"[EXECUTOR STEP RESULT] Agent reward: {final_reward}, Designer reward: {designer_reward}")
@@ -704,6 +707,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             designer_output_dpr.non_tensor_batch["reward"] = np.array([designer_reward] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["agent_name"] = np.array([designer_name] * designer_batch_size, dtype=object)
             designer_output_dpr.non_tensor_batch["env_final_reward"] = np.array([designer_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["correctness_reward"] = np.array([correctness_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["delivery_reward"] = np.array([delivery_reward] * designer_batch_size)
+            designer_output_dpr.non_tensor_batch["solution_reward"] = np.array([solution_reward] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["turn_idx"] = np.array([0] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * designer_batch_size)
             designer_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * designer_batch_size)
@@ -731,6 +737,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             executor_output_dpr.non_tensor_batch["reward"] = np.array([final_reward] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["agent_name"] = np.array([executor_name] * executor_batch_size, dtype=object)
             executor_output_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["correctness_reward"] = np.array([correctness_reward] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["delivery_reward"] = np.array([delivery_reward] * executor_batch_size)
+            executor_output_dpr.non_tensor_batch["solution_reward"] = np.array([solution_reward] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["turn_idx"] = np.array([1] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * executor_batch_size)
             executor_output_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * executor_batch_size)
@@ -759,6 +768,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                 workflow_dpr.non_tensor_batch["reward"] = np.array([final_reward] * batch_size)
                 workflow_dpr.non_tensor_batch["agent_name"] = np.array([workflow_agent_name] * batch_size, dtype=object)
                 workflow_dpr.non_tensor_batch["env_final_reward"] = np.array([final_reward] * batch_size)
+                workflow_dpr.non_tensor_batch["correctness_reward"] = np.array([correctness_reward] * batch_size)
+                workflow_dpr.non_tensor_batch["delivery_reward"] = np.array([delivery_reward] * batch_size)
+                workflow_dpr.non_tensor_batch["solution_reward"] = np.array([solution_reward] * batch_size)
                 workflow_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
                 workflow_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
                 workflow_dpr.non_tensor_batch["rollout_idx"] = np.array([rollout_idx] * batch_size)
@@ -1144,6 +1156,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             mas_execution_success = step_result.get("execution_success", False)
             final_reward = step_result.get("reward", 0.0)
             designer_reward = step_result.get("designer_reward", final_reward)
+            correctness_reward = step_result.get("correctness_reward", 0.0)
+            delivery_reward = step_result.get("delivery_reward", 0.0)
+            solution_reward = step_result.get("solution_reward", 0.0)
 
             print(f"[TREE DESIGN] rollout_idx={rollout_idx} (design={design_idx}, exec={exec_idx}): "
                   f"reward={final_reward}, designer_reward={designer_reward}, success={mas_execution_success}")
@@ -1154,6 +1169,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             workflow_dataproto_list = []
             final_reward = 0.0
             designer_reward = 0.0
+            correctness_reward = 0.0
+            delivery_reward = 0.0
+            solution_reward = 0.0
         except Exception as e:
             import traceback
             print(f"[TREE DESIGN] MAS execution failed for rollout {rollout_idx}: {e}")
@@ -1162,6 +1180,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             workflow_dataproto_list = []
             final_reward = 0.0
             designer_reward = 0.0
+            correctness_reward = 0.0
+            delivery_reward = 0.0
+            solution_reward = 0.0
         finally:
             try:
                 await self._cleanup_after_step(rollout_idx)
@@ -1171,6 +1192,9 @@ class MultiAgentsExecutionEngineAutoEvol:
         return {
             "reward": final_reward,
             "designer_reward": designer_reward,
+            "correctness_reward": correctness_reward,
+            "delivery_reward": delivery_reward,
+            "solution_reward": solution_reward,
             "executor_output_dpr": executor_output_dpr,
             "workflow_dataproto_list": workflow_dataproto_list,
             "designer_output_dpr_ref": designer_output_dpr_ref,
@@ -1269,6 +1293,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             # Compute designer mean reward from M executions
             exec_rewards = [r["designer_reward"] for (_, _, r) in exec_list]
             designer_mean_reward = float(np.mean(exec_rewards))
+            designer_mean_correctness = float(np.mean([r.get("correctness_reward", 0.0) for (_, _, r) in exec_list]))
+            designer_mean_delivery = float(np.mean([r.get("delivery_reward", 0.0) for (_, _, r) in exec_list]))
+            designer_mean_solution = float(np.mean([r.get("solution_reward", 0.0) for (_, _, r) in exec_list]))
             print(f"[TREE DESIGN DEBUG] env_idx={env_idx}, design={d}: "
                   f"exec_rewards={exec_rewards}, designer_mean_reward={designer_mean_reward}, "
                   f"num_exec={len(exec_list)}/{M}")
@@ -1282,6 +1309,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                 designer_dpr.non_tensor_batch["reward"] = np.array([designer_mean_reward] * designer_batch_size)
                 designer_dpr.non_tensor_batch["agent_name"] = np.array([designer_name] * designer_batch_size, dtype=object)
                 designer_dpr.non_tensor_batch["env_final_reward"] = np.array([designer_mean_reward] * designer_batch_size)
+                designer_dpr.non_tensor_batch["correctness_reward"] = np.array([designer_mean_correctness] * designer_batch_size)
+                designer_dpr.non_tensor_batch["delivery_reward"] = np.array([designer_mean_delivery] * designer_batch_size)
+                designer_dpr.non_tensor_batch["solution_reward"] = np.array([designer_mean_solution] * designer_batch_size)
                 designer_dpr.non_tensor_batch["turn_idx"] = np.array([0] * designer_batch_size)
                 designer_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * designer_batch_size)
                 designer_dpr.non_tensor_batch["rollout_idx"] = np.array([canonical_ridx] * designer_batch_size)
@@ -1298,6 +1328,9 @@ class MultiAgentsExecutionEngineAutoEvol:
             # --- Executor DataProtos: one per execution ---
             for (m, ridx, result) in exec_list:
                 exec_reward = result["reward"]
+                exec_correctness = result.get("correctness_reward", 0.0)
+                exec_delivery = result.get("delivery_reward", 0.0)
+                exec_solution = result.get("solution_reward", 0.0)
                 exec_executor_name = result["executor_name"]
                 exec_executor_policy = result["executor_policy"]
                 exec_has_executor = result["has_executor"]
@@ -1309,6 +1342,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                     executor_output_dpr.non_tensor_batch["reward"] = np.array([exec_reward] * executor_batch_size)
                     executor_output_dpr.non_tensor_batch["agent_name"] = np.array([exec_executor_name] * executor_batch_size, dtype=object)
                     executor_output_dpr.non_tensor_batch["env_final_reward"] = np.array([exec_reward] * executor_batch_size)
+                    executor_output_dpr.non_tensor_batch["correctness_reward"] = np.array([exec_correctness] * executor_batch_size)
+                    executor_output_dpr.non_tensor_batch["delivery_reward"] = np.array([exec_delivery] * executor_batch_size)
+                    executor_output_dpr.non_tensor_batch["solution_reward"] = np.array([exec_solution] * executor_batch_size)
                     executor_output_dpr.non_tensor_batch["turn_idx"] = np.array([1] * executor_batch_size)
                     executor_output_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * executor_batch_size)
                     executor_output_dpr.non_tensor_batch["rollout_idx"] = np.array([ridx] * executor_batch_size)
@@ -1331,6 +1367,9 @@ class MultiAgentsExecutionEngineAutoEvol:
                         workflow_dpr.non_tensor_batch["reward"] = np.array([exec_reward] * batch_size)
                         workflow_dpr.non_tensor_batch["agent_name"] = np.array([workflow_agent_name] * batch_size, dtype=object)
                         workflow_dpr.non_tensor_batch["env_final_reward"] = np.array([exec_reward] * batch_size)
+                        workflow_dpr.non_tensor_batch["correctness_reward"] = np.array([exec_correctness] * batch_size)
+                        workflow_dpr.non_tensor_batch["delivery_reward"] = np.array([exec_delivery] * batch_size)
+                        workflow_dpr.non_tensor_batch["solution_reward"] = np.array([exec_solution] * batch_size)
                         workflow_dpr.non_tensor_batch["turn_idx"] = np.array([1] * batch_size)
                         workflow_dpr.non_tensor_batch["env_idx"] = np.array([env_idx] * batch_size)
                         workflow_dpr.non_tensor_batch["rollout_idx"] = np.array([ridx] * batch_size)

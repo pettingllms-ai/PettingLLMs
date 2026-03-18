@@ -17,39 +17,54 @@ from utils.conversation_logger import get_global_tracker
 # NOTE: Keep this minimal.  Verbose summary requests (Approach / Confidence /
 # Key-steps) can hurt accuracy, and multi-agent language ("Inter-Agent",
 # "downstream agents") triggers designer-mode in fine-tuned models.
-DELIVERY_INSTRUCTION = (
-    "\n\nAfter solving, restate your final answer clearly as: "
-    "FINAL ANSWER: \\boxed{your_answer}"
+DELIVERY_INSTRUCTION_MATH = (
+    "\n\nAfter solving, output two things:\n"
+    "1. Wrap the key reasoning steps you want to share with the next agent "
+    "in <delivery>...</delivery> tags.\n"
+    "2. State your final answer as: FINAL ANSWER: \\boxed{your_answer}"
 )
+
+DELIVERY_INSTRUCTION_CODE = (
+    "\n\nAfter solving, output two things:\n"
+    "1. Wrap the key reasoning steps you want to share with the next agent "
+    "in <delivery>...</delivery> tags.\n"
+    "2. Wrap your complete solution code in <solution>...</solution> tags. "
+    "Only include the final runnable code inside <solution>, no explanations."
+)
+
+
+def _get_delivery_instruction() -> str:
+    """Return the delivery instruction appropriate for the current task type."""
+    task_type = os.getenv("TASK_TYPE", "math").lower()
+    if task_type == "code":
+        return DELIVERY_INSTRUCTION_CODE
+    return DELIVERY_INSTRUCTION_MATH
 
 
 def _extract_delivery(text: str) -> Optional[str]:
     """Extract the compact delivery block from an agent response.
 
-    Tries several formats (newest first):
-      1. ``FINAL ANSWER: \\boxed{...}``  (V3 – current default)
-      2. ``Approach: / Answer: / Confidence:`` trailing block (V1 – legacy)
-      3. ``<delivery>...</delivery>`` XML tags (oldest legacy)
+    Priority (agent-chosen content first, then fixed-format fallbacks):
+      1. ``<delivery>...</delivery>`` — agent explicitly chose what to share
+      2. ``FINAL ANSWER: \\boxed{...}`` (math fallback)
+      3. ``<solution>...</solution>`` (code fallback)
 
     Returns the extracted string, or None if nothing matched.
     """
-    # V3: FINAL ANSWER: \boxed{...}
+    # 1. Agent-chosen delivery (highest priority)
+    match = re.search(r"<delivery>(.*?)</delivery>", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # 2. Math fallback: FINAL ANSWER: \boxed{...}
     match = re.search(r"FINAL ANSWER:\s*(.*)", text)
     if match:
         return match.group(1).strip()
 
-    # V1 legacy: trailing Approach/Answer/Confidence block
-    match = re.search(
-        r"(Approach:.*(?:\nAnswer:.*)?(?:\nConfidence:.*)?)\s*$",
-        text,
-    )
+    # 3. Code fallback: <solution>...</solution>
+    match = re.search(r"<solution>(.*?)</solution>", text, re.DOTALL)
     if match:
-        return match.group(1).strip()
-
-    # Oldest legacy: <delivery>...</delivery> XML tags
-    match = re.search(r"<delivery>(.*?)</delivery>", text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
+        return match.group(0).strip()
 
     return None
 
@@ -127,8 +142,8 @@ class AgentNode(WorkflowNode):
                 "Make sure to include ALL required arguments in the tool call.\n"
             )
 
-        # Auto-inject delivery format instruction
-        system_prompt += DELIVERY_INSTRUCTION
+        # Auto-inject delivery format instruction (task-type aware)
+        system_prompt += _get_delivery_instruction()
 
         # In evaluate mode (AIME), remind agents the answer must be an integer
         # and prevent designer-format output

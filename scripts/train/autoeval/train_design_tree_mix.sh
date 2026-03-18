@@ -67,7 +67,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mix_4design_4execution_5e_6_trainall_amazondebugvllm\
+    training.experiment_name=autoeval_mix_4design_4execution_5e_6_traindifflr_amazond\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=4\
