@@ -75,7 +75,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.validate_sample_num=1\
     training.max_prompt_length=4096\
     training.max_response_length=8192\
-    training.val_freq=10\
+    training.val_freq=60\
     training.save_freq=10\
     training.train_data_mode=all\
     training.designer_lr=5e-6\
@@ -96,7 +96,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.entropy_coeff=0.00\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8
 
-    
+
 # +$model_0_config_path.actor_rollout_ref.rollout.enforce_eager=True\
 #    env.math_ratio=0\
 # +$model_0_config_path.actor.clip_ratio_low=0.15\
