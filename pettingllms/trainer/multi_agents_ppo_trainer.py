@@ -767,51 +767,101 @@ class MultiAgentsPPOTrainer:
 
                     self.agent_execution_engine.init_agents_and_envs(mode="train", step_idx=self.global_steps)
 
-                    # CRITICAL: Always wake_up before use and sleep after use to maintain strict pairing
-                    # This ensures wake_up and sleep are always paired 1:1
-                    for model_name,rollout_engine in self.rollout_engine_dict.items():
-                        rollout_engine.wake_up()
+                    # GPU memory diagnostics before rollout
+                    try:
+                        for gpu_i in range(torch.cuda.device_count()):
+                            alloc = torch.cuda.memory_allocated(gpu_i) / 1024**3
+                            reserved = torch.cuda.memory_reserved(gpu_i) / 1024**3
+                            print(f"[GPU MEM] Step {self.global_steps} GPU{gpu_i}: allocated={alloc:.2f}GB, reserved={reserved:.2f}GB")
+                    except Exception:
+                        pass
 
-                    # Sync any pending LoRA updates to vLLM AFTER wake_up (to avoid memory conflicts)
-                    # Note: LoRA is prepared in step N's update_actor, synced at step N+1's wake_up
-                    if self.lora_differ_mode and self.global_steps >= 1:
-                        
-                        self.use_lora_for_generation = True
-                        self.agent_execution_engine.use_lora_for_generation = True
-                        
-                    gen_batch_output_per_policy =asyncio.run( self.agent_execution_engine.generate_multiple_rollouts_concurrent(self.agent_execution_engine.env_idx_list,rollout_mode=self.config.get("rollout_mode","tree")))
-
-                    # CRITICAL FIX: Reset prefix cache to free all KV cache blocks before sleep
-                    # This is essential for autoevol where mas.py creates external OpenAI client requests
-                    # that may leave KV cache blocks allocated. We force reset to ensure clean sleep/wake.
-                    print(f"[DEBUG] Resetting prefix cache to free KV blocks before sleep...")
-                    for model_name, rollout_engine in self.rollout_engine_dict.items():
+                    # Rollout with automatic retry on vLLM engine crash
+                    max_rollout_retries = int(os.environ.get("MAX_ROLLOUT_RETRIES", "3"))
+                    gen_batch_output_per_policy = None
+                    for _rollout_attempt in range(max_rollout_retries):
                         try:
-                            # Get the vLLM inference engine from rollout engine
-                            inference_engine = getattr(rollout_engine, 'inference_engine', None)
-                            if inference_engine is not None and hasattr(inference_engine, 'reset_prefix_cache'):
-                                # Reset prefix cache to free all KV cache blocks
+                            if _rollout_attempt > 0:
+                                print(f"[ROLLOUT RETRY] Attempt {_rollout_attempt + 1}/{max_rollout_retries} after engine crash")
+                                # Re-init envs for retry (data may need refresh)
+                                self.agent_execution_engine.init_agents_and_envs(mode="train", step_idx=self.global_steps)
+
+                            # CRITICAL: Always wake_up before use and sleep after use to maintain strict pairing
+                            for model_name, rollout_engine in self.rollout_engine_dict.items():
+                                rollout_engine.wake_up()
+
+                            # Sync any pending LoRA updates to vLLM AFTER wake_up
+                            if self.lora_differ_mode and self.global_steps >= 1:
+                                self.use_lora_for_generation = True
+                                self.agent_execution_engine.use_lora_for_generation = True
+
+                            gen_batch_output_per_policy = asyncio.run(
+                                self.agent_execution_engine.generate_multiple_rollouts_concurrent(
+                                    self.agent_execution_engine.env_idx_list,
+                                    rollout_mode=self.config.get("rollout_mode", "tree")
+                                )
+                            )
+
+                            # Reset prefix cache before sleep
+                            print(f"[DEBUG] Resetting prefix cache to free KV blocks before sleep...")
+                            for model_name, rollout_engine in self.rollout_engine_dict.items():
                                 try:
-                                    loop = asyncio.get_event_loop()
-                                    if loop.is_running():
-                                        import concurrent.futures
-                                        with concurrent.futures.ThreadPoolExecutor() as executor:
-                                            future = executor.submit(asyncio.run, inference_engine.reset_prefix_cache())
-                                            future.result(timeout=10)
-                                    else:
-                                        loop.run_until_complete(inference_engine.reset_prefix_cache())
-                                    print(f"[DEBUG] Successfully reset prefix cache for {model_name}")
+                                    inference_engine = getattr(rollout_engine, 'inference_engine', None)
+                                    if inference_engine is not None and hasattr(inference_engine, 'reset_prefix_cache'):
+                                        try:
+                                            loop = asyncio.get_event_loop()
+                                            if loop.is_running():
+                                                import concurrent.futures
+                                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                                    future = executor.submit(asyncio.run, inference_engine.reset_prefix_cache())
+                                                    future.result(timeout=10)
+                                            else:
+                                                loop.run_until_complete(inference_engine.reset_prefix_cache())
+                                            print(f"[DEBUG] Successfully reset prefix cache for {model_name}")
+                                        except Exception as e:
+                                            print(f"[WARNING] Failed to reset prefix cache for {model_name}: {e}")
                                 except Exception as e:
-                                    print(f"[WARNING] Failed to reset prefix cache for {model_name}: {e}")
-                        except Exception as e:
-                            print(f"[WARNING] Error accessing inference engine for {model_name}: {e}")
+                                    print(f"[WARNING] Error accessing inference engine for {model_name}: {e}")
 
-                    # Always sleep after trajectory collection to maintain strict pairing
-                    for model_name,rollout_engine in self.rollout_engine_dict.items():
-                        try:
-                            rollout_engine.sleep()
-                        except Exception as e:
-                            logger.warning(f"[WARNING] rollout_engine.sleep() failed for {model_name}: {e}. Engine may have crashed during rollout; will attempt reinit on next wake_up().")
+                            # Sleep after successful trajectory collection
+                            for model_name, rollout_engine in self.rollout_engine_dict.items():
+                                try:
+                                    rollout_engine.sleep()
+                                except Exception as e:
+                                    pprint(f"[WARNING] rollout_engine.sleep() failed for {model_name}: {e}.")
+
+                            # Rollout succeeded, break retry loop
+                            break
+
+                        except Exception as rollout_err:
+                            print(f"[ROLLOUT CRASH] Step {self.global_steps}, attempt {_rollout_attempt + 1}/{max_rollout_retries}: {type(rollout_err).__name__}: {rollout_err}")
+                            import traceback
+                            traceback.print_exc()
+
+                            # Force sleep to mark engine as dead (triggers reinit on next wake_up)
+                            for model_name, rollout_engine in self.rollout_engine_dict.items():
+                                try:
+                                    rollout_engine.sleep()
+                                except Exception:
+                                    pass
+
+                            # Cleanup GPU memory before retry
+                            import gc
+                            gc.collect()
+                            torch.cuda.empty_cache()
+
+                            if _rollout_attempt >= max_rollout_retries - 1:
+                                print(f"[ROLLOUT FATAL] All {max_rollout_retries} attempts failed at step {self.global_steps}. Raising.")
+                                raise
+
+                            print(f"[ROLLOUT RETRY] Waiting 10s before retry to let GPU state settle...")
+                            import time
+                            time.sleep(10)
+
+                    if gen_batch_output_per_policy is None:
+                        print(f"[ROLLOUT SKIP] Step {self.global_steps} produced no output, skipping to next step.")
+                        self.global_steps += 1
+                        continue
 
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         dp_world_size = trainer.actor_rollout_wg.world_size

@@ -18,7 +18,9 @@ export NCCL_DEBUG=WARN
 export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
 export NCCL_NVLS_ENABLE=0
 export MAX_ROLLOUT_CONCURRENCY=16
-export VLLM_ENABLE_V1_MULTIPROCESSING=0      
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export VLLM_CUDAGRAPH_MODE=piecewise
+export MAX_ROLLOUT_RETRIES=3
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
     # Try to find CUDA in conda env
@@ -67,10 +69,10 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mix_8design_8execution_5e_6_traindifflr_amazon\
+    training.experiment_name=autoeval_mix_4design_8execution_5e_6_traindifflr_amazon\
     training.total_training_steps=400\
     training.train_batch_size=8\
-    training.design_sample_num=8\
+    training.design_sample_num=4\
     training.execute_sample_num=8\
     training.validate_sample_num=1\
     training.max_prompt_length=4096\

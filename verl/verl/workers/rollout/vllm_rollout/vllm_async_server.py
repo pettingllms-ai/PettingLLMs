@@ -184,6 +184,17 @@ class AsyncvLLMServer(AsyncServerBase):
                 "max_lora_rank": config.get("max_lora_rank", 64),
             }
         
+        # Use piecewise CUDA graph mode if env var is set, to avoid illegal memory access on H200/B200
+        # See: https://github.com/vllm-project/vllm/issues/23724
+        cudagraph_mode = os.environ.get("VLLM_CUDAGRAPH_MODE", "")
+        compilation_kwargs = {}
+        if cudagraph_mode.lower() == "piecewise":
+            from vllm.config import CompilationConfig
+            compilation_kwargs["compilation_config"] = CompilationConfig(
+                cudagraph_capture_sizes=[1, 2, 4, 8, 16, 24, 32],
+            )
+            print(f"[vLLM] Using PIECEWISE CUDA graph mode to avoid H200 crash")
+
         engine_args = AsyncEngineArgs(
             model=local_path,
             enable_sleep_mode=True,
@@ -208,6 +219,7 @@ class AsyncvLLMServer(AsyncServerBase):
             swap_space=0,  # Disable CPU swap to prevent system RAM OOM during KV preemption
             hf_overrides={"max_position_embeddings": max_model_len},
             **lora_kwargs,
+            **compilation_kwargs,
         )
 
         # init async llm engine
