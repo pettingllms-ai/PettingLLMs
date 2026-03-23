@@ -64,13 +64,14 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # autoeval_mixcoldstart_4design_8execution_4gpu
 # train data: designer_only, executor_only, all
 # Mercury7353/masrl_0228_mix_coldstart 
+#
 # /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mix_8design_4execution_5e_6_traindifflr\
+    training.experiment_name=autoeval_mix_8design_4execution_5e_6_traindifflr_amazon\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=8\
