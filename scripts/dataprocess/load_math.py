@@ -173,8 +173,8 @@ def main():
     print(f"Using split for aime-1983-2024: {aime_past_split} (as train)")
     aime_past_std = standardize_hf_dataset(
         aime_past_ds,
-        ["problem", "question", "prompt", "Problem"],
-        ["answer", "Answer", "final_answer", "solution", "Solution"],
+        ["Question", "problem", "question", "prompt", "Problem"],
+        ["Answer", "answer", "final_answer", "solution", "Solution"],
     )
     aime_past_path = out_train_dir / "aime_past.parquet"
     aime_past_std.to_parquet(str(aime_past_path))
