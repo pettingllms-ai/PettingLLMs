@@ -210,7 +210,7 @@ print(f"[DEBUG] mas.py: tokenizer_path type = {{type(_tokenizer_path)}}")
 
 # Create AIClient with verl integration
 _server_addr = "{server_address}"
-_api_base = _server_addr if _server_addr.startswith('http') else f"http://{{{{_server_addr}}}}"
+_api_base = _server_addr if _server_addr.startswith('http') else ("http://" + _server_addr)
 print(f"[AICLIENT SETUP] Creating AIClient with:")
 print(f"[AICLIENT SETUP]   server_address = {{_server_addr}}")
 print(f"[AICLIENT SETUP]   model_name = {{'{model_name or 'default'}'}}")
@@ -280,6 +280,9 @@ except Exception as e:
         final_answer = ""
         reward = 0.0
         designer_reward = 0.0
+        correctness_reward = 0.0
+        delivery_reward = 0.0
+        solution_reward = 0.0
 
         try:
             # Use Ray worker for execution (better resource management)
@@ -839,7 +842,7 @@ print(f"[DEBUG] mas.py: tokenizer_path type = {{type(_tokenizer_path)}}")
 
 # Create AIClient with verl integration
 _server_addr = "{server_address}"
-_api_base = _server_addr if _server_addr.startswith('http') else f"http://{{{{_server_addr}}}}"
+_api_base = _server_addr if _server_addr.startswith('http') else ("http://" + _server_addr)
 ai_client = AIClient(
     api_base=_api_base,
     api_key="dummy",
@@ -901,6 +904,9 @@ except Exception as e:
         final_answer = ""
         reward = 0.0
         designer_reward = 0.0
+        correctness_reward = 0.0
+        delivery_reward = 0.0
+        solution_reward = 0.0
 
         try:
             # Use Ray worker for execution (better resource management)

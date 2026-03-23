@@ -70,7 +70,7 @@ class MultiAgentsExecutionEngineAutoEvol:
         # Multi-modal support configuration
         self.enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
         # Concurrency tuning parameters
-        self.mas_concurrency = getattr(self.config.training, 'mas_concurrency', 10)
+        self.mas_concurrency = getattr(self.config.training, 'mas_concurrency', 8)
         self.llm_max_concurrent = getattr(self.config.training, 'llm_max_concurrent', 20)
           
         
