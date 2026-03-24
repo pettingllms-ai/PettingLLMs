@@ -94,8 +94,12 @@ class MultiAgentsPPOTrainer:
         # Separate learning rates for designer vs executor
         self.designer_lr = getattr(config.training, 'designer_lr', None) if hasattr(config, 'training') else None
         self.executor_lr = getattr(config.training, 'executor_lr', None) if hasattr(config, 'training') else None
+        # LR alternating: swap designer/executor LR every N steps
+        self.lr_alternate_steps = int(getattr(config.training, 'lr_alternate_steps', 0)) if hasattr(config, 'training') else 0
         if self.designer_lr is not None and self.executor_lr is not None:
             colorful_print(f"Separate LRs enabled: designer_lr={self.designer_lr}, executor_lr={self.executor_lr}", "yellow")
+            if self.lr_alternate_steps > 0:
+                colorful_print(f"LR alternating every {self.lr_alternate_steps} steps", "yellow")
         else:
             colorful_print(f"Using shared LR for all agents", "yellow")
 
@@ -610,10 +614,24 @@ class MultiAgentsPPOTrainer:
                             dp_world_size = 1
                         if dp_world_size > 1:
                             sub_batch, _ = pad_dataproto_to_divisor(sub_batch, dp_world_size)
-                        override_lr = self.designer_lr if agent_name == "Designer" else self.executor_lr
+                        # Determine effective LR (with optional alternating)
+                        if self.lr_alternate_steps > 0:
+                            phase = (self.global_steps // self.lr_alternate_steps) % 2
+                            if phase == 0:
+                                # Designer-focused phase
+                                effective_designer_lr = self.designer_lr
+                                effective_executor_lr = self.executor_lr
+                            else:
+                                # Executor-focused phase: swap LRs
+                                effective_designer_lr = self.executor_lr
+                                effective_executor_lr = self.designer_lr
+                            override_lr = effective_designer_lr if agent_name == "Designer" else effective_executor_lr
+                        else:
+                            override_lr = self.designer_lr if agent_name == "Designer" else self.executor_lr
                         sub_batch.meta_info["override_lr"] = override_lr
                         agent_batch_list.append((agent_name, sub_batch))
-                        colorful_print(f"Using {'designer' if agent_name == 'Designer' else 'executor'}_lr={override_lr} for {agent_name} ({len(agent_indices)} samples)", "cyan")
+                        phase_str = f" [phase={'designer' if self.lr_alternate_steps == 0 or (self.global_steps // self.lr_alternate_steps) % 2 == 0 else 'executor'}-focused]" if self.lr_alternate_steps > 0 else ""
+                        colorful_print(f"Using lr={override_lr} for {agent_name} ({len(agent_indices)} samples){phase_str}", "cyan")
 
                     # Only step LR scheduler on the last sub-batch
                     for i, (agent_name, sub_batch) in enumerate(agent_batch_list):
@@ -1524,8 +1542,13 @@ class MultiAgentsPPOTrainer:
                     # Designer: same problem's all designs share one GRPO group
                     key = (base_env, 0, 0)
                 else:
-                    # Executor: same design's executions share one GRPO group
-                    key = (base_env, int(design_indices[i]), 1)
+                    if execute_sample_num is not None and execute_sample_num <= 2:
+                        # Small execute_sample_num: group all executors per problem
+                        # for more stable GRPO signal (group size = N * M)
+                        key = (base_env, 0, 1)
+                    else:
+                        # Executor: same design's executions share one GRPO group
+                        key = (base_env, int(design_indices[i]), 1)
             else:
                 key = (rollout_indices[i]//sample_num, turn_indices[i], agent_indices[i])
             if key not in uid_mapping:

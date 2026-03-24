@@ -16,7 +16,6 @@ print((df['question'].str.len() == 0).sum())
     fi
 fi
 
-# 复制 cudart 到本地 /tmp 避免 AFS 缓存问题
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -61,28 +60,21 @@ if [ -n "$CUDA_HOME" ]; then
     [ -d "$CUDA_HOME/lib64" ] && export LD_LIBRARY_PATH=$CUDA_HOME/lib64:${LD_LIBRARY_PATH}
 fi
 
-# select gpus 
+# select gpus
 GPU_num=8
 
 
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-1854
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838 # this is 0206 no tool
-# Mercury7353/masrlnothink0128
-# Mercury7353/masrl0206_notool
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968
-# autoeval_mixcoldstart_4design_8execution_4gpu
-# train data: designer_only, executor_only, all
-# Mercury7353/masrl_0228_mix_coldstart 
-# /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
+# Baseline: 8x2 sampling, fixed LR (no alternating)
+# Compare with train_design_tree.sh which uses lr_alternate_steps=10
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_8design_2exe_alternate_lr10\
+    training.experiment_name=autoeval_8x2_fixed_lr_baseline\
     training.total_training_steps=400\
     training.train_batch_size=8\
     training.design_sample_num=8\
@@ -95,7 +87,6 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.train_data_mode=all\
     training.designer_lr=5e-6\
     training.executor_lr=1e-6\
-    training.lr_alternate_steps=10\
     env.name=mixed_env\
     env.dataset_code=code_contests\
     env.benchmark_code=code_contests\
@@ -110,7 +101,3 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
-
-
-# +$model_0_config_path.actor.clip_ratio_low=0.15\
-#    +$model_0_config_path.actor.clip_ratio_high=0.28\
