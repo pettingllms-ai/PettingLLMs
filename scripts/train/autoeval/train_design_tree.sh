@@ -85,8 +85,8 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.experiment_name=autoeval_mixcoldstart_4design_8execution_5e_6_trainall_aimepast\
     training.total_training_steps=400\
     training.train_batch_size=8\
-    training.design_sample_num=4\
-    training.execute_sample_num=8\
+    training.design_sample_num=8\
+    training.execute_sample_num=1\
     training.validate_sample_num=1\
     training.max_prompt_length=4096\
     training.max_response_length=8192\

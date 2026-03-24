@@ -1,20 +1,5 @@
 set -x
 
-# === Auto-fix: regenerate datasets if aime_past has empty questions ===
-SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-AIME_PARQUET="$SCRIPT_DIR/data/math/train/aime_past.parquet"
-if [ -f "$AIME_PARQUET" ]; then
-    EMPTY_Q=$(python3 -c "
-import pandas as pd
-df = pd.read_parquet('$AIME_PARQUET')
-print((df['question'].str.len() == 0).sum())
-" 2>/dev/null)
-    if [ "$EMPTY_Q" -gt 0 ] 2>/dev/null; then
-        echo "[AUTO-FIX] aime_past.parquet has $EMPTY_Q empty questions, regenerating..."
-        python3 "$SCRIPT_DIR/scripts/dataprocess/load_math.py"
-        echo "[AUTO-FIX] Done."
-    fi
-fi
 
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
