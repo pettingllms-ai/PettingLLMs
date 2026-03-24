@@ -76,7 +76,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.val_freq=10\
     training.save_freq=10\
     training.train_data_mode=all\
-    'env.dataset=[polaris,aime_past]'\
+    'env.dataset=[polaris]'\
     'env.benchmark=[AIME24,AIME25]'\
     $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size=null\

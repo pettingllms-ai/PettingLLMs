@@ -126,6 +126,13 @@ class MixedEnvBatch:
             code_problems = load_problem_batch(
                 [], mode="validate", benchmark_name=benchmark_code,
             )
+            # Cap code validation to 30 problems to save time
+            max_code_val = int(getattr(env_cfg, "max_code_val", 30))
+            if len(code_problems) > max_code_val:
+                import random as _rnd
+                orig_count = len(code_problems)
+                code_problems = _rnd.sample(code_problems, max_code_val)
+                print(f"[MixedEnvBatch] Sampled {max_code_val} code problems for validation (from {orig_count})")
 
             all_problems = []
             for p in math_problems:
