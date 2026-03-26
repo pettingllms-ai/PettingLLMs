@@ -848,7 +848,8 @@ class MultiAgentsPPOTrainer:
                             # Cleanup GPU memory before retry
                             import gc
                             gc.collect()
-                            torch.cuda.empty_cache()
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
 
                             if _rollout_attempt >= max_rollout_retries - 1:
                                 print(f"[ROLLOUT FATAL] All {max_rollout_retries} attempts failed at step {self.global_steps}. Raising.")
@@ -881,17 +882,9 @@ class MultiAgentsPPOTrainer:
                 del gen_batch_output_per_policy
                 import gc
                 gc.collect()
-                torch.cuda.empty_cache()
-
-                # Flush any async CUDA errors from rollout before proceeding to
-                # FSDP compute_log_prob.  Without this, a FlashInfer kernel error
-                # during vLLM generation is only detected much later (at the next
-                # CUDA sync inside data.to(device)), giving misleading tracebacks.
-                try:
-                    torch.cuda.synchronize()
-                except RuntimeError as cuda_err:
-                    print(f"[CUDA SYNC] Async CUDA error detected after rollout at step {self.global_steps}: {cuda_err}")
-                    raise
+                # Note: torch.cuda.empty_cache() not called here because the
+                # coordinator process may not have CUDA access (GPU work runs
+                # in Ray worker processes)
 
                 timing_raw = {}
                 with simple_timer("update_parameters", timing_raw):
@@ -1251,7 +1244,8 @@ class MultiAgentsPPOTrainer:
                 batch_per_trainer = {}
                 import gc
                 gc.collect()
-                torch.cuda.empty_cache()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
                 val_metrics = self._validate(global_steps=self.global_steps)
                 metrics.update(val_metrics)
                 agent_summary = {}
@@ -1270,12 +1264,8 @@ class MultiAgentsPPOTrainer:
                 save_base = self.config.specialization != "lora"
                 for trainer in self.ppo_trainer_dict.values():
                     trainer._save_checkpoint(save_base=save_base)
-                # Sync CUDA after checkpoint save to ensure FSDP2 state is consistent
-                # before the next step's wake_up() allocates KV cache
-                torch.cuda.synchronize()
                 import gc
                 gc.collect()
-                torch.cuda.empty_cache()
 
             # Debug: show all metric keys being logged
             reward_keys = [k for k in metrics.keys() if 'reward_by_agent' in k or 'tree_design' in k]
@@ -1293,7 +1283,8 @@ class MultiAgentsPPOTrainer:
             batch_per_trainer = {}
             import gc
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             # Clean up old image folders if multimodal is enabled
             enable_multimodal = getattr(self.config.training, 'enable_multimodal', False)
@@ -1422,7 +1413,8 @@ class MultiAgentsPPOTrainer:
             # Cleanup between benchmarks to prevent OOM
             import gc
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Save checkpoint based on best env_success_rate across all benchmarks
         if global_steps > 0:
@@ -1465,7 +1457,8 @@ class MultiAgentsPPOTrainer:
         del gen_batch_output_per_policy
         import gc
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         # Calculate success metrics from env state
         total_rollout_num = len(self.agent_execution_engine.rollout_idx_list)

@@ -1,6 +1,7 @@
 set -x
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # Auto-install flashinfer if missing (avoids TMA descriptor crash on Hopper GPUs)
+# Also verify ninja is available for FlashInfer JIT compilation
 if ! python3 -c "import flashinfer" 2>/dev/null; then
     echo "[INFO] flashinfer not found, installing flashinfer-python..."
     pip install flashinfer-python 2>&1 | tail -3
@@ -13,6 +14,23 @@ if ! python3 -c "import flashinfer" 2>/dev/null; then
     fi
 else
     export VLLM_ATTENTION_BACKEND=FLASHINFER
+fi
+
+# FlashInfer JIT requires ninja for kernel compilation — install if missing
+if [ "$VLLM_ATTENTION_BACKEND" = "FLASHINFER" ]; then
+    if ! command -v ninja &>/dev/null; then
+        echo "[INFO] ninja not found, installing for FlashInfer JIT..."
+        pip install ninja 2>&1 | tail -3
+        if ! command -v ninja &>/dev/null; then
+            echo "[WARN] ninja install failed, falling back to FLASH_ATTN backend"
+            export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+        fi
+    fi
+    # Clear stale FlashInfer JIT cache that may reference wrong environment paths
+    if [ -d "/root/.cache/flashinfer" ]; then
+        echo "[INFO] Clearing stale FlashInfer JIT cache at /root/.cache/flashinfer"
+        rm -rf /root/.cache/flashinfer
+    fi
 fi
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"

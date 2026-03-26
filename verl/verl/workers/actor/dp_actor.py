@@ -527,7 +527,9 @@ class DataParallelPPOActor(BasePPOActor):
                     loss_agg_mode = self.config.loss_agg_mode
 
                     # all return: (bsz, response_length)
-                    calculate_entropy = True
+                    # Skip entropy computation when entropy_coeff is 0 to save GPU memory
+                    # (entropy_from_logits materializes a full vocab-sized tensor)
+                    calculate_entropy = entropy_coeff != 0
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature, calculate_entropy=calculate_entropy)
 
                     pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
@@ -541,16 +543,20 @@ class DataParallelPPOActor(BasePPOActor):
                         clip_ratio_c=clip_ratio_c,
                         loss_agg_mode=loss_agg_mode,
                     )
-                    if entropy_coeff == 0:
-                        loss_agg_mode_entropy = 'token-mean'
+                    if entropy is not None:
+                        if entropy_coeff == 0:
+                            loss_agg_mode_entropy = 'token-mean'
+                        else:
+                            loss_agg_mode_entropy = loss_agg_mode
+                        entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode_entropy)
+                        with torch.no_grad():
+                            entropy_token_mean_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode='token-mean')
                     else:
-                        loss_agg_mode_entropy = loss_agg_mode
-                    entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode_entropy)
-                    with torch.no_grad():
-                        entropy_token_mean_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode='token-mean')
+                        entropy_loss = torch.tensor(0.0, device=pg_loss.device)
+                        entropy_token_mean_loss = torch.tensor(0.0, device=pg_loss.device)
 
                     # compute policy loss
-                    if entropy_coeff != 0:
+                    if entropy_coeff != 0 and entropy is not None:
                         policy_loss = pg_loss - entropy_loss * entropy_coeff
                     else:
                         policy_loss = pg_loss
