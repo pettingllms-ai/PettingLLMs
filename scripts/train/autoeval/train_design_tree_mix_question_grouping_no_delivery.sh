@@ -1,6 +1,19 @@
 set -x
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+# Auto-install flashinfer if missing (avoids TMA descriptor crash on Hopper GPUs)
+if ! python3 -c "import flashinfer" 2>/dev/null; then
+    echo "[INFO] flashinfer not found, installing flashinfer-python..."
+    pip install flashinfer-python 2>&1 | tail -3
+    if ! python3 -c "import flashinfer" 2>/dev/null; then
+        echo "[WARN] flashinfer install failed, falling back to FLASH_ATTN backend"
+        export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+    else
+        echo "[INFO] flashinfer installed successfully"
+        export VLLM_ATTENTION_BACKEND=FLASHINFER
+    fi
+else
+    export VLLM_ATTENTION_BACKEND=FLASHINFER
+fi
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
