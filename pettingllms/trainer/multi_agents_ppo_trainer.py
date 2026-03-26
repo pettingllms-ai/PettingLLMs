@@ -883,6 +883,16 @@ class MultiAgentsPPOTrainer:
                 gc.collect()
                 torch.cuda.empty_cache()
 
+                # Flush any async CUDA errors from rollout before proceeding to
+                # FSDP compute_log_prob.  Without this, a FlashInfer kernel error
+                # during vLLM generation is only detected much later (at the next
+                # CUDA sync inside data.to(device)), giving misleading tracebacks.
+                try:
+                    torch.cuda.synchronize()
+                except RuntimeError as cuda_err:
+                    print(f"[CUDA SYNC] Async CUDA error detected after rollout at step {self.global_steps}: {cuda_err}")
+                    raise
+
                 timing_raw = {}
                 with simple_timer("update_parameters", timing_raw):
                     # Apply UID assignment and filtering for each model
@@ -1260,6 +1270,12 @@ class MultiAgentsPPOTrainer:
                 save_base = self.config.specialization != "lora"
                 for trainer in self.ppo_trainer_dict.values():
                     trainer._save_checkpoint(save_base=save_base)
+                # Sync CUDA after checkpoint save to ensure FSDP2 state is consistent
+                # before the next step's wake_up() allocates KV cache
+                torch.cuda.synchronize()
+                import gc
+                gc.collect()
+                torch.cuda.empty_cache()
 
             # Debug: show all metric keys being logged
             reward_keys = [k for k in metrics.keys() if 'reward_by_agent' in k or 'tree_design' in k]
@@ -1569,7 +1585,9 @@ class MultiAgentsPPOTrainer:
             if rollout_mode == "no_tree":
                 key = (rollout_indices[i],)
             elif use_tree_grouping:
-                base_env = rollout_indices[i] // sample_num
+                # In tree design mode, env_idx IS the problem index (0..n_problems-1).
+                # Do NOT divide by sample_num — that formula is for rollout indices.
+                base_env = int(rollout_indices[i])
                 if agent_indices[i] == 0:
                     # Designer: same problem's all designs share one GRPO group
                     key = (base_env, 0, 0)

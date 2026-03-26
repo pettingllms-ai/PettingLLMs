@@ -1266,15 +1266,14 @@ class ActorRolloutRefWorker(Worker):
                         import traceback
                         traceback.print_exc()
         else:
-            cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(self.actor.actor_module, StateDictType.FULL_STATE_DICT, cfg):
-                state_dict = self.actor.actor_module.state_dict()
+            # Skip redundant FULL_STATE_DICT save for non-LoRA training.
+            # checkpoint_manager.save_checkpoint() already saved the model above.
+            # The FULL_STATE_DICT gather is expensive and can leave FSDP2 (with
+            # offload_policy) in an inconsistent state, causing CUDA errors on
+            # the next training step.
             if dist.get_rank() == 0:
-                full_checkpoint_local_path=f'{local_path}/checkpoint'
-                os.makedirs(full_checkpoint_local_path, exist_ok=True)
-                self.actor_module.save_pretrained(full_checkpoint_local_path, state_dict=state_dict)
-                self.tokenizer.save_pretrained(full_checkpoint_local_path)
-        
+                print(f"[rank-{self.rank}]: Skipping redundant HF save (checkpoint_manager already saved)")
+
         dist.barrier()
 
         if self._is_offload_param:
