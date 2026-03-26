@@ -351,28 +351,29 @@ except Exception as e:
             delivery_reward = 0.0
             solution_reward = 0.0
 
-            # Delivery reward: +0.1 if agent used <delivery>...</delivery> tags
+            # Delivery reward: +0.4 if agent used <delivery>...</delivery> tags
+            _disable_delivery = _os.environ.get("DISABLE_DELIVERY_REWARD", "0") == "1"
             has_delivery_tag = bool(_re.search(r'<delivery>.*?</delivery>', output_text, _re.DOTALL))
-            if has_delivery_tag:
-                delivery_reward = 0.1
+            if has_delivery_tag and not _disable_delivery:
+                delivery_reward = 0.4
 
             if is_code_task:
-                # Solution reward: +0.3 if <solution> present AND parseable Python
+                # Solution reward: +1.0 if <solution> present AND parseable Python
                 has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
                 if has_solution_tag:
                     _code = (extracted_code or '').strip()
                     try:
                         _ast.parse(_code)
-                        solution_reward = 0.3 if len(_code) >= 10 else 0.0
+                        solution_reward = 0.4 if len(_code) >= 10 else 0.0
                     except SyntaxError:
                         solution_reward = 0.0
             else:
-                # Solution reward: +0.1 if model used \boxed{} (math only)
+                # Solution reward: +1.0 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
                 )) if final_answer.strip() else True
-                solution_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+                solution_reward = 0.4 if (has_boxed and not _is_placeholder) else 0.0
 
             format_reward = delivery_reward + solution_reward
 
@@ -975,28 +976,29 @@ except Exception as e:
             delivery_reward = 0.0
             solution_reward = 0.0
 
-            # Delivery reward: +0.1 if agent used <delivery>...</delivery> tags
+            # Delivery reward: +0.4 if agent used <delivery>...</delivery> tags
+            _disable_delivery = _os.environ.get("DISABLE_DELIVERY_REWARD", "0") == "1"
             has_delivery_tag = bool(_re.search(r'<delivery>.*?</delivery>', output_text, _re.DOTALL))
-            if has_delivery_tag:
-                delivery_reward = 0.1
+            if has_delivery_tag and not _disable_delivery:
+                delivery_reward = 0.4
 
             if is_code_task:
-                # Solution reward: +0.3 if <solution> present AND parseable Python
+                # Solution reward: +1.0 if <solution> present AND parseable Python
                 has_solution_tag = bool(_re.search(r'<solution>.*?</solution>', output_text, _re.DOTALL))
                 if has_solution_tag:
                     _code = (extracted_code or '').strip()
                     try:
                         _ast.parse(_code)
-                        solution_reward = 0.3 if len(_code) >= 10 else 0.0
+                        solution_reward = 0.4 if len(_code) >= 10 else 0.0
                     except SyntaxError:
                         solution_reward = 0.0
             else:
-                # Solution reward: +0.1 if model used \boxed{} (math only)
+                # Solution reward: +1.0 if model used \boxed{} (math only)
                 has_boxed = '\\boxed{' in output_text
                 _is_placeholder = bool(_re.match(
                     r'^[\{\}]*[a-zA-Z_][a-zA-Z_0-9]*[\{\}]*$', final_answer.strip()
                 )) if final_answer.strip() else True
-                solution_reward = 0.1 if (has_boxed and not _is_placeholder) else 0.0
+                solution_reward = 0.4 if (has_boxed and not _is_placeholder) else 0.0
 
             format_reward = delivery_reward + solution_reward
 

@@ -820,28 +820,10 @@ class MultiAgentsPPOTrainer:
                                 )
                             )
 
-                            # Reset prefix cache before sleep
-                            print(f"[DEBUG] Resetting prefix cache to free KV blocks before sleep...")
-                            for model_name, rollout_engine in self.rollout_engine_dict.items():
-                                try:
-                                    inference_engine = getattr(rollout_engine, 'inference_engine', None)
-                                    if inference_engine is not None and hasattr(inference_engine, 'reset_prefix_cache'):
-                                        try:
-                                            loop = asyncio.get_event_loop()
-                                            if loop.is_running():
-                                                import concurrent.futures
-                                                with concurrent.futures.ThreadPoolExecutor() as executor:
-                                                    future = executor.submit(asyncio.run, inference_engine.reset_prefix_cache())
-                                                    future.result(timeout=10)
-                                            else:
-                                                loop.run_until_complete(inference_engine.reset_prefix_cache())
-                                            print(f"[DEBUG] Successfully reset prefix cache for {model_name}")
-                                        except Exception as e:
-                                            print(f"[WARNING] Failed to reset prefix cache for {model_name}: {e}")
-                                except Exception as e:
-                                    print(f"[WARNING] Error accessing inference engine for {model_name}: {e}")
-
                             # Sleep after successful trajectory collection
+                            # Note: reset_prefix_cache is handled inside sleep() by the async server
+                            # Do NOT call reset_prefix_cache separately — it corrupts vLLM state
+                            # when called from a different thread/event loop
                             for model_name, rollout_engine in self.rollout_engine_dict.items():
                                 try:
                                     rollout_engine.sleep()
@@ -914,6 +896,7 @@ class MultiAgentsPPOTrainer:
                         if model_name in batch_per_trainer and batch_per_trainer[model_name].batch is not None:
                             filter_ratio = getattr(trainer.config, 'filter_ratio', 0.0)
                             filter_method = getattr(trainer.config, 'filter_method', 'uid')
+                            executor_group_mode = getattr(self.config.training, 'executor_group_mode', None)
                             batch_per_trainer[model_name] = self._assign_consistent_uids(
                                 batch_per_trainer[model_name],
                                 filter_ratio=filter_ratio,
@@ -922,6 +905,7 @@ class MultiAgentsPPOTrainer:
                                 rollout_mode=self.config.get("rollout_mode","tree"),
                                 design_sample_num=design_sample_num,
                                 execute_sample_num=execute_sample_num,
+                                executor_group_mode=executor_group_mode,
                             )
 
                     import sys
@@ -1059,6 +1043,34 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/count"] = len(rews)
                         metrics[f"{model_name}/reward_by_agent/{agent_name}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
 
+                # Per-agent response length breakdown (Designer vs WorkflowAgent/Executor)
+                if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'agent_name' in batch.non_tensor_batch:
+                    try:
+                        max_resp_len = batch.batch["responses"].shape[-1]
+                        resp_mask = batch.batch["attention_mask"][:, -max_resp_len:].bool()
+                        resp_lengths = resp_mask.sum(-1).float().cpu().numpy()
+                        prompt_mask_all = batch.batch["attention_mask"][:, :-max_resp_len].bool()
+                        prompt_lengths = prompt_mask_all.sum(-1).float().cpu().numpy()
+                        agent_names_rl = batch.non_tensor_batch['agent_name']
+                        from collections import defaultdict as _dd_rl
+                        agent_resp_lens = _dd_rl(list)
+                        agent_prompt_lens = _dd_rl(list)
+                        for i, name in enumerate(agent_names_rl):
+                            agent_resp_lens[name].append(resp_lengths[i])
+                            agent_prompt_lens[name].append(prompt_lengths[i])
+                        for agent_name, lens in agent_resp_lens.items():
+                            arr = np.array(lens)
+                            metrics[f"{model_name}/response_length_by_agent/{agent_name}/mean"] = float(np.mean(arr))
+                            metrics[f"{model_name}/response_length_by_agent/{agent_name}/max"] = float(np.max(arr))
+                            metrics[f"{model_name}/response_length_by_agent/{agent_name}/min"] = float(np.min(arr))
+                            metrics[f"{model_name}/response_length_by_agent/{agent_name}/clip_ratio"] = float(np.mean(arr >= max_resp_len))
+                        for agent_name, lens in agent_prompt_lens.items():
+                            arr = np.array(lens)
+                            metrics[f"{model_name}/prompt_length_by_agent/{agent_name}/mean"] = float(np.mean(arr))
+                            metrics[f"{model_name}/prompt_length_by_agent/{agent_name}/max"] = float(np.max(arr))
+                    except Exception as e:
+                        print(f"[METRICS WARNING] per-agent response_length failed for {model_name}: {e}")
+
                 # Reward component breakdown (correctness / delivery / solution)
                 if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None:
                     for reward_component in ['correctness_reward', 'delivery_reward', 'solution_reward']:
@@ -1092,6 +1104,26 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_type/{ttype}/mean"] = float(np.mean(rews_arr))
                         metrics[f"{model_name}/reward_by_type/{ttype}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
                         metrics[f"{model_name}/reward_by_type/{ttype}/count"] = len(rews)
+
+                # Per-task-type response length breakdown (code vs math)
+                if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'task_type' in batch.non_tensor_batch:
+                    try:
+                        max_resp_len = batch.batch["responses"].shape[-1]
+                        resp_mask = batch.batch["attention_mask"][:, -max_resp_len:].bool()
+                        resp_lengths = resp_mask.sum(-1).float().cpu().numpy()
+                        task_types_rl = batch.non_tensor_batch['task_type']
+                        from collections import defaultdict as _dd_trl
+                        type_resp_lens = _dd_trl(list)
+                        for i, tt in enumerate(task_types_rl):
+                            type_resp_lens[str(tt)].append(resp_lengths[i])
+                        for ttype, lens in type_resp_lens.items():
+                            arr = np.array(lens)
+                            metrics[f"{model_name}/response_length_by_type/{ttype}/mean"] = float(np.mean(arr))
+                            metrics[f"{model_name}/response_length_by_type/{ttype}/max"] = float(np.max(arr))
+                            metrics[f"{model_name}/response_length_by_type/{ttype}/clip_ratio"] = float(np.mean(arr >= max_resp_len))
+                            metrics[f"{model_name}/response_length_by_type/{ttype}/count"] = len(lens)
+                    except Exception as e:
+                        print(f"[METRICS WARNING] per-type response_length failed for {model_name}: {e}")
 
                 # Tree design-specific metrics
                 design_sample_num = getattr(self.config.training, 'design_sample_num', None)
@@ -1484,7 +1516,7 @@ class MultiAgentsPPOTrainer:
         return batch
     
     def _assign_consistent_uids(self, data_proto, filter_ratio=0.0, mode="mean", sample_num=1, rollout_mode="tree",
-                                design_sample_num=None, execute_sample_num=None):
+                                design_sample_num=None, execute_sample_num=None, executor_group_mode=None):
         """
         Assign consistent UIDs to data and optionally filter based on rewards.
 
@@ -1542,12 +1574,17 @@ class MultiAgentsPPOTrainer:
                     # Designer: same problem's all designs share one GRPO group
                     key = (base_env, 0, 0)
                 else:
-                    if execute_sample_num is not None and execute_sample_num <= 2:
-                        # Small execute_sample_num: group all executors per problem
-                        # for more stable GRPO signal (group size = N * M)
+                    # executor_group_mode controls grouping:
+                    #   "question" = all executors per problem share one GRPO group (group size = N * M)
+                    #   "design"   = executors from the same design share one GRPO group (group size = M)
+                    #   None/auto  = auto: question if execute_sample_num <= 2, else design
+                    if executor_group_mode == "question":
+                        key = (base_env, 0, 1)
+                    elif executor_group_mode == "design":
+                        key = (base_env, int(design_indices[i]), 1)
+                    elif execute_sample_num is not None and execute_sample_num <= 2:
                         key = (base_env, 0, 1)
                     else:
-                        # Executor: same design's executions share one GRPO group
                         key = (base_env, int(design_indices[i]), 1)
             else:
                 key = (rollout_indices[i]//sample_num, turn_indices[i], agent_indices[i])

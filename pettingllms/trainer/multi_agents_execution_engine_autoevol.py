@@ -1387,7 +1387,12 @@ class MultiAgentsExecutionEngineAutoEvol:
         for policy_name, dpr_list in collected_dprs.items():
             if not dpr_list:
                 continue
-            # Align keys across all collected DataProtos
+            # Align keys across all collected DataProtos.
+            # Two passes needed: pass 1 accumulates all keys into dpr_list[0],
+            # pass 2 ensures earlier dprs get keys introduced by later ones.
+            for i in range(1, len(dpr_list)):
+                _align_non_tensor_batch_keys(dpr_list[0], dpr_list[i])
+            # Second pass: dpr_list[0] now has the union of all keys
             for i in range(1, len(dpr_list)):
                 _align_non_tensor_batch_keys(dpr_list[0], dpr_list[i])
             merged = DataProto.concat(dpr_list) if len(dpr_list) > 1 else dpr_list[0]

@@ -1,5 +1,4 @@
 set -x
-
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -17,7 +16,7 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
 export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
 export NCCL_NVLS_ENABLE=0
-export MAX_ROLLOUT_CONCURRENCY=8
+export MAX_ROLLOUT_CONCURRENCY=64
 export VLLM_ENABLE_V1_MULTIPROCESSING=0
 export VLLM_CUDAGRAPH_MODE=piecewise
 export MAX_ROLLOUT_RETRIES=3
@@ -66,16 +65,26 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 # Mercury7353/masrl_0228_mix_coldstart 
 #
 # /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
+# --- Configurable parameters ---
+DESIGN_SAMPLE_NUM=${DESIGN_SAMPLE_NUM:-4}
+EXECUTE_SAMPLE_NUM=${EXECUTE_SAMPLE_NUM:-4}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
+# executor_group_mode: "question" = all executors per problem, "design" = executors per design, "null" = auto
+EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-design}
+MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix"}
+
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
+    base_models.policy_0.path="$MODEL_PATH"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_mix_8design_4execution_5e_6_traindifflr_amazon\
+    training.experiment_name=$EXPERIMENT_NAME\
     training.total_training_steps=400\
-    training.train_batch_size=8\
-    training.design_sample_num=8\
-    training.execute_sample_num=4\
+    training.train_batch_size=$TRAIN_BATCH_SIZE\
+    training.design_sample_num=$DESIGN_SAMPLE_NUM\
+    training.execute_sample_num=$EXECUTE_SAMPLE_NUM\
+    training.executor_group_mode=$EXECUTOR_GROUP_MODE\
     training.validate_sample_num=1\
     training.max_prompt_length=4096\
     training.max_response_length=8192\
@@ -89,19 +98,24 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.benchmark_code=code_contests\
     'env.benchmark_math=[AIME25]'\
     $model_0_config_path.trainer.resume_mode=auto\
-    $model_0_config_path.trainer.experiment_name=autoeval_mix_8design_4execution_5e_6_trainall\
+    $model_0_config_path.trainer.experiment_name=$EXPERIMENT_NAME\
     $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
-    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2\
+    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
     +$model_0_config_path.actor.optim.lr=5e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.9
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8
 
 
-# +$model_0_config_path.actor_rollout_ref.rollout.enforce_eager=True\
-#    env.math_ratio=0\
-# +$model_0_config_path.actor.clip_ratio_low=0.15\
-#    +$model_0_config_path.actor.clip_ratio_high=0.28\
+# Usage examples:
+#   Default 4x4 auto grouping:
+#     bash train_design_tree_mix.sh
+#   4x4 with question grouping (all executors per problem in one GRPO group):
+#     EXECUTOR_GROUP_MODE=question bash train_design_tree_mix.sh
+#   4x4 with design grouping (executors per design in one GRPO group):
+#     EXECUTOR_GROUP_MODE=design bash train_design_tree_mix.sh
+#   8x2 with question grouping:
+#     DESIGN_SAMPLE_NUM=8 EXECUTE_SAMPLE_NUM=2 EXECUTOR_GROUP_MODE=question bash train_design_tree_mix.sh

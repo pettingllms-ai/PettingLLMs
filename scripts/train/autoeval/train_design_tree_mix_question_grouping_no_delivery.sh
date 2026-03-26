@@ -1,21 +1,4 @@
 set -x
-
-# === Auto-fix: regenerate datasets if aime_past has empty questions ===
-SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-AIME_PARQUET="$SCRIPT_DIR/data/math/train/aime_past.parquet"
-if [ -f "$AIME_PARQUET" ]; then
-    EMPTY_Q=$(python3 -c "
-import pandas as pd
-df = pd.read_parquet('$AIME_PARQUET')
-print((df['question'].str.len() == 0).sum())
-" 2>/dev/null)
-    if [ "$EMPTY_Q" -gt 0 ] 2>/dev/null; then
-        echo "[AUTO-FIX] aime_past.parquet has $EMPTY_Q empty questions, regenerating..."
-        python3 "$SCRIPT_DIR/scripts/dataprocess/load_math.py"
-        echo "[AUTO-FIX] Done."
-    fi
-fi
-
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -33,6 +16,14 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
 export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
 export NCCL_NVLS_ENABLE=0
+export MAX_ROLLOUT_CONCURRENCY=64
+export VLLM_ENABLE_V1_MULTIPROCESSING=0
+export VLLM_CUDAGRAPH_MODE=piecewise
+export MAX_ROLLOUT_RETRIES=3
+
+# Reward control: set to 1 to disable delivery reward component
+export DISABLE_DELIVERY_REWARD=${DISABLE_DELIVERY_REWARD:-1}
+
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
     # Try to find CUDA in conda env
@@ -67,18 +58,25 @@ GPU_num=8
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
-# Baseline: 8x2 sampling, fixed LR (no alternating)
-# Compare with train_design_tree.sh which uses lr_alternate_steps=10
+# --- Configurable parameters ---
+DESIGN_SAMPLE_NUM=${DESIGN_SAMPLE_NUM:-4}
+EXECUTE_SAMPLE_NUM=${EXECUTE_SAMPLE_NUM:-4}
+TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
+EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
+MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_qg_no_delivery"}
+
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\
+    base_models.policy_0.path="$MODEL_PATH"\
     lora_rank=0\
     lora_alpha=16\
-    training.experiment_name=autoeval_8x2_fixed_lr_baseline\
+    training.experiment_name=$EXPERIMENT_NAME\
     training.total_training_steps=400\
-    training.train_batch_size=8\
-    training.design_sample_num=8\
-    training.execute_sample_num=2\
+    training.train_batch_size=$TRAIN_BATCH_SIZE\
+    training.design_sample_num=$DESIGN_SAMPLE_NUM\
+    training.execute_sample_num=$EXECUTE_SAMPLE_NUM\
+    training.executor_group_mode=$EXECUTOR_GROUP_MODE\
     training.validate_sample_num=1\
     training.max_prompt_length=4096\
     training.max_response_length=8192\
@@ -91,8 +89,9 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.dataset_code=code_contests\
     env.benchmark_code=code_contests\
     'env.benchmark_math=[AIME25]'\
+    $model_0_config_path.trainer.resume_mode=auto\
+    $model_0_config_path.trainer.experiment_name=$EXPERIMENT_NAME\
     $model_0_config_path.trainer.val_before_train=False\
-    $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
@@ -100,4 +99,13 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
-    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8\
+    $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.8
+
+
+# Usage examples:
+#   Default (question grouping, no delivery reward):
+#     bash train_design_tree_mix_question_grouping_no_delivery.sh
+#   With delivery reward enabled:
+#     DISABLE_DELIVERY_REWARD=0 bash train_design_tree_mix_question_grouping_no_delivery.sh
+#   Custom design/execution counts:
+#     DESIGN_SAMPLE_NUM=2 EXECUTE_SAMPLE_NUM=4 bash train_design_tree_mix_question_grouping_no_delivery.sh

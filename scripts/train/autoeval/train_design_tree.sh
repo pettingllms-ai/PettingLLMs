@@ -103,7 +103,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     $model_0_config_path.trainer.val_before_train=False\
     $model_0_config_path.actor.ppo_micro_batch_size=null\
     $model_0_config_path.actor.ppo_micro_batch_size_per_gpu=1\
-    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2\
+    $model_0_config_path.actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1\
     $model_0_config_path.actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=true\
     +$model_0_config_path.actor.optim.lr=5e-6\
     +$model_0_config_path.actor.use_kl_loss=false\
