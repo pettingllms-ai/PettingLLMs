@@ -88,10 +88,10 @@ DESIGN_SAMPLE_NUM=${DESIGN_SAMPLE_NUM:-4}
 EXECUTE_SAMPLE_NUM=${EXECUTE_SAMPLE_NUM:-4}
 TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 # executor_group_mode: "question" = all executors per problem, "design" = executors per design, "null" = auto
-EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-design}
+EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
 APPS_RATIO=${APPS_RATIO:-0.7}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_quesion_group"}
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \

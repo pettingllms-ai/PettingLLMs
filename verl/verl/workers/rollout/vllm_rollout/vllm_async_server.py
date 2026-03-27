@@ -434,26 +434,32 @@ class AsyncvLLMServer(AsyncServerBase):
                         await self.engine.abort(req_id)
                     except Exception:
                         pass
-                # Give engine time to process aborts
-                await asyncio.sleep(0.5)
+                # Poll until engine confirms all aborts are processed (abort is async in vLLM v1)
+                max_wait, poll_interval, elapsed = 10.0, 0.2, 0.0
+                while elapsed < max_wait:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+                    if not self.engine.output_processor.has_unfinished_requests():
+                        break
                 remaining = self.engine.output_processor.get_num_unfinished_requests()
-                logger.warning(f"[AsyncvLLMServer] After abort: {remaining} requests remaining.")
+                if remaining > 0:
+                    logger.warning(f"[AsyncvLLMServer] After abort: {remaining} requests remaining after {max_wait}s wait.")
         except Exception as e:
             logger.warning(f"[AsyncvLLMServer] Request abort before sleep failed: {e}")
 
         # Step 2: Reset prefix cache with retries (blocks may take time to free after abort)
         cache_reset_ok = False
-        for attempt in range(5):
+        for attempt in range(10):
             try:
                 await self.engine.reset_prefix_cache()
                 cache_reset_ok = True
                 break
             except Exception as e:
-                if attempt < 4:
-                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache attempt {attempt+1}/5 failed: {e}. Retrying in 1s...")
-                    await asyncio.sleep(1)
+                if attempt < 9:
+                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache attempt {attempt+1}/10 failed: {e}. Retrying in 2s...")
+                    await asyncio.sleep(2)
                 else:
-                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache failed after 5 attempts: {e}. Proceeding with sleep anyway.")
+                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache failed after 10 attempts: {e}. Proceeding with sleep anyway.")
 
         # Step 3: Sleep the engine
         try:
