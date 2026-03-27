@@ -16,22 +16,9 @@ else
     export VLLM_ATTENTION_BACKEND=FLASHINFER
 fi
 
-# FlashInfer JIT requires ninja for kernel compilation — install if missing
-if [ "$VLLM_ATTENTION_BACKEND" = "FLASHINFER" ]; then
-    if ! command -v ninja &>/dev/null; then
-        echo "[INFO] ninja not found, installing for FlashInfer JIT..."
-        pip install ninja 2>&1 | tail -3
-        if ! command -v ninja &>/dev/null; then
-            echo "[WARN] ninja install failed, falling back to FLASH_ATTN backend"
-            export VLLM_ATTENTION_BACKEND=FLASH_ATTN
-        fi
-    fi
-    # Clear stale FlashInfer JIT cache that may reference wrong environment paths
-    if [ -d "/root/.cache/flashinfer" ]; then
-        echo "[INFO] Clearing stale FlashInfer JIT cache at /root/.cache/flashinfer"
-        rm -rf /root/.cache/flashinfer
-    fi
-fi
+
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
@@ -103,6 +90,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 # executor_group_mode: "question" = all executors per problem, "design" = executors per design, "null" = auto
 EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-design}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
+APPS_RATIO=${APPS_RATIO:-0.7}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix"}
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
@@ -127,6 +115,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.name=mixed_env\
     env.dataset_code=code_contests\
     env.benchmark_code=code_contests\
+    env.apps_ratio=$APPS_RATIO\
     'env.benchmark_math=[AIME25]'\
     $model_0_config_path.trainer.resume_mode=auto\
     $model_0_config_path.trainer.experiment_name=$EXPERIMENT_NAME\

@@ -67,32 +67,15 @@ class AIClient:
 
     def _chat_verl(self, messages: List[Dict[str, Any]], temperature: float, max_tokens: Optional[int]) -> Tuple[str, int, int]:
         """verl vllm interface with DataProto."""
-        # Import verl functions
-        
-
-        # Convert messages to prompt dict
-        # Extract system and user messages
-        system_message = None
-        user_message = ""
-        for msg in messages:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            if role == "system":
-                system_message = content
-            elif role == "user":
-                user_message += content + "\n"
-            elif role == "assistant":
-                user_message += f"Assistant: {content}\n"
-
-        user_message = user_message.strip()
-
-        # Create prompt dict
+        # Pass the full multi-turn messages list directly so apply_chat_template
+        # handles all roles (system/user/assistant/tool) with proper special tokens.
+        # This avoids the old manual flattening that garbled tool results and
+        # multi-turn history into a single user message.
         prompt_dict = {
-            "text": user_message,
+            "messages": messages,  # full conversation — apply_chat_template handles formatting
+            "text": "",            # required key for validation in convert_prompt_to_dpr
             "image": None,
         }
-        if system_message:
-            prompt_dict["system"] = system_message
 
         # Convert to DataProto
         prompt_dpr = convert_prompt_to_dpr(

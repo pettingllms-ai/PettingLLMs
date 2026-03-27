@@ -20,6 +20,7 @@ env:
   benchmark_math: AIME24
   benchmark_code: code_contests
   math_ratio: 0.5
+  apps_ratio: 0.0
   max_turns: 1
   resolve: false
   multi_modal: false

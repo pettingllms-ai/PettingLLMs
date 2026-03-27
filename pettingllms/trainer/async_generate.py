@@ -796,17 +796,23 @@ def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, mult
     if not isinstance(prompts, dict) or "text" not in prompts:
         raise ValueError("prompts must be a dictionary containing 'text' key: {'text': str, 'image': Optional[path_or_image]} ")
 
-    text = prompts.get("text", "") or ""
     image_data = prompts.get("image", None)
-    system_text = prompts.get("system")
 
     old_padding_side = getattr(tokenizer, "padding_side", "right")
     tokenizer.padding_side = "left"
     try:
-        chat = []
-        if system_text is not None:
-            chat.append({"content": system_text, "role": "system"})
-        chat.append({"content": text, "role": "user"})
+        # If a full multi-turn messages list is provided, use it directly so that
+        # tool results and assistant turns are formatted with proper special tokens.
+        messages_list = prompts.get("messages")
+        if messages_list is not None:
+            chat = messages_list
+        else:
+            text = prompts.get("text", "") or ""
+            system_text = prompts.get("system")
+            chat = []
+            if system_text is not None:
+                chat.append({"content": system_text, "role": "system"})
+            chat.append({"content": text, "role": "user"})
 
         prompt_with_chat_template = tokenizer.apply_chat_template(
             chat,

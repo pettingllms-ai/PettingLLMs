@@ -70,9 +70,30 @@ class MixedEnvBatch:
             math_problems = load_math_problem_batch(
                 math_indices, mode="train", dataset_name=dataset_math, config=config,
             )
-            code_problems = load_problem_batch(
-                code_indices, dataset_name=dataset_code, mode="train",
-            )
+
+            # Mix APPS (easier) and code_contests (harder) for code problems
+            apps_ratio = float(getattr(env_cfg, "apps_ratio", 0.0))
+            if apps_ratio > 0.0 and len(code_indices) > 0:
+                n_apps = max(1, int(len(code_indices) * apps_ratio))
+                n_cc = len(code_indices) - n_apps
+                apps_indices = code_indices[:n_apps]
+                cc_indices = code_indices[n_apps:n_apps + n_cc] if n_cc > 0 else []
+                apps_problems = load_problem_batch(
+                    apps_indices, dataset_name="apps", mode="train",
+                ) if n_apps > 0 else []
+                cc_problems = load_problem_batch(
+                    cc_indices, dataset_name=dataset_code, mode="train",
+                ) if n_cc > 0 else []
+                # Interleave: apps first, then code_contests
+                code_problems = apps_problems + cc_problems
+                logger.info(
+                    f"Code mix: {len(apps_problems)} APPS + {len(cc_problems)} {dataset_code} "
+                    f"(apps_ratio={apps_ratio:.1%})"
+                )
+            else:
+                code_problems = load_problem_batch(
+                    code_indices, dataset_name=dataset_code, mode="train",
+                )
 
             # Build envs: math first, then code
             rollout_cursor = 0

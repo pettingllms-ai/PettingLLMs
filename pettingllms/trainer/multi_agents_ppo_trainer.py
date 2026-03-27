@@ -15,7 +15,7 @@ from omegaconf import OmegaConf
 from pettingllms.trainer.multi_agents_execution_engine import MultiAgentsExecutionEngine
 from verl import DataProto
 #from pettingllms.trainer.multi_agents_execution_engine_graph import MultiAgentsExecutionEngineGraph
-from verl.protocol import pad_dataproto_to_divisor
+from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from verl.trainer.ppo.ray_trainer import (
 
@@ -458,10 +458,11 @@ class MultiAgentsPPOTrainer:
             except Exception as e:
                 print(f"[DEBUG HANG] Failed to get world_size: {e}", flush=True)
                 dp_world_size = 1
+            pad_size = 0
             if dp_world_size > 1:
                 print(f"[DEBUG HANG] Padding batch to divisor {dp_world_size}...", flush=True)
-                batch, _ = pad_dataproto_to_divisor(batch, dp_world_size)
-                print(f"[DEBUG HANG] Padding done, new batch size: {len(batch)}", flush=True)
+                batch, pad_size = pad_dataproto_to_divisor(batch, dp_world_size)
+                print(f"[DEBUG HANG] Padding done, new batch size: {len(batch)}, pad_size: {pad_size}", flush=True)
 
             print(f"[DEBUG HANG] >>> Calling compute_log_prob NOW (this may hang)... <<<", flush=True)
             sys.stdout.flush()
@@ -471,6 +472,13 @@ class MultiAgentsPPOTrainer:
 
             batch = batch.union(old_log_prob)
             print(f"[DEBUG HANG] batch.union completed", flush=True)
+
+            # Unpad after compute_log_prob to prevent padding duplicates from
+            # contaminating GRPO advantage computation (padding copies first N
+            # samples including their UIDs, biasing group mean/std)
+            if pad_size > 0:
+                batch = unpad_dataproto(batch, pad_size)
+                print(f"[DEBUG HANG] Unpadded batch back to {len(batch)}", flush=True)
 
 
         # Compute reference log_prob if needed for KL loss or KL in reward
