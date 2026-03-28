@@ -147,6 +147,7 @@ class AsyncvLLMServer(AsyncServerBase):
         self.wg_prefix = wg_prefix
         self.engine: AsyncLLM = None
         self._last_lora_sync_count = 0  # Track number of LoRAs synced
+        self._is_sleeping = False  # Guard flag: True between sleep() start and wake_up() completion
 
     async def init_engine(self):
         """Init vLLM AsyncLLM engine."""
@@ -343,6 +344,11 @@ class AsyncvLLMServer(AsyncServerBase):
 
         API reference: https://platform.openai.com/docs/api-reference/completions/create
         """
+        if self._is_sleeping:
+            return JSONResponse(
+                content=ErrorResponse(message="Engine is sleeping, retry after wake_up", code=503).model_dump(),
+                status_code=503,
+            )
         request_json = await raw_request.json()
         request = CompletionRequest(**request_json)
         generator = await self.openai_serving_completion.create_completion(request, raw_request)
@@ -354,7 +360,7 @@ class AsyncvLLMServer(AsyncServerBase):
         else:
             assert isinstance(generator, CompletionResponse)
             if generator.choices and generator.choices[0].logprobs:
-                generator.choices[0].logprobs.token_logprobs = [] 
+                generator.choices[0].logprobs.token_logprobs = []
                 generator.choices[0].logprobs.top_logprobs = []
                 generator.choices[0].logprobs.text_offset = []
             return JSONResponse(content=generator.model_dump())
@@ -382,99 +388,79 @@ class AsyncvLLMServer(AsyncServerBase):
             yield 200, f"data: {data}\n\n"
 
     async def wake_up(self, tags: Optional[list[str]] = None):
-        if getattr(self, '_engine_dead', False):
-            logger.warning("[AsyncvLLMServer] Engine was dead, reinitializing...")
-            try:
-                import torch, gc
-                # Properly shutdown old engine before creating new one
-                old_engine = self.engine
-                self.engine = None
-                if old_engine is not None:
-                    try:
-                        # AsyncLLM has a shutdown method that kills core engine processes
-                        if hasattr(old_engine, 'shutdown'):
-                            old_engine.shutdown()
-                            logger.warning("[AsyncvLLMServer] Old engine shutdown() called.")
-                        elif hasattr(old_engine, 'engine_core'):
-                            # Fallback: directly kill engine core if shutdown not available
-                            if hasattr(old_engine.engine_core, 'shutdown'):
-                                old_engine.engine_core.shutdown()
-                                logger.warning("[AsyncvLLMServer] Old engine_core shutdown() called.")
-                    except Exception as shutdown_err:
-                        logger.warning(f"[AsyncvLLMServer] Old engine shutdown failed (non-fatal): {shutdown_err}")
-                    del old_engine
-                gc.collect()
-                torch.cuda.empty_cache()
-                # Give GPU processes time to fully terminate
-                import asyncio
-                await asyncio.sleep(3)
-            except Exception as e:
-                logger.warning(f"[AsyncvLLMServer] GPU cleanup failed: {e}")
-            await self.init_engine()
-            self._engine_dead = False
-            logger.warning("[AsyncvLLMServer] Engine reinitialized successfully.")
         await self.engine.wake_up(tags)
+        # Allow new completions requests now that the engine is live.
+        self._is_sleeping = False
 
     async def sleep(self):
         # TODO: https://github.com/vllm-project/vllm/issues/17103
         import asyncio
 
+        # Gate new HTTP requests immediately so no completions sneak in during
+        # the abort→reset_prefix_cache→engine.sleep() window (TOCTOU race fix).
+        self._is_sleeping = True
+
         # Step 1: Abort all in-flight requests so prefix cache blocks are freed.
-        # Without this, reset_prefix_cache fails ("blocks not freed yet"),
-        # and sleep() frees GPU memory while blocks still reference it,
-        # corrupting CUDA TMA descriptors and crashing workers on H100.
+        # vLLM v1 abort() is async: sends ZMQ message to EngineCore subprocess,
+        # which processes it on its next scheduler iteration (after current CUDA step).
+        # A generation near max_response_length=8192 can take many seconds to reach
+        # a preemption point, so we wait up to 300s (matching the request timeout).
         try:
             if hasattr(self.engine, 'output_processor') and self.engine.output_processor.has_unfinished_requests():
                 unfinished = self.engine.output_processor.get_num_unfinished_requests()
                 logger.warning(f"[AsyncvLLMServer] {unfinished} unfinished requests before sleep, aborting them...")
-                # Abort all tracked parent requests
                 parent_ids = list(self.engine.output_processor.parent_requests.keys())
                 for req_id in parent_ids:
                     try:
                         await self.engine.abort(req_id)
                     except Exception:
                         pass
-                # Poll until engine confirms all aborts are processed (abort is async in vLLM v1)
-                max_wait, poll_interval, elapsed = 10.0, 0.2, 0.0
+                # Poll until EngineCore confirms all aborts processed.
+                # 300s ceiling matches the generation request timeout in async_generate.py.
+                max_wait, poll_interval, elapsed = 300.0, 1.0, 0.0
                 while elapsed < max_wait:
                     await asyncio.sleep(poll_interval)
                     elapsed += poll_interval
                     if not self.engine.output_processor.has_unfinished_requests():
+                        logger.warning(f"[AsyncvLLMServer] All requests drained after {elapsed:.0f}s.")
                         break
                 remaining = self.engine.output_processor.get_num_unfinished_requests()
                 if remaining > 0:
-                    logger.warning(f"[AsyncvLLMServer] After abort: {remaining} requests remaining after {max_wait}s wait.")
+                    logger.warning(f"[AsyncvLLMServer] After abort: {remaining} requests still stuck after {max_wait}s — will force reset_prefix_cache.")
         except Exception as e:
             logger.warning(f"[AsyncvLLMServer] Request abort before sleep failed: {e}")
 
-        # Step 2: Reset prefix cache with retries (blocks may take time to free after abort)
+        # Step 2: Reset prefix cache. After abort(), KV blocks are freed asynchronously;
+        # retry with backoff to let the EngineCore finish releasing them.
+        # CRITICAL: engine.sleep() frees physical GPU memory regardless of block state.
+        # If reset_prefix_cache fails (blocks still allocated), sleep() will free the
+        # pages those blocks reference → EngineCore holds dangling pointers → TMA crash.
+        # We MUST NOT call sleep() until reset_prefix_cache succeeds.
         cache_reset_ok = False
-        for attempt in range(10):
+        for attempt in range(60):
             try:
                 await self.engine.reset_prefix_cache()
+                logger.info(f"[AsyncvLLMServer] reset_prefix_cache succeeded on attempt {attempt+1}.")
                 cache_reset_ok = True
                 break
             except Exception as e:
-                if attempt < 9:
-                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache attempt {attempt+1}/10 failed: {e}. Retrying in 2s...")
-                    await asyncio.sleep(2)
-                else:
-                    logger.warning(f"[AsyncvLLMServer] reset_prefix_cache failed after 10 attempts: {e}. Proceeding with sleep anyway.")
+                logger.warning(f"[AsyncvLLMServer] reset_prefix_cache attempt {attempt+1}/60 failed: {e}. Retrying in 5s...")
+                await asyncio.sleep(5)
 
-        # Step 3: Sleep the engine
+        if not cache_reset_ok:
+            # KV blocks still live after 5+ minutes — something is seriously wrong.
+            # Proceeding to sleep() would cause a TMA crash (confirmed from crash log).
+            # Raise so the caller sees the failure; the engine stays awake and dirty.
+            raise RuntimeError(
+                "[AsyncvLLMServer] reset_prefix_cache failed after 300s of retries. "
+                "Cannot safely call engine.sleep() — KV blocks still reference GPU memory. "
+                "Investigate stuck EngineCore request."
+            )
+
+        # Step 3: Sleep the engine (only reached when all KV blocks are freed)
         try:
             await self.engine.sleep()
-            self._engine_dead = False
         except Exception as e:
-            logger.warning(f"[AsyncvLLMServer] engine.sleep() failed: {e}. Will reinitialize on next wake_up().")
-            # Try to properly shutdown before marking dead
-            try:
-                if hasattr(self.engine, 'shutdown'):
-                    self.engine.shutdown()
-                    logger.warning("[AsyncvLLMServer] Called engine.shutdown() after sleep failure.")
-            except Exception as shutdown_err:
-                logger.warning(f"[AsyncvLLMServer] engine.shutdown() also failed: {shutdown_err}")
-            self.engine = None
-            self._engine_dead = True
+            logger.warning(f"[AsyncvLLMServer] engine.sleep() failed: {e}.")
 
    
