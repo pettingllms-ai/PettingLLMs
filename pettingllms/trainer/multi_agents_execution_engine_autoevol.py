@@ -832,8 +832,9 @@ class MultiAgentsExecutionEngineAutoEvol:
         )
 
         if self.mode == "validate":
-            # Consider successful if reward > 0.5
-            if final_reward > 0.5:
+            # Use correctness_reward only (not format rewards) so math_success_rate
+            # reflects actual answer correctness, not just proper output formatting.
+            if correctness_reward == 1:
                 if designer_name in self.success_rollout_idx_list_dict:
                     self.success_rollout_idx_list_dict[designer_name].append(rollout_idx)
                 if executor_name in self.success_rollout_idx_list_dict:
@@ -1407,7 +1408,7 @@ class MultiAgentsExecutionEngineAutoEvol:
                 # Validation success tracking
                 if self.mode == "validate":
                     env_obj = self.envs[ridx]
-                    if exec_reward > 0.5:
+                    if exec_correctness == 1:
                         if designer_name in self.success_rollout_idx_list_dict:
                             self.success_rollout_idx_list_dict[designer_name].append(ridx)
                         if exec_executor_name in self.success_rollout_idx_list_dict:
