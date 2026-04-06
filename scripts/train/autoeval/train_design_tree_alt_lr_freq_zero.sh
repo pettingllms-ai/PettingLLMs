@@ -104,7 +104,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
 APPS_RATIO=${APPS_RATIO:-0.7}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_1stepalt"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_1stepalt_zerolr"}
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
@@ -124,7 +124,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.save_freq=10\
     training.train_data_mode=all\
     training.designer_lr=5e-6\
-    training.executor_lr=1e-6\
+    training.executor_lr=1e-9\
     training.lr_alternate_steps=1\
     env.name=mixed_env\
     env.dataset_code=code_contests\
