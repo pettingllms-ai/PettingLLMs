@@ -94,12 +94,10 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         remote_optim_path = os.path.join(local_path, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
         remote_extra_state_path = os.path.join(local_path,
                                                f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
-        checkpoint_model_path = os.path.join(local_path, f'checkpoint')
         print(
             f'[rank-{self.rank}]: Loading from {remote_model_path} and {remote_optim_path} and {remote_extra_state_path}'
         )
         local_model_path = copy_to_local(remote_model_path)
-        checkpoint_model_path = copy_to_local(checkpoint_model_path)
         local_optim_path = copy_to_local(remote_optim_path)
         local_extra_state_path = copy_to_local(remote_extra_state_path)
 

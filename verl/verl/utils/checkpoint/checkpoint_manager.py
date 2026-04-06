@@ -153,18 +153,7 @@ def is_valid_checkpoint(ckpt_path):
         print(f"Checkpoint {ckpt_path} is missing the 'actor' folder.")
         return False
 
-    # 3) Check for subfolders in 'actor'
-    checkpoint_dir = os.path.join(actor_dir, "checkpoint")
-    if not os.path.isdir(checkpoint_dir):
-        print(f"Checkpoint {ckpt_path} is missing the 'checkpoint' directory inside 'actor'.")
-        return False
-
-    # hf_dir = os.path.join(actor_dir, "huggingface")
-    # if not os.path.isdir(hf_dir):
-    #     print(f"Checkpoint {ckpt_path} is missing the 'huggingface' directory inside 'actor'.")
-    #     return False
-
-    # 4) Check for .pt files in 'actor' that start with specific prefixes
+    # 3) Check for .pt files in 'actor' that start with specific prefixes
     required_prefixes = [
         "model_world_size",
         "optim_world_size",
