@@ -129,7 +129,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     env.name=mixed_env\
     env.dataset_code=code_contests\
     env.benchmark_code=livecodebench\
-    env.max_code_val=50\
+    +env.max_code_val=50\
     env.apps_ratio=$APPS_RATIO\
     'env.benchmark_math=[AIME25]'\
     $model_0_config_path.trainer.resume_mode=auto\
