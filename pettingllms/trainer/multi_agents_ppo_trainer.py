@@ -1116,6 +1116,21 @@ class MultiAgentsPPOTrainer:
                         metrics[f"{model_name}/reward_by_type/{ttype}/nonzero_ratio"] = float(np.count_nonzero(rews_arr) / len(rews_arr))
                         metrics[f"{model_name}/reward_by_type/{ttype}/count"] = len(rews)
 
+                # Per-task-type correctness_reward breakdown (code vs math)
+                if (hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None
+                        and 'task_type' in batch.non_tensor_batch
+                        and 'correctness_reward' in batch.non_tensor_batch):
+                    task_types_cr = batch.non_tensor_batch['task_type']
+                    cr_vals = batch.non_tensor_batch['correctness_reward']
+                    from collections import defaultdict as _dd_cr
+                    type_cr = _dd_cr(list)
+                    for tt, v in zip(task_types_cr, cr_vals):
+                        type_cr[str(tt)].append(float(v) if v is not None else 0.0)
+                    for ttype, vals in type_cr.items():
+                        arr = np.array(vals)
+                        metrics[f"{model_name}/correctness_reward_by_type/{ttype}/mean"] = float(np.mean(arr))
+                        metrics[f"{model_name}/correctness_reward_by_type/{ttype}/nonzero_ratio"] = float(np.count_nonzero(arr) / len(arr)) if len(arr) > 0 else 0.0
+
                 # Per-task-type response length breakdown (code vs math)
                 if hasattr(batch, 'non_tensor_batch') and batch.non_tensor_batch is not None and 'task_type' in batch.non_tensor_batch:
                     try:
@@ -1276,8 +1291,8 @@ class MultiAgentsPPOTrainer:
                 gc.collect()
 
             # Debug: show all metric keys being logged
-            reward_keys = [k for k in metrics.keys() if 'reward_by_agent' in k or 'tree_design' in k]
-            print(f"[METRICS DEBUG] Logging {len(metrics)} metrics total, reward/tree keys: {reward_keys}")
+            reward_keys = [k for k in metrics.keys() if 'reward_by_agent' in k or 'tree_design' in k or 'by_type' in k]
+            print(f"[METRICS DEBUG] Logging {len(metrics)} metrics total, reward/tree/by_type keys: {reward_keys}")
 
             try:
                 logger.log(data=metrics, step=self.global_steps)
