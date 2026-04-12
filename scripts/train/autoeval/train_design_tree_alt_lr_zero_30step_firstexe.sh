@@ -16,7 +16,7 @@ else
     export VLLM_ATTENTION_BACKEND=FLASHINFER
 fi
 
-# FldashInfer JIT requires ninja for kernel compilation — install if missing
+# FlashInfer JIT requires ninja for kernel compilation — install if missing
 if [ "$VLLM_ATTENTION_BACKEND" = "FLASHINFER" ]; then
     if ! command -v ninja &>/dev/null; then
         echo "[INFO] ninja not found, installing for FlashInfer JIT..."
@@ -104,7 +104,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
 APPS_RATIO=${APPS_RATIO:-0.7}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_1stepalt"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_zerolr_30steps_firstexe"}
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
@@ -123,12 +123,13 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.val_freq=10\
     training.save_freq=10\
     training.train_data_mode=all\
-    training.designer_lr=5e-6\
-    training.executor_lr=1e-6\
-    training.lr_alternate_steps=1\
+    training.designer_lr=1e-9\
+    training.executor_lr=5e-6\
+    training.lr_alternate_steps=30\
     env.name=mixed_env\
     env.dataset_code=code_contests\
-    env.benchmark_code=code_contests\
+    env.benchmark_code=livecodebench\
+    +env.max_code_val=50\
     env.apps_ratio=$APPS_RATIO\
     'env.benchmark_math=[AIME25]'\
     $model_0_config_path.trainer.resume_mode=auto\

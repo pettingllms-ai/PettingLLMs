@@ -399,7 +399,7 @@ class AgentNode(WorkflowNode):
             print(f"\n========== AGENT NODE: {self.name} ==========")
             print(f"[SYSTEM PROMPT]: {sys_prompt[:500]}")
             print(f"[USER INPUT]: {user_input[:500]}")
-            print(f"[AGENT RESPONSE]: {response[:2000]}")
+            print(f"[AGENT RESPONSE]: {response}")
             print(f"[TOKENS]: {total_tokens}")
             print(f"=============================================\n")
         except Exception:
