@@ -832,12 +832,65 @@ def convert_prompt_to_dpr(tokenizer, processor, prompts, max_prompt_length, mult
 
         input_ids = inputs["input_ids"]
         attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
-        
+
+        # Determine the token length of the system-prompt prefix so that
+        # truncation can preserve it. Without this, left-truncation would
+        # silently eat the system prompt (including delivery-format
+        # instructions) whenever the prompt exceeds max_prompt_length,
+        # which corrupts the training signal on clipped samples.
+        sys_len = 0
+        try:
+            system_msg = next((m for m in chat if m.get("role") == "system"), None)
+            if system_msg is not None:
+                sys_rendered = tokenizer.apply_chat_template(
+                    [system_msg],
+                    add_generation_prompt=False,
+                    tokenize=False,
+                    enable_thinking=enable_thinking,
+                )
+                sys_ids = tokenizer(
+                    sys_rendered,
+                    return_tensors="pt",
+                    padding=False,
+                    truncation=False,
+                    add_special_tokens=False,
+                )["input_ids"]
+                sys_len_candidate = int(sys_ids.size(1))
+                # Only use the prefix-preservation path if the system
+                # rendering aligns with the actual start of input_ids —
+                # some chat templates differ when a system message is
+                # rendered alone, and we must not splice mismatched tokens.
+                if (
+                    sys_len_candidate > 0
+                    and sys_len_candidate <= input_ids.size(1)
+                    and bool(
+                        torch.equal(
+                            input_ids[0, :sys_len_candidate], sys_ids[0]
+                        )
+                    )
+                ):
+                    sys_len = sys_len_candidate
+        except Exception:
+            sys_len = 0
+
         # Truncate if prompt exceeds max_prompt_length
         if input_ids.size(1) > max_prompt_length:
-            # Keep the rightmost tokens (most recent context) for better quality
-            input_ids = input_ids[:, -max_prompt_length:]
-            attention_mask = attention_mask[:, -max_prompt_length:]
+            if 0 < sys_len < max_prompt_length:
+                # Preserve system prefix; left-truncate only the turns
+                # that follow it so the most recent context AND the
+                # system instructions both survive.
+                budget = max_prompt_length - sys_len
+                input_ids = torch.cat(
+                    [input_ids[:, :sys_len], input_ids[:, -budget:]], dim=1
+                )
+                attention_mask = torch.cat(
+                    [attention_mask[:, :sys_len], attention_mask[:, -budget:]],
+                    dim=1,
+                )
+            else:
+                # Fallback: no system prompt, or system alone exceeds cap.
+                input_ids = input_ids[:, -max_prompt_length:]
+                attention_mask = attention_mask[:, -max_prompt_length:]
             # Regenerate the prompt string from truncated tokens to ensure consistency
             prompt_with_chat_template = tokenizer.decode(input_ids[0], skip_special_tokens=False)
 
