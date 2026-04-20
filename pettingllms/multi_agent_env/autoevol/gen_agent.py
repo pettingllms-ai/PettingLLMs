@@ -292,7 +292,7 @@ except Exception as e:
             from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
             import ray
 
-            timeout_buffer = 20
+            timeout_buffer = 60
             total_timeout = step_timeout + timeout_buffer
 
             obj_ref = env_worker.run.remote(script_content, step_timeout)
@@ -917,7 +917,7 @@ except Exception as e:
             from pettingllms.multi_agent_env.math.math_worker import _await_ray_object_ref
             import ray
 
-            timeout_buffer = 20
+            timeout_buffer = 60
             total_timeout = step_timeout + timeout_buffer
 
             obj_ref = env_worker.run.remote(script_content, step_timeout)

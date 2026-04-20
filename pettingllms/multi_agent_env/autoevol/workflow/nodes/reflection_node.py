@@ -6,6 +6,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from typing import Optional, List, Dict, Any
 from workflow.core import WorkflowNode, Context, Message, MessageType
+from workflow.nodes.agent_node import (
+    _compact_response,
+    _compact_critique,
+    _PROMPT_LENGTH_WARN_CHARS,
+)
 
 
 def _text_similarity(a: str, b: str) -> float:
@@ -119,8 +124,8 @@ class ReflectionNode(WorkflowNode):
         formatted = []
         for record in history:
             iteration = record.get("iteration", 0)
-            response = record.get("response", "")
-            reflection = record.get("reflection")
+            response = _compact_response(record.get("response", ""))
+            reflection = _compact_critique(record.get("reflection") or "")
 
             formatted.append(f"--- Iteration {iteration} ---")
             formatted.append(f"Response: {response}")
@@ -145,9 +150,21 @@ class ReflectionNode(WorkflowNode):
         reflection_context = Context()
         reflection_context.state = context.state.copy()
 
-        # Include question in reflection prompt for better context
+        # Pass only the compact deliverable (delivery / final answer / solution
+        # tag) rather than the full prior response. Without this, multi-iter
+        # reflection prompts blow past max_prompt_length and trigger silent
+        # left-truncation that drops the original question.
+        compact_response = _compact_response(response)
+        reflection_input_content = self.reflection_prompt.format(
+            question=question, response=compact_response
+        )
+        if len(reflection_input_content) > _PROMPT_LENGTH_WARN_CHARS:
+            self.logger.warning(
+                f"[REFLECT iter {iteration + 1}] reflection prompt is "
+                f"{len(reflection_input_content)} chars — may be truncated"
+            )
         reflection_input = Message(
-            content=self.reflection_prompt.format(question=question, response=response),
+            content=reflection_input_content,
             message_type=MessageType.USER_INPUT
         )
         reflection_context.add_message(reflection_input)
@@ -187,19 +204,30 @@ class ReflectionNode(WorkflowNode):
         refinement_context = Context()
         refinement_context.state = context.state.copy()
 
+        # Compact prior response + critique before embedding (same rationale
+        # as in _reflect — keeps prompts under max_prompt_length).
+        compact_response = _compact_response(response)
+        compact_reflection = _compact_critique(reflection)
+
         # Choose prompt based on whether to include history
         if self.include_history and history:
             prompt = self.refinement_prompt_with_history.format(
                 question=question,
-                response=response,
-                reflection=reflection,
+                response=compact_response,
+                reflection=compact_reflection,
                 history=self._format_history(history)
             )
         else:
             prompt = self.refinement_prompt.format(
                 question=question,
-                response=response,
-                reflection=reflection
+                response=compact_response,
+                reflection=compact_reflection
+            )
+
+        if len(prompt) > _PROMPT_LENGTH_WARN_CHARS:
+            self.logger.warning(
+                f"[REFINE iter {iteration + 1}] refinement prompt is "
+                f"{len(prompt)} chars — may be truncated"
             )
 
         refinement_input = Message(

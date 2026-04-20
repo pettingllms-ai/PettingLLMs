@@ -6,6 +6,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from typing import List, Optional
 from workflow.core import WorkflowNode, Context, Message, MessageType
+from workflow.nodes.agent_node import _compact_response, _PROMPT_LENGTH_WARN_CHARS
 
 
 class DebateNode(WorkflowNode):
@@ -51,13 +52,16 @@ class DebateNode(WorkflowNode):
         Returns:
             Formatted debate history string
         """
+        # Compact each prior response to its <delivery>+deliverable so that
+        # multi-round debate history doesn't blow past max_prompt_length.
         history_text = "Previous debate rounds:\n\n"
-        
+
         for round_idx in range(current_round):
             history_text += f"=== Round {round_idx + 1} ===\n"
             for agent_idx, response in enumerate(debate_history[round_idx]):
-                history_text += f"Agent {agent_idx + 1} ({self.debaters[agent_idx].name}):\n{response}\n\n"
-        
+                compact = _compact_response(response)
+                history_text += f"Agent {agent_idx + 1} ({self.debaters[agent_idx].name}):\n{compact}\n\n"
+
         return history_text
     
     def process(self, context: Context) -> Message:
@@ -106,7 +110,12 @@ class DebateNode(WorkflowNode):
                         f"Based on the discussion above, please provide your refined answer. "
                         f"You may critique other responses and improve your own."
                     )
-                
+                    if isinstance(prompt, str) and len(prompt) > _PROMPT_LENGTH_WARN_CHARS:
+                        self.logger.warning(
+                            f"[DEBATE round {round_idx + 1} agent {agent_idx + 1}] "
+                            f"prompt is {len(prompt)} chars — may be truncated"
+                        )
+
                 agent_message = Message(
                     content=prompt,
                     message_type=MessageType.USER_INPUT
@@ -132,13 +141,14 @@ class DebateNode(WorkflowNode):
         judge_context = Context()
         judge_context.state = context.state.copy()
         
-        # Format all final round responses for judge
+        # Format all final round responses for judge — compact each so the
+        # judge prompt stays under max_prompt_length even with many debaters.
         final_responses = debate_history[-1]
         responses_text = "\n\n".join([
-            f"Response {i+1} from {self.debaters[i].name}:\n{resp}"
+            f"Response {i+1} from {self.debaters[i].name}:\n{_compact_response(resp)}"
             for i, resp in enumerate(final_responses)
         ])
-        
+
         judge_prompt = (
             f"Original question: {original_input.content}\n\n"
             f"After {self.num_rounds} rounds of debate, here are the final responses:\n\n"
@@ -146,7 +156,12 @@ class DebateNode(WorkflowNode):
             f"Please select the best response or synthesize a better answer based on the debate. "
             f"Provide your final answer."
         )
-        
+
+        if len(judge_prompt) > _PROMPT_LENGTH_WARN_CHARS:
+            self.logger.warning(
+                f"[DEBATE judge] prompt is {len(judge_prompt)} chars — may be truncated"
+            )
+
         judge_message = Message(
             content=judge_prompt,
             message_type=MessageType.USER_INPUT

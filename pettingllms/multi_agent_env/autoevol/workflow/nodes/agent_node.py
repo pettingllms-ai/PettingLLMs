@@ -5,7 +5,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import json
 from workflow.core import WorkflowNode, Context, Message, MessageType, ToolRegistry
 from utils.BaseOpenAI import AIClient
@@ -67,6 +67,151 @@ def _extract_delivery(text: str) -> Optional[str]:
         return match.group(0).strip()
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Inter-node response compaction
+# ---------------------------------------------------------------------------
+# Caps on what we embed inline when one node's output is fed into another
+# node's prompt (Reflection / Ensemble._consensus / Debate). Without
+# compression these prompts blow past max_prompt_length, triggering silent
+# left-truncation that drops the original question. Both task types share the
+# same path: <delivery> is the canonical inter-node channel; deliverable
+# salvage (boxed answer / code block) handles the case where the model
+# skipped the <delivery> tag.
+
+_RESPONSE_COMPACT_MAX_CHARS = 3000
+_CRITIQUE_COMPACT_MAX_CHARS = 1500
+_PROMPT_LENGTH_WARN_CHARS = 6000
+_TAIL_REASONING_CHARS = 800
+_LAST_RESORT_TAIL_CHARS = 4000
+
+
+def _salvage_deliverable(text: str, task_type: str) -> Tuple[Optional[str], int]:
+    """Find the final deliverable in an agent response, ignoring <delivery>.
+
+    For math: last ``\\boxed{...}`` with brace-counting (handles nested {}).
+    For code: last ``<solution>...</solution>``, ``<code>...</code>``,
+              ``` ```python ... ``` ```, or generic ``` ``` ... ``` ``` block.
+
+    Returns (deliverable_str, start_index_in_text), or (None, -1).
+    """
+    if not text:
+        return None, -1
+
+    if task_type == "code":
+        for pattern, wrap in [
+            (r"<solution>\s*(.*?)\s*</solution>", "<solution>\n{}\n</solution>"),
+            (r"<code>\s*(.*?)\s*</code>", "<code>\n{}\n</code>"),
+            (r"```python\s*(.*?)```", "```python\n{}\n```"),
+            (r"```\s*(.*?)```", "```\n{}\n```"),
+        ]:
+            matches = list(re.finditer(pattern, text, re.DOTALL))
+            if matches:
+                last = matches[-1]
+                inner = last.group(1).strip()
+                if inner:
+                    return wrap.format(inner), last.start()
+        return None, -1
+
+    # math: brace-counting on last \boxed{...}
+    idx = text.rfind("\\boxed{")
+    if idx == -1:
+        return None, -1
+    start = idx + len("\\boxed{")
+    depth = 1
+    i = start
+    while i < len(text) and depth > 0:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    if depth == 0:
+        content = text[start:i - 1]
+        return "\\boxed{" + content + "}", idx
+    return None, -1
+
+
+def _last_resort_tail(text: str) -> str:
+    """Keep the tail of the response when nothing structured was found.
+
+    Most-recent reasoning is more useful than the head (which usually
+    restates the question, already in the prompt). Char-based budget;
+    the downstream hard cap enforces the final size.
+    """
+    if len(text) <= _LAST_RESORT_TAIL_CHARS:
+        return text
+    return "...[earlier content omitted]...\n" + text[-_LAST_RESORT_TAIL_CHARS:]
+
+
+def _compact_response(text: str) -> str:
+    """Compress an agent response for embedding in another node's prompt.
+
+    Layered salvage (works for both math and code):
+      Layer 0 — short responses pass through unchanged.
+      Layer 1 — extract the <delivery> block (the agent's chosen summary).
+      Layer 2 — independently salvage the final deliverable (\\boxed{} for
+                math, <solution>/code-block for code).
+      Layer 3 — when no <delivery> but a deliverable was salvaged, prepend
+                the last _TAIL_REASONING_CHARS chars before it.
+      Layer 4 — when nothing structured was found, keep just the response tail.
+
+    The result is hard-capped at _RESPONSE_COMPACT_MAX_CHARS.
+    """
+    if not text:
+        return ""
+
+    text = text.strip()
+
+    if len(text) <= 2000:
+        return text
+
+    task_type = os.getenv("TASK_TYPE", "math").lower()
+
+    delivery = _extract_delivery(text)
+    # If <delivery> matched the math/code fallback inside _extract_delivery
+    # (boxed-only or <solution>-only), treat as "no real delivery" so that
+    # Layer 3 can attach tail reasoning.
+    if delivery and (
+        delivery.startswith("\\boxed{")
+        or delivery.startswith("<solution>")
+    ):
+        delivery = None
+
+    deliverable, deliverable_pos = _salvage_deliverable(text, task_type)
+
+    if delivery and deliverable:
+        compact = delivery + "\n\n" + deliverable
+    elif delivery:
+        compact = delivery
+    elif deliverable:
+        tail_start = max(0, deliverable_pos - _TAIL_REASONING_CHARS)
+        tail = text[tail_start:deliverable_pos].strip()
+        prefix = "...[earlier reasoning omitted]...\n" if tail_start > 0 else ""
+        compact = (prefix + tail + "\n" + deliverable).strip()
+    else:
+        compact = _last_resort_tail(text)
+
+    if len(compact) > _RESPONSE_COMPACT_MAX_CHARS:
+        half = _RESPONSE_COMPACT_MAX_CHARS // 2
+        compact = compact[:half] + "\n...[truncated]...\n" + compact[-half:]
+
+    return compact.strip()
+
+
+def _compact_critique(text: str) -> str:
+    """Cap a critic's critique for embedding in a downstream prompt.
+
+    Keep head (where major errors typically appear) and tail (where the
+    final verdict typically appears).
+    """
+    if not text:
+        return ""
+    text = text.strip()
+    if len(text) <= _CRITIQUE_COMPACT_MAX_CHARS:
+        return text
+    return text[:500] + "\n...[truncated critique]...\n" + text[-1000:]
 
 
 class AgentNode(WorkflowNode):
@@ -254,7 +399,11 @@ class AgentNode(WorkflowNode):
         if not evaluate_mode and self.tool_registry.list_tools():
             tools = self.tool_registry.get_tool_schemas()
 
-        for turn in range(self.max_turns):
+        # max_turns semantics: number of REACTIVE turns after the first tool call.
+        # Loop runs (max_turns + 1) iterations: 1 initial call + max_turns reactive
+        # turns. If the agent is still tool-calling when the loop exits, the
+        # forced-finalization branch below adds one final non-tool answer.
+        for turn in range(self.max_turns + 1):
             # Make API call
             # In evaluate mode, never pass tools (use prompt-based approach instead)
             if tools and not evaluate_mode:
@@ -363,10 +512,22 @@ class AgentNode(WorkflowNode):
             # Return final response and full message history
             return response, total_tokens, messages
 
-        # Max turns reached, force final answer
+        # Max turns reached, force final answer.
+        # Use task-aware phrasing: for code, hint at <solution> wrap if the agent's
+        # role is to produce code (critic/verifier agents are free to give critique
+        # text instead — the wording is permissive on purpose).
+        _task_type = os.getenv("TASK_TYPE", "math").lower()
+        if _task_type == "code":
+            _force_final_msg = (
+                "Stop calling tools and produce your final response now. "
+                "If your role is to provide the solution code, wrap it in "
+                "<solution>...</solution> tags."
+            )
+        else:
+            _force_final_msg = "Please provide your final answer now without using any tools."
         messages.append({
             "role": "user",
-            "content": "Please provide your final answer now without using any tools."
+            "content": _force_final_msg,
         })
         response, pt, ct = self.ai_client.chat(messages)
         total_tokens += pt + ct

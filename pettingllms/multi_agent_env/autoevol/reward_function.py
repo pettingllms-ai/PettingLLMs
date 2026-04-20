@@ -273,19 +273,28 @@ def code_reward_function(summary: str, env_data: Env) -> float:
         logger.warning("code_reward_function: no test cases available, returning 0.0")
         return 0.0
 
-    n_tests = min(len(test_inputs), len(test_outputs))
-    passed = 0
+    import random
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    n_total = min(len(test_inputs), len(test_outputs))
+    MAX_TESTS = 50
+    if n_total > MAX_TESTS:
+        rng = random.Random(hash(code) & 0xFFFFFFFF)
+        indices = rng.sample(range(n_total), MAX_TESTS)
+    else:
+        indices = list(range(n_total))
+    n_tests = len(indices)
     timeout_per_case = 10  # seconds
 
-    for i in range(n_tests):
-        try:
-            # Write code to a temp file and execute with subprocess
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as f:
-                f.write(code)
-                tmp_path = f.name
+    # Write code once and reuse the temp file across all tests (read-only)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False
+    ) as f:
+        f.write(code)
+        tmp_path = f.name
 
+    def _run_one_test(i: int) -> bool:
+        try:
             result = subprocess.run(
                 ["python3", tmp_path],
                 input=str(test_inputs[i]),
@@ -295,23 +304,31 @@ def code_reward_function(summary: str, env_data: Env) -> float:
             )
             actual = result.stdout.strip()
             expected = str(test_outputs[i]).strip()
-
-            # Whitespace-normalized comparison
             if " ".join(actual.split()) == " ".join(expected.split()):
-                passed += 1
-            else:
-                logger.debug(
-                    f"Test {i} failed: expected={expected!r}, got={actual!r}"
-                )
+                return True
+            logger.debug(
+                f"Test {i} failed: expected={expected!r}, got={actual!r}"
+            )
+            return False
         except subprocess.TimeoutExpired:
             logger.debug(f"Test {i} timed out after {timeout_per_case}s")
+            return False
         except Exception as e:
             logger.debug(f"Test {i} execution error: {e}")
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
+            return False
+
+    passed = 0
+    try:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(_run_one_test, i) for i in indices]
+            for fut in as_completed(futures):
+                if fut.result():
+                    passed += 1
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
     reward = passed / n_tests if n_tests > 0 else 0.0
     logger.info(
@@ -333,23 +350,41 @@ def _extract_code_block(text: str) -> str:
     4. Generic ``` ... ``` blocks
     5. Raw text if it looks like code
     """
-    # 0. Extract from noisy subprocess stdout if [AGENT RESPONSE]: markers present
+    # 0. Extract from noisy subprocess stdout if [AGENT RESPONSE]: markers present.
+    #    Prefer the LAST agent whose response contains a <solution> tag — this
+    #    handles the common case where a Verifier/Judge runs last with only
+    #    critique text, while an earlier Solver wrote the actual code.
     if "[AGENT RESPONSE]:" in text:
-        # Split on [AGENT RESPONSE]: and take the last section
         parts = text.split("[AGENT RESPONSE]:")
         if len(parts) > 1:
-            last_response = parts[-1]
-            # Trim at [TOKENS]: marker if present (end of agent response section)
-            tokens_idx = last_response.find("[TOKENS]:")
-            if tokens_idx != -1:
-                last_response = last_response[:tokens_idx]
-            # Also trim at next ========== AGENT NODE line if present
-            node_idx = last_response.find("==========")
-            if node_idx != -1:
-                last_response = last_response[:node_idx]
-            last_response = last_response.strip()
-            if last_response:
-                text = last_response
+            def _trim_response(seg: str) -> str:
+                tokens_idx = seg.find("[TOKENS]:")
+                if tokens_idx != -1:
+                    seg = seg[:tokens_idx]
+                node_idx = seg.find("==========")
+                if node_idx != -1:
+                    seg = seg[:node_idx]
+                return seg.strip()
+
+            agent_responses = [_trim_response(p) for p in parts[1:]]
+            agent_responses = [r for r in agent_responses if r]
+            chosen = None
+            # Prefer last response containing <solution>
+            for resp in reversed(agent_responses):
+                if "<solution>" in resp and "</solution>" in resp:
+                    chosen = resp
+                    break
+            # Otherwise prefer last response that contains ANY code-fence
+            if chosen is None:
+                for resp in reversed(agent_responses):
+                    if "```" in resp:
+                        chosen = resp
+                        break
+            # Final fallback: last non-empty response
+            if chosen is None and agent_responses:
+                chosen = agent_responses[-1]
+            if chosen:
+                text = chosen
 
     # 1. <solution>...</solution> tags (may contain ```python inside)
     solution_matches = re.findall(

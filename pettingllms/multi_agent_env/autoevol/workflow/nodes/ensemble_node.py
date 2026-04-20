@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Callable, Optional
 from collections import Counter
 import json
 from workflow.core import WorkflowNode, Context, Message, MessageType
+from workflow.nodes.agent_node import _compact_response, _PROMPT_LENGTH_WARN_CHARS
 
 
 def _extract_boxed_answer(text: str) -> Optional[str]:
@@ -38,6 +39,38 @@ def _extract_boxed_answer(text: str) -> Optional[str]:
     if depth == 0:
         return text[start:i - 1].strip()
     return None
+
+
+def _extract_solution_code(text: str) -> Optional[str]:
+    """Extract code from <solution>...</solution> for code-task voting.
+
+    Returns the inner code (with any ```python``` fence stripped), or None.
+    """
+    matches = re.findall(r"<solution>\s*(.*?)\s*</solution>", text, re.DOTALL)
+    if not matches:
+        return None
+    inner = matches[-1].strip()
+    fenced = re.findall(r"```(?:python)?\s*(.*?)```", inner, re.DOTALL)
+    if fenced:
+        inner = fenced[-1].strip()
+    return inner if inner else None
+
+
+def _normalize_code(code: str) -> str:
+    """Normalize code for vote bucketing: strip whitespace + comments."""
+    lines = []
+    for line in code.split("\n"):
+        # Drop full-line comments
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def _is_code_task() -> bool:
+    """Check whether the current MAS execution is a code task."""
+    return os.getenv("TASK_TYPE", "math").lower() == "code"
 
 
 def _normalize_answer(answer: str) -> str:
@@ -168,20 +201,26 @@ class EnsembleNode(WorkflowNode):
             The full response whose extracted answer is most common,
             or the judge's response when escalated.
         """
-        # Extract boxed answers from each response
+        # Task-aware extraction: code uses <solution> tags, math uses \boxed{}
+        is_code = _is_code_task()
         extracted = []
         for resp in responses:
-            ans = _extract_boxed_answer(resp)
+            if is_code:
+                ans = _extract_solution_code(resp)
+            else:
+                ans = _extract_boxed_answer(resp)
             extracted.append(ans)
 
         # Filter out None values and normalize for voting
         valid_triples = []
         for resp, ans in zip(responses, extracted):
             if ans is not None:
-                valid_triples.append((resp, ans, _normalize_answer(ans)))
+                norm = _normalize_code(ans) if is_code else _normalize_answer(ans)
+                valid_triples.append((resp, ans, norm))
 
         if not valid_triples:
-            self.logger.warning("No \\boxed{} answers found, falling back to first response")
+            tag = "<solution>" if is_code else "\\boxed{}"
+            self.logger.warning(f"No {tag} found, falling back to first response")
             return responses[0]
 
         # Vote on normalized answer values
@@ -277,20 +316,38 @@ class EnsembleNode(WorkflowNode):
                 original_question = msg.content if isinstance(msg.content, str) else str(msg.content)
                 break
 
-        # Build prompt with original question + all responses
+        # Build prompt with original question + compacted solutions.
+        # Each solver's full response (often 2-3k tokens) is compacted to its
+        # <delivery>+deliverable so that 3-solver consensus prompts stay
+        # under max_prompt_length even on long code problems.
         responses_text = "\n\n".join([
-            f"--- Solution {i+1} ({self.agents[i].name}) ---\n{resp}"
+            f"--- Solution {i+1} ({self.agents[i].name}) ---\n{_compact_response(resp)}"
             for i, resp in enumerate(responses)
         ])
 
+        # Task-aware final-format instruction so code tasks don't get nudged to \boxed{}
+        if _is_code_task():
+            final_instruction = (
+                "Your final solution MUST be wrapped in <solution>...</solution> tags, "
+                "containing the complete runnable Python code (stdin in, stdout out)."
+            )
+        else:
+            final_instruction = "Your final answer MUST be in \\boxed{} format."
+
+        consensus_content = (
+            f"**Original Question:**\n{original_question}\n\n"
+            f"**Multiple Solutions:**\n\n{responses_text}\n\n"
+            f"Review each solution carefully. Check the reasoning and calculations. "
+            f"Select the best answer or synthesize a corrected answer. "
+            f"{final_instruction}"
+        )
+        if len(consensus_content) > _PROMPT_LENGTH_WARN_CHARS:
+            self.logger.warning(
+                f"[ENSEMBLE consensus] prompt is {len(consensus_content)} chars — may be truncated"
+            )
+
         consensus_input = Message(
-            content=(
-                f"**Original Question:**\n{original_question}\n\n"
-                f"**Multiple Solutions:**\n\n{responses_text}\n\n"
-                f"Review each solution carefully. Check the reasoning and calculations. "
-                f"Select the best answer or synthesize a corrected answer. "
-                f"Your final answer MUST be in \\boxed{{}} format."
-            ),
+            content=consensus_content,
             message_type=MessageType.USER_INPUT
         )
         consensus_context.add_message(consensus_input)
