@@ -118,7 +118,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.execute_sample_num=$EXECUTE_SAMPLE_NUM\
     training.executor_group_mode=$EXECUTOR_GROUP_MODE\
     training.validate_sample_num=1\
-    training.max_prompt_length=8192\
+    training.max_prompt_length=7000\
     training.max_response_length=8192\
     training.val_freq=10\
     training.save_freq=10\
