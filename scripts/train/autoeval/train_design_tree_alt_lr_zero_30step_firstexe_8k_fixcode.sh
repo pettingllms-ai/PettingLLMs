@@ -104,7 +104,7 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
 APPS_RATIO=${APPS_RATIO:-0.7}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_zerolr_30steps_firstexe_6k"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_mix_${DESIGN_SAMPLE_NUM}d_${EXECUTE_SAMPLE_NUM}e_mix_question_grouping_altlr_zerolr_30steps_firstexe_7k_fixcode"}
 
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
@@ -118,7 +118,7 @@ python -m pettingllms.trainer.train --config-path ../config/autoevol --config-na
     training.execute_sample_num=$EXECUTE_SAMPLE_NUM\
     training.executor_group_mode=$EXECUTOR_GROUP_MODE\
     training.validate_sample_num=1\
-    training.max_prompt_length=8192\
+    training.max_prompt_length=7000\
     training.max_response_length=8192\
     training.val_freq=10\
     training.save_freq=10\
