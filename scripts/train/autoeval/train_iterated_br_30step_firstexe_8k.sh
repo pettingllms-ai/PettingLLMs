@@ -112,6 +112,7 @@ exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --co
     +$model_0_config_path.actor.use_kl_loss=false\
     +$model_0_config_path.actor.kl_loss_coef=0.0\
     +$model_0_config_path.actor.entropy_coeff=0.00\
+    $model_0_config_path.actor_rollout_ref.actor.fsdp_config.optimizer_offload=true\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6\
     $model_1_config_path.trainer.resume_mode=auto\
     $model_1_config_path.trainer.experiment_name=$EXPERIMENT_NAME\
@@ -123,6 +124,7 @@ exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --co
     +$model_1_config_path.actor.use_kl_loss=false\
     +$model_1_config_path.actor.kl_loss_coef=0.0\
     +$model_1_config_path.actor.entropy_coeff=0.00\
+    $model_1_config_path.actor_rollout_ref.actor.fsdp_config.optimizer_offload=true\
     $model_1_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6
 
 
