@@ -94,12 +94,22 @@ class MultiAgentsPPOTrainer:
         # Separate learning rates for designer vs executor
         self.designer_lr = getattr(config.training, 'designer_lr', None) if hasattr(config, 'training') else None
         self.executor_lr = getattr(config.training, 'executor_lr', None) if hasattr(config, 'training') else None
-        # LR alternating: swap designer/executor LR every N steps
+        # LR alternating: swap designer/executor LR every N steps (legacy soft-freeze mode)
         self.lr_alternate_steps = int(getattr(config.training, 'lr_alternate_steps', 0)) if hasattr(config, 'training') else 0
+        # IBR (Iterated Best-Response) co-training: hard-freeze one policy every N steps.
+        # Requires split_policy mode (2 independent models). Supersedes lr_alternate_steps.
+        self.phase_alternate_steps = int(getattr(config.training, 'phase_alternate_steps', 0)) if hasattr(config, 'training') else 0
+        self.first_phase_trains = str(getattr(config.training, 'first_phase_trains', 'executor')) if hasattr(config, 'training') else 'executor'
+        # Resolved at fit-time: model_name (policy_name) of the currently-frozen policy, or None.
+        self._current_frozen_policy = None
         if self.designer_lr is not None and self.executor_lr is not None:
             colorful_print(f"Separate LRs enabled: designer_lr={self.designer_lr}, executor_lr={self.executor_lr}", "yellow")
-            if self.lr_alternate_steps > 0:
-                colorful_print(f"LR alternating every {self.lr_alternate_steps} steps", "yellow")
+            if self.phase_alternate_steps > 0 and self.lr_alternate_steps > 0:
+                colorful_print(f"WARNING: phase_alternate_steps and lr_alternate_steps both >0; phase_alternate_steps takes precedence.", "red")
+            if self.phase_alternate_steps > 0:
+                colorful_print(f"IBR enabled: hard-freeze alternation every {self.phase_alternate_steps} steps, phase 0 trains {self.first_phase_trains}", "yellow")
+            elif self.lr_alternate_steps > 0:
+                colorful_print(f"LR alternating (soft-freeze) every {self.lr_alternate_steps} steps", "yellow")
         else:
             colorful_print(f"Using shared LR for all agents", "yellow")
 
@@ -622,15 +632,19 @@ class MultiAgentsPPOTrainer:
                             dp_world_size = 1
                         if dp_world_size > 1:
                             sub_batch, _ = pad_dataproto_to_divisor(sub_batch, dp_world_size)
-                        # Determine effective LR (with optional alternating)
-                        if self.lr_alternate_steps > 0:
+                        # Determine effective LR.
+                        # IBR mode (phase_alternate_steps > 0): use fixed per-agent LR. The
+                        # frozen side never reaches this code path because update_actor is
+                        # skipped at the per-model loop level in fit().
+                        if self.phase_alternate_steps > 0:
+                            override_lr = self.designer_lr if agent_name == "Designer" else self.executor_lr
+                        elif self.lr_alternate_steps > 0:
+                            # Legacy soft-freeze: swap designer/executor LRs every N steps.
                             phase = (self.global_steps // self.lr_alternate_steps) % 2
                             if phase == 0:
-                                # Designer-focused phase
                                 effective_designer_lr = self.designer_lr
                                 effective_executor_lr = self.executor_lr
                             else:
-                                # Executor-focused phase: swap LRs
                                 effective_designer_lr = self.executor_lr
                                 effective_executor_lr = self.designer_lr
                             override_lr = effective_designer_lr if agent_name == "Designer" else effective_executor_lr
@@ -638,7 +652,12 @@ class MultiAgentsPPOTrainer:
                             override_lr = self.designer_lr if agent_name == "Designer" else self.executor_lr
                         sub_batch.meta_info["override_lr"] = override_lr
                         agent_batch_list.append((agent_name, sub_batch))
-                        phase_str = f" [phase={'designer' if self.lr_alternate_steps == 0 or (self.global_steps // self.lr_alternate_steps) % 2 == 0 else 'executor'}-focused]" if self.lr_alternate_steps > 0 else ""
+                        if self.phase_alternate_steps > 0:
+                            phase_str = f" [IBR phase={'train' if self._current_frozen_policy != self.agent_policy_mapping.get(agent_name) else 'frozen'}]"
+                        elif self.lr_alternate_steps > 0:
+                            phase_str = f" [soft-phase={'designer' if (self.global_steps // self.lr_alternate_steps) % 2 == 0 else 'executor'}-focused]"
+                        else:
+                            phase_str = ""
                         colorful_print(f"Using lr={override_lr} for {agent_name} ({len(agent_indices)} samples){phase_str}", "cyan")
 
                     # Only step LR scheduler on the last sub-batch
@@ -746,7 +765,29 @@ class MultiAgentsPPOTrainer:
             progress_bar.update(1)
             progress_bar.set_description(f"Step {self.global_steps}")
             pprint(f"step {self.global_steps} started")
-            
+
+            # IBR (Iterated Best-Response) phase selection:
+            # Hard-freeze one policy for phase_alternate_steps consecutive steps, then swap.
+            # Requires split_policy mode (len(ppo_trainer_dict) >= 2).
+            self._current_frozen_policy = None
+            if self.phase_alternate_steps > 0 and len(self.ppo_trainer_dict) >= 2:
+                phase = (self.global_steps // self.phase_alternate_steps) % 2
+                # Phase 0 trains `first_phase_trains` side (freezes the other).
+                trains_executor_in_phase_0 = (self.first_phase_trains.lower() == "executor")
+                train_executor_now = (phase == 0) == trains_executor_in_phase_0
+                # Resolve frozen policy name via agent_policy_mapping (agent_name -> policy_name).
+                if train_executor_now:
+                    frozen_agent = "Designer"
+                else:
+                    frozen_agent = "Executor"
+                self._current_frozen_policy = self.agent_policy_mapping.get(frozen_agent)
+                colorful_print(
+                    f"[IBR] Step {self.global_steps}: phase={phase}, "
+                    f"training={'Executor' if train_executor_now else 'Designer'}, "
+                    f"frozen_policy={self._current_frozen_policy}",
+                    "cyan",
+                )
+
             batch_per_trainer: Dict[str,DataProto]={}
             for model_name in self.ppo_trainer_dict.keys():
                 batch_per_trainer[model_name] = DataProto.from_dict({})  # Placeholder
@@ -967,6 +1008,14 @@ class MultiAgentsPPOTrainer:
 
                     for model_name, trainer in self.ppo_trainer_dict.items():
                         print(f"[DEBUG HANG] Processing model: {model_name}", flush=True)
+                        # IBR: hard-skip update_actor for the currently-frozen policy.
+                        # Weights stay pinned on both FSDP worker and vLLM side (no divergence).
+                        if self._current_frozen_policy is not None and model_name == self._current_frozen_policy:
+                            colorful_print(
+                                f"[IBR] Step {self.global_steps}: {model_name} is frozen, skip update_actor",
+                                "cyan",
+                            )
+                            continue
                         if model_name in batch_per_trainer:
                             # Additional check before calling update_single_trainer
                             if model_name not in batch_per_trainer:

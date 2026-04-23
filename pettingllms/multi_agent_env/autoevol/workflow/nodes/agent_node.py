@@ -164,7 +164,7 @@ def _compact_response(text: str) -> str:
 
     text = text.strip()
 
-    if len(text) <= 2000:
+    if len(text) <= 10000:
         return text
 
     task_type = os.getenv("TASK_TYPE", "math").lower()
