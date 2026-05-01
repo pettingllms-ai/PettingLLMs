@@ -856,7 +856,8 @@ class RayPPOTrainer:
             raise NotImplementedError("load from hdfs is not implemented yet")
         else:
             experiment_name = getattr(self.config.trainer, 'experiment_name', 'default_experiment')
-            checkpoint_folder = os.path.join('checkpoints', experiment_name)  # TODO: check path
+            checkpoint_base = getattr(self.config, 'checkpoint_dir', 'checkpoints')
+            checkpoint_folder = os.path.join(checkpoint_base, experiment_name)
             if not os.path.isabs(checkpoint_folder):
                 working_dir = os.getcwd()
                 checkpoint_folder = os.path.join(working_dir, checkpoint_folder)

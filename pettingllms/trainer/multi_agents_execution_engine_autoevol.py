@@ -477,7 +477,15 @@ class MultiAgentsExecutionEngineAutoEvol:
         if has_executor:
             executor_enable_thinking = self.agent_enable_thinking.get(executor_name, False)
             executor_enable_multimodal = self.agent_enable_multimodal.get(executor_name, False)
-            
+
+            # Resolve executor server address up-front so MAS sub-agent calls below
+            # can route to executor's vLLM in split-policy mode (separate from designer)
+            _executor_addresses = self.server_address_dict.get(executor_policy)
+            if isinstance(_executor_addresses, (list, tuple)):
+                executor_address = random.choice(_executor_addresses) if len(_executor_addresses) > 0 else _executor_addresses[0]
+            else:
+                executor_address = _executor_addresses
+
             # Step 5: Executor updates from environment with designer's code
             executor_agent.update_from_env(env, designer_code=designer_code)
             executor_prompt =  executor_agent.current_prompt
@@ -623,19 +631,24 @@ class MultiAgentsExecutionEngineAutoEvol:
             logger.info(f"Calling executor step() with tokenizer_path: {executor_tokenizer_path}")
 
             # Step 10: Execute MAS code using executor's step() method
-            # IMPORTANT: Use designer's server_address and model_name for AIClient
-            # This ensures the MAS sub-agents use the designer's model
+            # In split-policy mode (has_executor=True): MAS sub-agents must hit the
+            # executor's vLLM, otherwise executor weights are never exercised during
+            # rollout and PPO updates are mis-targeted.
+            # In shared-policy mode: designer == executor, fall back to designer.
+            mas_server_address = executor_address if has_executor else designer_address
+            mas_model_name = executor_model_name if has_executor else designer_model_name
+
             print(f"[EXECUTOR STEP] Starting MAS execution for rollout {rollout_idx}")
-            print(f"[EXECUTOR STEP] Using designer's model: server_address={designer_address}, model_name={designer_model_name}")
+            print(f"[EXECUTOR STEP] has_executor={has_executor}, server_address={mas_server_address}, model_name={mas_model_name}")
             print(f"[EXECUTOR STEP] Executor tokenizer_path: {executor_tokenizer_path}")
-            
+
             step_result = await asyncio.wait_for(
                 executor_agent.step(
                     env_data=env,
                     output_dir=output_dir,
-                    server_address=designer_address,  # Use designer's server address for AIClient
-                    model_name=designer_model_name,   # Use designer's model name for AIClient
-                    tokenizer_path=executor_tokenizer_path,  # But use executor's tokenizer_path if different
+                    server_address=mas_server_address,
+                    model_name=mas_model_name,
+                    tokenizer_path=executor_tokenizer_path,
                     max_prompt_length=self.max_prompt_length,
                     max_response_length=self.max_response_length,
                     ppo_trainer_config=executor_ppo_config,
@@ -1021,6 +1034,15 @@ class MultiAgentsExecutionEngineAutoEvol:
         if has_executor:
             executor_enable_thinking = self.agent_enable_thinking.get(executor_name, False)
             executor_enable_multimodal = self.agent_enable_multimodal.get(executor_name, False)
+
+            # Resolve executor server address up-front so MAS sub-agent calls below
+            # can route to executor's vLLM in split-policy mode (separate from designer)
+            _executor_addresses = self.server_address_dict.get(executor_policy)
+            if isinstance(_executor_addresses, (list, tuple)):
+                executor_address = random.choice(_executor_addresses) if len(_executor_addresses) > 0 else _executor_addresses[0]
+            else:
+                executor_address = _executor_addresses
+
             executor_agent.update_from_env(env, designer_code=designer_code)
             executor_prompt = executor_agent.current_prompt
         else:
@@ -1136,12 +1158,17 @@ class MultiAgentsExecutionEngineAutoEvol:
 
             executor_tokenizer_path = self.tokenizer_path_dict.get(executor_policy)
 
+            # Split-policy: route MAS sub-agent calls to executor's vLLM.
+            # Shared-policy: designer == executor, fall back to designer's address.
+            mas_server_address = executor_address if has_executor else designer_address
+            mas_model_name = executor_model_name if has_executor else designer_model_name
+
             step_result = await asyncio.wait_for(
                 executor_agent.step(
                     env_data=env,
                     output_dir=output_dir,
-                    server_address=designer_address,
-                    model_name=designer_model_name,
+                    server_address=mas_server_address,
+                    model_name=mas_model_name,
                     tokenizer_path=executor_tokenizer_path,
                     max_prompt_length=self.max_prompt_length,
                     max_response_length=self.max_response_length,

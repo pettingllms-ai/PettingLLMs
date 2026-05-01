@@ -64,11 +64,10 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-8}
 EXECUTOR_GROUP_MODE=${EXECUTOR_GROUP_MODE:-question}
 MODEL_PATH=${MODEL_PATH:-"Mercury7353/masrl_0228_mix_coldstart"}
 APPS_RATIO=${APPS_RATIO:-0.7}
-PHASE_ALTERNATE_STEPS=${PHASE_ALTERNATE_STEPS:-30}
-FIRST_PHASE_TRAINS=${FIRST_PHASE_TRAINS:-executor}
+# phase_alternate_steps=0 disables IBR -> both policies update every step (simultaneous independent training)
 DESIGNER_LR=${DESIGNER_LR:-5e-6}
 EXECUTOR_LR=${EXECUTOR_LR:-5e-6}
-EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_iterated_2policy_30step_firstexe"}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_simultaneous_2policy_8k"}
 
 PY="/mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/pettingllms_venv/bin/python"
 echo "Using python: $PY"
@@ -91,8 +90,7 @@ exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --co
     training.val_freq=10\
     training.save_freq=10\
     training.train_data_mode=all\
-    training.phase_alternate_steps=$PHASE_ALTERNATE_STEPS\
-    training.first_phase_trains=$FIRST_PHASE_TRAINS\
+    training.phase_alternate_steps=0\
     training.lr_alternate_steps=0\
     training.designer_lr=$DESIGNER_LR\
     training.executor_lr=$EXECUTOR_LR\
@@ -114,7 +112,6 @@ exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --co
     +$model_0_config_path.actor.entropy_coeff=0.00\
     $model_0_config_path.actor_rollout_ref.actor.fsdp_config.optimizer_offload=true\
     $model_0_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6\
-    +$model_0_config_path.checkpoint_dir=/mnt/afs/video_ckpt/agent/zhangyaolun/masrl\
     $model_1_config_path.trainer.resume_mode=auto\
     $model_1_config_path.trainer.experiment_name=$EXPERIMENT_NAME\
     $model_1_config_path.trainer.val_before_train=False\
@@ -126,14 +123,17 @@ exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --co
     +$model_1_config_path.actor.kl_loss_coef=0.0\
     +$model_1_config_path.actor.entropy_coeff=0.00\
     $model_1_config_path.actor_rollout_ref.actor.fsdp_config.optimizer_offload=true\
-    $model_1_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6\
-    +$model_1_config_path.checkpoint_dir=/mnt/afs/video_ckpt/agent/zhangyaolun/masrl
+    $model_1_config_path.actor_rollout_ref.rollout.gpu_memory_utilization=0.6
 
 
-# Usage examples:
-#   Default 4x4, phase_alternate_steps=30, firstexe:
-#     bash train_iterated_br_30step_firstexe_8k.sh
-#   Longer phases:
-#     PHASE_ALTERNATE_STEPS=60 bash train_iterated_br_30step_firstexe_8k.sh
-#   Train designer first instead of executor:
-#     FIRST_PHASE_TRAINS=designer bash train_iterated_br_30step_firstexe_8k.sh
+# Usage:
+#   bash scripts/train/autoeval/train_simultaneous_2policy_8k.sh
+#
+# Notes:
+#   - phase_alternate_steps=0 -> NO IBR phase freezing -> designer & executor both update every step.
+#   - Checkpoints save to ./checkpoints/$EXPERIMENT_NAME/global_step_*/actor (working-dir relative).
+#     Run from PettingLLMs root, or override checkpoint_dir if you want elsewhere:
+#       e.g. +models.model_0.ppo_trainer_config.checkpoint_dir=/your/path \
+#            +models.model_1.ppo_trainer_config.checkpoint_dir=/your/path
+#   - Override LRs separately if you want asymmetric updates:
+#       DESIGNER_LR=1e-6 EXECUTOR_LR=5e-6 bash scripts/train/autoeval/train_simultaneous_2policy_8k.sh
