@@ -181,7 +181,11 @@ class MultiAgentsPPOTrainer:
         ppo_trainer.lora_num = self.lora_num
         ppo_trainer.agent_lora_mapping = self.agent_lora_mapping
         ppo_trainer.global_steps = 0
-        
+        # Tag the trainer with its policy name so _save_checkpoint /
+        # _load_checkpoint write/read per-policy subdirs (avoids overwriting
+        # in split-policy mode).
+        ppo_trainer.policy_name = model_name
+
         self.ppo_trainer_dict[model_name] = ppo_trainer
 
     def _create_multiple_ppo_trainers(self):
@@ -218,7 +222,9 @@ class MultiAgentsPPOTrainer:
                 ray_worker_group_cls=self.ray_worker_group_cls,
             )
             ppo_trainer.global_steps = 0
-            
+            # Per-policy subdir tag for save/load (see _save_checkpoint).
+            ppo_trainer.policy_name = model_name
+
             self.ppo_trainer_dict[model_name] = ppo_trainer
 
 
