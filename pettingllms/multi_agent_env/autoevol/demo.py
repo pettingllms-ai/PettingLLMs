@@ -22,10 +22,10 @@ from pettingllms.multi_agent_env.autoevol.gen_agent import MASGenerator
 
 
 DEFAULT_QUESTION = (
-    "Find the value of x if 2x + 3 = 17. Answer with a single number."
+    "Question: Find the value of x if 2x + 3 = 17. Answer with a single number."
 )
 DEFAULT_CODE_QUESTION = (
-    "Write a Python function solve(nums) that returns the sum of the two "
+    "Question: Write a Python function solve(nums) that returns the sum of the two "
     "largest integers in nums. Include only the final runnable code."
 )
 
@@ -41,6 +41,15 @@ def _normalise_server_address(server_address: str) -> str:
 
 def _openai_base_url(server_address: str) -> str:
     return _normalise_server_address(server_address) + "/v1"
+
+
+def _format_demo_question(question: str) -> str:
+    text = (question or "").strip()
+    if not text:
+        return DEFAULT_QUESTION
+    if text.lower().startswith("question:"):
+        return text
+    return "Question: " + text
 
 
 def _request_design(
@@ -549,7 +558,7 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    question = args.question or DEFAULT_QUESTION
+    question = _format_demo_question(args.question or DEFAULT_QUESTION)
     generator = MASGenerator(task_type=args.task_type)
 
     designer_response = ""
