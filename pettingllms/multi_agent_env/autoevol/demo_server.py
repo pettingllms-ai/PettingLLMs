@@ -293,8 +293,7 @@ INDEX_HTML = """<!doctype html>
           body: JSON.stringify(payload)
         });
         const data = await response.json();
-        if (!response.ok || data.error) throw new Error(data.error || "Demo failed");
-        $("runStatus").textContent = data.execution_success ? "Success" : "Completed";
+        $("runStatus").textContent = data.error ? "Error" : (data.execution_success ? "Success" : "Completed");
         $("summaryTask").textContent = data.task_type || payload.task_type;
         $("summaryAnswer").textContent = data.final_answer || "No final answer extracted";
         $("summaryOutput").textContent = data.output_dir || "-";
@@ -313,6 +312,7 @@ INDEX_HTML = """<!doctype html>
         } else {
           $("traceList").innerHTML = '<div class="empty">No AgentNode execution trace captured.</div>';
         }
+        if (!response.ok || data.error) throw new Error(data.error || "Demo failed");
       } catch (err) {
         $("runStatus").textContent = "Error";
         $("errorBox").textContent = err.message || String(err);

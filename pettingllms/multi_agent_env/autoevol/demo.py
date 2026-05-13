@@ -22,11 +22,20 @@ from pettingllms.multi_agent_env.autoevol.gen_agent import MASGenerator
 
 
 DEFAULT_QUESTION = (
-    "Question: Find the value of x if 2x + 3 = 17. Answer with a single number."
+    "Question: Every morning Aya goes for a $9$-kilometer-long walk and stops "
+    "at a coffee shop afterwards. When she walks at a constant speed of $s$ "
+    "kilometers per hour, the walk takes her 4 hours, including $t$ minutes "
+    "spent in the coffee shop. When she walks $s+2$ kilometers per hour, the "
+    "walk takes her 2 hours and 24 minutes, including $t$ minutes spent in the "
+    "coffee shop. Suppose Aya walks at $s+\\frac{1}{2}$ kilometers per hour. "
+    "Find the number of minutes the walk takes her, including the $t$ minutes "
+    "spent in the coffee shop."
 )
 DEFAULT_CODE_QUESTION = (
-    "Question: Write a Python function solve(nums) that returns the sum of the two "
-    "largest integers in nums. Include only the final runnable code."
+    "Question: LeetCode Hard - Trapping Rain Water. Given n non-negative "
+    "integers representing an elevation map where the width of each bar is 1, "
+    "compute how much water it can trap after raining. Write a Python function "
+    "trap(height: List[int]) -> int."
 )
 
 
