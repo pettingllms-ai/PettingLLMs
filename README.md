@@ -44,8 +44,13 @@ Across **six math and code benchmarks** and **two base models**, Metaagent-X out
 ```bash
 # Run a one-question demo with the released RL model.
 # This serves Mercury7353/MetaAgent-X with vLLM, asks it to design a MAS,
-# executes the MAS, and writes design/execution/visualization artifacts.
+# executes the MAS, and writes a local HTML visualization UI.
 QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
+bash scripts/evaluate/autoevol/serve_demo.sh
+
+# Code example:
+TASK_TYPE=code \
+QUESTION="Write a Python function solve(nums) that returns the sum of the two largest integers in nums. Include only the final runnable code." \
 bash scripts/evaluate/autoevol/serve_demo.sh
 
 # If the model is already served on this machine or another host:
@@ -62,7 +67,9 @@ bash scripts/train/autoeval/example_cotrain_autoeval.sh
 ```
 
 The demo writes `mas_design.py`, executable `mas.py`, `execution.log`, and a
-Mermaid graph `mas_visualization.mmd` under `outputs/autoeval_demo/` by default.
+visual interface `index.html` under `outputs/autoeval_demo/` by default. The UI
+shows the math/code example inputs, MAS design, workflow execution trace, full
+execution log, final result, and a simple workflow visualization.
 The auto-MAS environment, designer/executor agents, and reward functions live under
 `pettingllms/multi_agent_env/autoevol/`, with configs in `pettingllms/config/autoevol/`.
 

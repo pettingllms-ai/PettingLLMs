@@ -8,6 +8,7 @@ question, execute the generated workflow, and write inspectable artifacts.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -22,6 +23,10 @@ from pettingllms.multi_agent_env.autoevol.gen_agent import MASGenerator
 
 DEFAULT_QUESTION = (
     "Find the value of x if 2x + 3 = 17. Answer with a single number."
+)
+DEFAULT_CODE_QUESTION = (
+    "Write a Python function solve(nums) that returns the sum of the two "
+    "largest integers in nums. Include only the final runnable code."
 )
 
 
@@ -195,17 +200,349 @@ def _write_visualization(code: str, output_dir: Path) -> Path:
 
 
 def _extract_final_answer(output_text: str) -> str:
+    boxed_matches = re.findall(r"\\boxed\{([^{}]+)\}", output_text)
+    if boxed_matches:
+        return boxed_matches[-1].strip()
+
+    solution_matches = re.findall(
+        r"<solution>\s*(.*?)\s*</solution>",
+        output_text,
+        flags=re.DOTALL,
+    )
+    if solution_matches:
+        return solution_matches[-1].strip()
+
     patterns: Iterable[str] = (
         r"FINAL ANSWER:\s*(.+)",
         r"Final Answer:\s*(.+)",
-        r"\\boxed\{([^{}]+)\}",
     )
     for pattern in patterns:
         matches = re.findall(pattern, output_text)
         if matches:
-            return matches[-1].strip()
+            candidate = matches[-1].strip()
+            if candidate and not candidate.startswith("="):
+                return candidate
     tail = output_text.strip().splitlines()
     return tail[-1].strip() if tail else ""
+
+
+def _read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _extract_agent_trace(output_text: str) -> List[Dict[str, str]]:
+    pattern = re.compile(
+        r"=+ AGENT NODE: (?P<name>.*?) =+\n"
+        r"(?P<body>.*?)(?=\n=+ AGENT NODE: |\Z)",
+        re.DOTALL,
+    )
+    trace = []
+    for match in pattern.finditer(output_text):
+        body = match.group("body").strip()
+        response_match = re.search(
+            r"\[AGENT RESPONSE\]:\s*(?P<response>.*?)(?:\n\[TOKENS\]:|\Z)",
+            body,
+            re.DOTALL,
+        )
+        trace.append(
+            {
+                "name": match.group("name").strip(),
+                "body": body,
+                "response": response_match.group("response").strip()
+                if response_match
+                else "",
+            }
+        )
+    return trace
+
+
+def _workflow_steps(code: str) -> List[Tuple[str, str]]:
+    assignments = _parse_node_assignments(code)
+    order = _parse_workflow_order(code)
+    steps: List[Tuple[str, str]] = []
+    for var_name in order:
+        if var_name in assignments:
+            steps.append(assignments[var_name])
+    if not steps:
+        steps = list(assignments.values())
+    return steps
+
+
+def _render_cards(items: List[str]) -> str:
+    return "\n".join(f"<div class=\"flow-card\">{html.escape(item)}</div>" for item in items)
+
+
+def _write_demo_ui(
+    output_dir: Path,
+    result: Dict[str, object],
+    task_type: str,
+    question: str,
+    designer_response: str,
+    mas_design: str,
+    execution_log: str,
+    visualization_source: str,
+) -> Path:
+    examples = {
+        "math": DEFAULT_QUESTION,
+        "code": DEFAULT_CODE_QUESTION,
+    }
+    attempts = sorted(output_dir.glob("designer_response_attempt_*.txt"))
+    attempt_items = "\n".join(
+        f"<button class=\"attempt-tab\" data-attempt=\"attempt-{idx}\">Attempt {idx}</button>"
+        for idx, _ in enumerate(attempts, start=1)
+    )
+    attempt_panels = "\n".join(
+        (
+            f"<pre class=\"attempt-panel\" id=\"attempt-{idx}\">"
+            f"{html.escape(_read_text(path))}</pre>"
+        )
+        for idx, path in enumerate(attempts, start=1)
+    )
+    if not attempt_items:
+        attempt_items = "<span class=\"muted\">No retry attempts recorded.</span>"
+        attempt_panels = ""
+
+    trace = _extract_agent_trace(execution_log)
+    trace_cards = "\n".join(
+        (
+            "<article class=\"trace-card\">"
+            f"<h4>{html.escape(item['name'])}</h4>"
+            f"<pre>{html.escape(item['response'] or item['body'])}</pre>"
+            "</article>"
+        )
+        for item in trace
+    )
+    if not trace_cards:
+        trace_cards = "<div class=\"empty\">No AgentNode execution trace captured.</div>"
+
+    steps = _workflow_steps(mas_design)
+    flow_items = ["User query"] + [
+        f"{name} ({class_name})" for name, class_name in steps
+    ] + ["Final answer"]
+    flow_cards = _render_cards(flow_items)
+
+    final_answer = str(result.get("final_answer", ""))
+    status = "success" if result.get("execution_success") else "not complete"
+
+    page = f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MetaAgent-X Demo</title>
+  <style>
+    :root {{
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #657282;
+      --line: #d7dde5;
+      --accent: #0f766e;
+      --accent-soft: #e6f4f1;
+      --code-bg: #111827;
+      --code-ink: #e5e7eb;
+      --warn: #9a3412;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }}
+    header {{
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+      padding: 20px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }}
+    h1 {{ margin: 0; font-size: 22px; letter-spacing: 0; }}
+    .subhead {{ color: var(--muted); margin-top: 4px; }}
+    main {{
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px;
+    }}
+    aside, section, article {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }}
+    aside {{ padding: 16px; align-self: start; position: sticky; top: 92px; }}
+    .example {{
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 10px;
+      cursor: pointer;
+      color: var(--ink);
+    }}
+    .example.active {{ border-color: var(--accent); background: var(--accent-soft); }}
+    .example span {{ display: block; color: var(--muted); margin-top: 4px; font-size: 13px; }}
+    .grid {{ display: grid; gap: 18px; }}
+    section {{ padding: 16px; min-width: 0; }}
+    h2 {{ font-size: 16px; margin: 0 0 12px; }}
+    h3 {{ font-size: 14px; margin: 18px 0 8px; }}
+    h4 {{ font-size: 13px; margin: 0 0 8px; color: var(--accent); }}
+    .meta {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .metric {{
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }}
+    .metric strong {{ display: block; font-size: 13px; }}
+    .metric span {{ color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }}
+    pre {{
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border-radius: 8px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid var(--line);
+      max-height: 520px;
+      font-size: 12px;
+      line-height: 1.45;
+    }}
+    .code {{
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-color: #1f2937;
+    }}
+    .flow {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }}
+    .flow-card {{
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 13px;
+      max-width: 220px;
+    }}
+    .flow-card:not(:last-child)::after {{
+      content: ">";
+      color: var(--muted);
+      margin-left: 8px;
+    }}
+    .trace-list {{ display: grid; gap: 10px; }}
+    .trace-card {{ padding: 12px; }}
+    .attempts {{ display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }}
+    .attempt-tab {{
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 7px;
+      padding: 7px 10px;
+      cursor: pointer;
+    }}
+    .attempt-tab.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
+    .attempt-panel {{ display: none; }}
+    .attempt-panel.active {{ display: block; }}
+    .empty {{ color: var(--warn); background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px; }}
+    .muted {{ color: var(--muted); }}
+    @media (max-width: 900px) {{
+      main {{ grid-template-columns: 1fr; }}
+      aside {{ position: static; }}
+      .meta {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MetaAgent-X Demo</h1>
+    <div class="subhead">MAS design, workflow execution, and final output for a single query.</div>
+  </header>
+  <main>
+    <aside>
+      <h2>Example Inputs</h2>
+      <button class="example {'active' if task_type == 'math' else ''}" data-kind="math">
+        Math
+        <span>{html.escape(examples['math'])}</span>
+      </button>
+      <button class="example {'active' if task_type == 'code' else ''}" data-kind="code">
+        Code
+        <span>{html.escape(examples['code'])}</span>
+      </button>
+      <h3>Current Query</h3>
+      <pre>{html.escape(question)}</pre>
+    </aside>
+    <div class="grid">
+      <section>
+        <h2>Run Summary</h2>
+        <div class="meta">
+          <div class="metric"><strong>Task</strong><span>{html.escape(task_type)}</span></div>
+          <div class="metric"><strong>Status</strong><span>{html.escape(status)}</span></div>
+          <div class="metric"><strong>Output</strong><span>{html.escape(str(output_dir))}</span></div>
+        </div>
+        <h3>Final Result</h3>
+        <pre>{html.escape(final_answer or "No final answer extracted.")}</pre>
+      </section>
+
+      <section>
+        <h2>MAS Workflow</h2>
+        <div class="flow">{flow_cards}</div>
+        <h3>Mermaid Source</h3>
+        <pre>{html.escape(visualization_source)}</pre>
+      </section>
+
+      <section>
+        <h2>MAS Design Code</h2>
+        <pre class="code">{html.escape(mas_design or "No MAS design code was extracted.")}</pre>
+      </section>
+
+      <section>
+        <h2>Designer Output Attempts</h2>
+        <div class="attempts">{attempt_items}</div>
+        {attempt_panels}
+        <h3>Selected Designer Response</h3>
+        <pre>{html.escape(designer_response)}</pre>
+      </section>
+
+      <section>
+        <h2>Execution Trace</h2>
+        <div class="trace-list">{trace_cards}</div>
+      </section>
+
+      <section>
+        <h2>Full Execution Log</h2>
+        <pre>{html.escape(execution_log or "No execution log was produced.")}</pre>
+      </section>
+    </div>
+  </main>
+  <script>
+    const tabs = Array.from(document.querySelectorAll(".attempt-tab"));
+    const panels = Array.from(document.querySelectorAll(".attempt-panel"));
+    function activateAttempt(id) {{
+      tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.attempt === id));
+      panels.forEach((panel) => panel.classList.toggle("active", panel.id === id));
+    }}
+    if (tabs.length) activateAttempt(tabs[0].dataset.attempt);
+    tabs.forEach((tab) => tab.addEventListener("click", () => activateAttempt(tab.dataset.attempt)));
+  </script>
+</body>
+</html>
+"""
+    path = output_dir / "index.html"
+    path.write_text(page, encoding="utf-8")
+    return path
 
 
 def run_demo(args: argparse.Namespace) -> Dict[str, object]:
@@ -246,6 +583,7 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
 
     result: Dict[str, object] = {
         "question": question,
+        "task_type": args.task_type,
         "output_dir": str(output_dir),
         "designer_response": str(output_dir / "designer_response.txt"),
         "mas_design": str(output_dir / "mas_design.py"),
@@ -255,10 +593,32 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
 
     if args.design_only:
         result["execution_skipped"] = True
+        ui_path = _write_demo_ui(
+            output_dir=output_dir,
+            result=result,
+            task_type=args.task_type,
+            question=question,
+            designer_response=designer_response,
+            mas_design=generator.generated_code,
+            execution_log="",
+            visualization_source=_read_text(visualization_path),
+        )
+        result["ui"] = str(ui_path)
         return result
 
     if not generator.generated_code.strip():
         result["error"] = "The model response did not contain executable MAS code."
+        ui_path = _write_demo_ui(
+            output_dir=output_dir,
+            result=result,
+            task_type=args.task_type,
+            question=question,
+            designer_response=designer_response,
+            mas_design=generator.generated_code,
+            execution_log="",
+            visualization_source=_read_text(visualization_path),
+        )
+        result["ui"] = str(ui_path)
         return result
 
     executable_code = _build_executable_mas(
@@ -295,6 +655,17 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
             "final_answer": _extract_final_answer(output_text),
         }
     )
+    ui_path = _write_demo_ui(
+        output_dir=output_dir,
+        result=result,
+        task_type=args.task_type,
+        question=question,
+        designer_response=designer_response,
+        mas_design=generator.generated_code,
+        execution_log=output_text,
+        visualization_source=_read_text(visualization_path),
+    )
+    result["ui"] = str(ui_path)
     return result
 
 
