@@ -31,7 +31,7 @@ export NCCL_TIMEOUT=3600
 export NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
-export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Set WANDB_API_KEY in the shell environment when using wandb logging.
 export NCCL_NVLS_ENABLE=0
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then

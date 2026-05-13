@@ -21,7 +21,7 @@ pkill -KILL -f "WorkerDict" 2>/dev/null
 
 echo ""
 echo "=== ray stop ==="
-"/mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/pettingllms_venv/bin/ray" stop --force 2>&1 | tail -5
+"${RAY_BIN:-ray}" stop --force 2>&1 | tail -5
 
 sleep 2
 

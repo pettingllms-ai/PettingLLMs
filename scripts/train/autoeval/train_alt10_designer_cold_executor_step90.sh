@@ -14,7 +14,7 @@ export NCCL_TIMEOUT=3600
 export NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
-export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Set WANDB_API_KEY in the shell environment when using wandb logging.
 export NCCL_NVLS_ENABLE=0
 export MAX_ROLLOUT_CONCURRENCY=64
 export VLLM_ENABLE_V1_MULTIPROCESSING=0
@@ -78,7 +78,7 @@ EXECUTOR_RESUME_PATH=${EXECUTOR_RESUME_PATH:-"/mnt/afs/video_ckpt/agent/zhangyao
 PHASE_ALTERNATE_STEPS=10
 FIRST_PHASE_TRAINS=executor
 
-PY="/mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/pettingllms_venv/bin/python"
+PY="${PYTHON_BIN:-python3}"
 echo "Using python: $PY"
 echo "Designer init: COLD-START ($COLD_START_PATH)"
 echo "Executor init: RESUME from $EXECUTOR_RESUME_PATH"

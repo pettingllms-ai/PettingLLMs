@@ -15,7 +15,7 @@ export NCCL_TIMEOUT=3600
 export NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
-export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Set WANDB_API_KEY in the shell environment when using wandb logging.
 export NCCL_NVLS_ENABLE=0
 export MAX_ROLLOUT_CONCURRENCY=32
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
@@ -52,15 +52,11 @@ GPU_num=8
 model_0_config_path="models.model_0.ppo_trainer_config"
 model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.trainer.n_gpus_per_node=$GPU_num $model_0_config_path.trainer.nnodes=1 $model_0_config_path.actor_rollout_ref.rollout.tensor_model_parallel_size=$GPU_num"
 
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-1854
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0128_math_designer_only_wo_think/sft/checkpoint-838 # this is 0206 no tool
 # Mercury7353/masrlnothink0128
 # Mercury7353/masrl0206_notool
-# /mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968
 # autoeval_mixcoldstart_4design_8execution_4gpu
 # train data: designer_only, executor_only, all
 # Mercury7353/masrl_0228_mix_coldstart 
-# /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/checkpoints/autoeval_mixcoldstart_8design_1execution_designonly_8gpus/global_step_20/actor/checkpoint
 python -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
     base_models.policy_0.path="Mercury7353/masrl_0228_mix_coldstart"\

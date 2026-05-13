@@ -3,7 +3,7 @@
 
 ```bash
 git clone https://github.com/pettingllms-ai/PettingLLMs.git
-cd /mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs
+cd PettingLLMs
 bash setup.bash
 bash scripts/train/math/math_L1_prompt.sh
 ```

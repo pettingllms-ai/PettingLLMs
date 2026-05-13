@@ -30,7 +30,7 @@ python3 -m pettingllms.trainer.train --config-path ../config/stateful --config-n
     $model_0_resource \
     +rollout_mode=tree\
     env.max_turns=4\
-    base_models.policy_0.path="/home/nvidia/data/models/Qwen3-1.7B"\
+    base_models.policy_0.path="${MODEL_PATH:-Qwen/Qwen3-1.7B}"\
     training.experiment_name=sokoban_1.7B_prompt_at_grpo\
     training.total_training_steps=200\
     training.train_batch_size=32\

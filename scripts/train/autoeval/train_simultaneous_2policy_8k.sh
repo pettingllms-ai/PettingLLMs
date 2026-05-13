@@ -14,7 +14,7 @@ export NCCL_TIMEOUT=3600
 export NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
-export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Set WANDB_API_KEY in the shell environment when using wandb logging.
 export NCCL_NVLS_ENABLE=0
 export MAX_ROLLOUT_CONCURRENCY=64
 export VLLM_ENABLE_V1_MULTIPROCESSING=0
@@ -69,7 +69,7 @@ DESIGNER_LR=${DESIGNER_LR:-5e-6}
 EXECUTOR_LR=${EXECUTOR_LR:-5e-6}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-"autoeval_simultaneous_2policy_8k"}
 
-PY="/mnt/afs/zhangyaolun/safe_model/tool/PettingLLMs/pettingllms_venv/bin/python"
+PY="${PYTHON_BIN:-python3}"
 echo "Using python: $PY"
 exec "$PY" -u -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_iterated_br \
     $model_0_resource \

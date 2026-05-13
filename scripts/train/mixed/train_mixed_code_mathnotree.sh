@@ -15,7 +15,7 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_DEBUG=WARN
 export NCCL_NVLS_ENABLE=0
-export WANDB_API_KEY=e58969ddb292f80e531902b9a0e741b05d22f4ee
+# Set WANDB_API_KEY in the shell environment when using wandb logging.
 # Auto-detect CUDA: prefer conda env, fallback to system CUDA
 if [ -n "$CONDA_PREFIX" ] && [ -d "$CONDA_PREFIX" ]; then
     CONDA_CUDA_BIN=$(find "$CONDA_PREFIX" -name "ptxas" -type f 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
@@ -46,7 +46,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python -m pettingllms.trainer.train --config-path ../config/mixed --config-name mixed_train \
     $model_0_resource \
-    base_models.policy_0.path="/mnt/afs/zhangyaolun/safe_model/tool/LLaMA-Factory/saves/masrl/0226_math_code_mix_wo_think/sft/checkpoint-968" \
+    base_models.policy_0.path="${MODEL_PATH:-Mercury7353/MetaAgent-X}" \
     lora_rank=0 \
     lora_alpha=16 \
     training.experiment_name=mixed_train_code_math_8design_1execution \

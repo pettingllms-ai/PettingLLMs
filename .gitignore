@@ -66,6 +66,9 @@ cover/
 
 # Django stuff:
 *.log
+nohup.out
+error.txt
+bad_case/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
