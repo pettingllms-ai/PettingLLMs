@@ -42,19 +42,15 @@ Across **six math and code benchmarks** and **two base models**, Metaagent-X out
 ## Quick Start (Metaagent-X)
 
 ```bash
-# Run a one-question demo with the released RL model.
-# This serves Mercury7353/MetaAgent-X with vLLM, asks it to design a MAS,
-# executes the MAS, and writes a local HTML visualization UI.
-QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
-bash scripts/evaluate/autoevol/serve_demo.sh
+# Interactive browser demo.
+# This serves Mercury7353/MetaAgent-X with vLLM, opens a web UI, and lets users
+# enter math/code queries while inspecting MAS design and execution traces.
+bash scripts/evaluate/autoevol/serve_ui.sh
 
-# Code example:
-TASK_TYPE=code \
-QUESTION="Write a Python function solve(nums) that returns the sum of the two largest integers in nums. Include only the final runnable code." \
-bash scripts/evaluate/autoevol/serve_demo.sh
+# If the model is already served on this machine or another host, only start the UI:
+START_VLLM=false HOST=127.0.0.1 PORT=8300 bash scripts/evaluate/autoevol/serve_ui.sh
 
-# If the model is already served on this machine or another host:
-START_VLLM=false HOST=127.0.0.1 PORT=8300 \
+# One-shot CLI demo that writes an HTML report instead of serving a UI:
 QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
 bash scripts/evaluate/autoevol/serve_demo.sh
 
@@ -66,10 +62,12 @@ bash scripts/evaluate/autoevol/eval_first_open_model.sh
 bash scripts/train/autoeval/example_cotrain_autoeval.sh
 ```
 
-The demo writes `mas_design.py`, executable `mas.py`, `execution.log`, and a
-visual interface `index.html` under `outputs/autoeval_demo/` by default. The UI
-shows the math/code example inputs, MAS design, workflow execution trace, full
-execution log, final result, and a simple workflow visualization.
+The interactive UI is served at `http://127.0.0.1:8899` by default. Each run
+stores its artifacts under `outputs/autoeval_interactive/`, including
+`mas_design.py`, executable `mas.py`, `execution.log`, `index.html`, retry
+attempts, and the workflow visualization. The UI shows math/code examples, the
+model's MAS design, execution pipeline, AgentNode traces, full logs, and final
+result.
 The auto-MAS environment, designer/executor agents, and reward functions live under
 `pettingllms/multi_agent_env/autoevol/`, with configs in `pettingllms/config/autoevol/`.
 
