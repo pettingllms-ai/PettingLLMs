@@ -3,7 +3,6 @@ import os
 from typing import List, Dict, Any, Optional, Tuple
 import json
 import sys
-#sys.path.append("/mnt/afs/zhangyaolun/safe_model/masrl/utils/environments")
 from environments.search_env import SearchEnvironment
 import logging
 import ast
@@ -124,7 +123,5 @@ class BaseAgent:
             if i == self.max_turns - 1:
                 message.append({"role": "user", "content": "Reach the max turns, please submit the result. Follow <submit>...</submit> to submit the detailed result."})
         self.set_memory(message)
-        
-        return response
 
-    
+        return response

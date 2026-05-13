@@ -5,8 +5,9 @@ if not os.path.exists("training_data"):
     os.makedirs("training_data")
 
 
-data_sources = ["/mnt/afs/zhangyaolun/safe_model/masrl/training_data/designer_1225.jsonl"
-]
+data_sources = [path for path in os.getenv("AUTOEVOL_TRAINING_DATA_SOURCES", "").split(",") if path]
+if not data_sources:
+    raise ValueError("Set AUTOEVOL_TRAINING_DATA_SOURCES to one or more comma-separated jsonl files.")
 designer_data = []
 executor_data = []
 for data_source in data_sources:

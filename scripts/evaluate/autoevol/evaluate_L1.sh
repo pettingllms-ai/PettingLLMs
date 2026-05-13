@@ -18,8 +18,7 @@ export LD_LIBRARY_PATH=$CUDA_HOME/targets/x86_64-linux/lib:$CUDA_HOME/lib64:$LD_
 # Configuration - Edit these parameters
 # ============================================
 MODEL_PATHS=(
-    "/home/nvidia/data/models/masrl-1227"
-    #"/raid/lah003/mas_rl_cold_start"
+    "${MODEL_PATH:-Mercury7353/MetaAgent-X}"
 )
 EXPERIMENT_NAME="mas_graph_test"
 # Assuming execution from repository root
