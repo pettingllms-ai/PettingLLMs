@@ -50,19 +50,30 @@ class AIClient:
                 raise
      
     def chat(self, messages: List[Dict[str, Any]], temperature: float = 0.2, max_tokens: Optional[int] = None, tools: Optional[List[Dict[str, Any]]] = None) -> Tuple[str, int, int]:
-        # Check if we should use verl vllm interface
-        if self.tokenizer is None:
-            raise ValueError(
-                "AIClient.tokenizer is None. Please provide a valid tokenizer_path when creating AIClient. "
-                "Check that the tokenizer was properly loaded in the AIClient.__init__ method."
-            )
-        if self.server_address is None:
-            raise ValueError(
-                "AIClient.server_address is None. Please provide a valid server_address when creating AIClient."
-            )
+        if self.tokenizer is None or self.server_address is None:
+            return self._chat_openai(messages, temperature, max_tokens, tools)
 
+        # Check if we should use verl vllm interface
         return self._chat_verl(messages, temperature, max_tokens)
-        
+
+    def _chat_openai(self, messages: List[Dict[str, Any]], temperature: float, max_tokens: Optional[int], tools: Optional[List[Dict[str, Any]]]) -> Tuple[str, int, int]:
+        """OpenAI-compatible chat path used by demo/inference servers."""
+        kwargs = {
+            "model": self.chat_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens or self.max_answer_tokens,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        response = self.client.chat.completions.create(**kwargs)
+        message = response.choices[0].message
+        content = message.content or ""
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        return content, prompt_tokens, completion_tokens
 
 
     def _chat_verl(self, messages: List[Dict[str, Any]], temperature: float, max_tokens: Optional[int]) -> Tuple[str, int, int]:
@@ -139,4 +150,3 @@ class AIClient:
         completion_tokens = int(output_dpr.batch["responses"].shape[1])
 
         return response, prompt_tokens, completion_tokens
-

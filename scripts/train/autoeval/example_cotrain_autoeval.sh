@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Merge-ready AutoEval co-training example.
+# Merge-ready MetaAgent-X co-training example.
 #
-# This script keeps the core co-training controls in one public example.
-# Important controls:
-#   DESIGN_SAMPLE_NUM / EXECUTE_SAMPLE_NUM: M designs and N executions.
-#   EXECUTOR_GROUP_MODE: question/design/null grouping for executor rewards.
-#   TRAIN_DATA_MODE: all/designer_only/executor_only.
-#   DESIGNER_LR / EXECUTOR_LR / LR_ALTERNATE_STEPS: shared-policy soft alternation.
-#   PHASE_ALTERNATE_STEPS / FIRST_PHASE_TRAINS: optional hard IBR controls for
-#     configs such as math_L1_iterated_br.
+# Paper features exposed here:
+#   1. Hierarchical rollout: DESIGN_SAMPLE_NUM=M designs and
+#      EXECUTE_SAMPLE_NUM=N executions per design.
+#   2. Stage-wise co-training: DESIGNER_LR and EXECUTOR_LR alternate every
+#      LR_ALTERNATE_STEPS optimization steps.
+#
+# This public example intentionally keeps the training mode fixed:
+# shared policy, question-level executor reward grouping, and all rollout data
+# used for optimization.
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 export VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-FLASH_ATTN}"
@@ -41,14 +42,12 @@ export TRITON_PTXAS_PATH="${TRITON_PTXAS_PATH:-$CUDA_HOME/bin/ptxas}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 GPU_NUM="${GPU_NUM:-8}"
 CONFIG_NAME="${CONFIG_NAME:-math_L1_prompt}"
-MODEL_PATH="${MODEL_PATH:-Mercury7353/masrl_0228_mix_coldstart}"
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-1.7B}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-autoeval_cotrain_example_mixed_4d4e_alt10_8k}"
 
 DESIGN_SAMPLE_NUM="${DESIGN_SAMPLE_NUM:-4}"
 EXECUTE_SAMPLE_NUM="${EXECUTE_SAMPLE_NUM:-4}"
-EXECUTOR_GROUP_MODE="${EXECUTOR_GROUP_MODE:-question}"
 TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-8}"
-TRAIN_DATA_MODE="${TRAIN_DATA_MODE:-all}"
 TOTAL_TRAINING_STEPS="${TOTAL_TRAINING_STEPS:-400}"
 VALIDATE_SAMPLE_NUM="${VALIDATE_SAMPLE_NUM:-1}"
 VAL_FREQ="${VAL_FREQ:-10}"
@@ -61,10 +60,6 @@ MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
 DESIGNER_LR="${DESIGNER_LR:-1e-9}"
 EXECUTOR_LR="${EXECUTOR_LR:-5e-6}"
 LR_ALTERNATE_STEPS="${LR_ALTERNATE_STEPS:-10}"
-
-# Hard IBR controls are inactive by default for math_L1_prompt.
-PHASE_ALTERNATE_STEPS="${PHASE_ALTERNATE_STEPS:-0}"
-FIRST_PHASE_TRAINS="${FIRST_PHASE_TRAINS:-executor}"
 
 ENV_NAME="${ENV_NAME:-mixed_env}"
 DATASET_CODE="${DATASET_CODE:-code_contests}"
@@ -84,8 +79,9 @@ echo "AutoEval co-training example"
 echo "  model: $MODEL_PATH"
 echo "  config: $CONFIG_NAME"
 echo "  rollout tree: M=$DESIGN_SAMPLE_NUM designs, N=$EXECUTE_SAMPLE_NUM executions"
-echo "  executor grouping: $EXECUTOR_GROUP_MODE"
-echo "  soft LR alternation: designer=$DESIGNER_LR executor=$EXECUTOR_LR every $LR_ALTERNATE_STEPS steps"
+echo "  shared policy: enabled"
+echo "  executor reward grouping: question"
+echo "  stage-wise LR alternation: designer=$DESIGNER_LR executor=$EXECUTOR_LR every $LR_ALTERNATE_STEPS steps"
 
 exec "$PYTHON_BIN" -u -m pettingllms.trainer.train --config-path ../config/autoevol --config-name "$CONFIG_NAME" \
     $model_0_resource \
@@ -98,15 +94,13 @@ exec "$PYTHON_BIN" -u -m pettingllms.trainer.train --config-path ../config/autoe
     training.train_batch_size="$TRAIN_BATCH_SIZE" \
     training.design_sample_num="$DESIGN_SAMPLE_NUM" \
     training.execute_sample_num="$EXECUTE_SAMPLE_NUM" \
-    training.executor_group_mode="$EXECUTOR_GROUP_MODE" \
+    training.executor_group_mode=question \
     training.validate_sample_num="$VALIDATE_SAMPLE_NUM" \
     training.max_prompt_length="$MAX_PROMPT_LENGTH" \
     training.max_response_length="$MAX_RESPONSE_LENGTH" \
     training.val_freq="$VAL_FREQ" \
     training.save_freq="$SAVE_FREQ" \
-    training.train_data_mode="$TRAIN_DATA_MODE" \
-    ++training.phase_alternate_steps="$PHASE_ALTERNATE_STEPS" \
-    ++training.first_phase_trains="$FIRST_PHASE_TRAINS" \
+    training.train_data_mode=all \
     training.lr_alternate_steps="$LR_ALTERNATE_STEPS" \
     training.designer_lr="$DESIGNER_LR" \
     training.executor_lr="$EXECUTOR_LR" \

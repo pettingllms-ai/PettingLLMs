@@ -42,13 +42,27 @@ Across **six math and code benchmarks** and **two base models**, Metaagent-X out
 ## Quick Start (Metaagent-X)
 
 ```bash
-# Train an L1 (shared-policy) self-designing + self-executing MAS on math
-bash scripts/train/autoeval/train_L1.sh
+# Run a one-question demo with the released RL model.
+# This serves Mercury7353/MetaAgent-X with vLLM, asks it to design a MAS,
+# executes the MAS, and writes design/execution/visualization artifacts.
+QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
+bash scripts/evaluate/autoevol/serve_demo.sh
 
-# Smaller / debug configuration
-bash scripts/train/autoeval/train_L1_mini.sh
+# If the model is already served on this machine or another host:
+START_VLLM=false HOST=127.0.0.1 PORT=8300 \
+QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
+bash scripts/evaluate/autoevol/serve_demo.sh
+
+# Eval-first benchmark run on the released model
+bash scripts/evaluate/autoevol/eval_first_open_model.sh
+
+# Training example: shared-policy co-training with hierarchical M*N rollouts
+# and stage-wise alternate learning rates.
+bash scripts/train/autoeval/example_cotrain_autoeval.sh
 ```
 
+The demo writes `mas_design.py`, executable `mas.py`, `execution.log`, and a
+Mermaid graph `mas_visualization.mmd` under `outputs/autoeval_demo/` by default.
 The auto-MAS environment, designer/executor agents, and reward functions live under
 `pettingllms/multi_agent_env/autoevol/`, with configs in `pettingllms/config/autoevol/`.
 
@@ -140,8 +154,8 @@ Datasets are saved to `datasets/code/`, `datasets/math/`, and `datasets/sudoku_e
 ### 2) Training
 
 ```bash
-# Metaagent-X: self-designing + self-executing automatic MAS on math tasks
-bash scripts/train/autoeval/train_L1.sh
+# Metaagent-X: shared-policy co-training with M*N hierarchical rollouts
+bash scripts/train/autoeval/example_cotrain_autoeval.sh
 
 # AT-GRPO: fixed multi-agent system on math tasks
 bash scripts/train/math/math_L1_prompt.sh
@@ -165,6 +179,12 @@ Then run:
 
 ```bash
 bash scripts/evaluate/evaluate.sh
+```
+
+For MetaAgent-X, the eval-first entry point defaults to the released model:
+
+```bash
+bash scripts/evaluate/autoevol/eval_first_open_model.sh
 ```
 
 ## 📚 Citation
