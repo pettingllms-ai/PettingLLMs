@@ -1,6 +1,6 @@
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 
-export SERPER_API_KEY='c0210085fdef2b98bd222f7b17f6262ca0ec92df'
+export SERPER_API_KEY="${SERPER_API_KEY:-}"
 export CHAT_MODEL=gpt-4.1-mini
 export MAX_ANSWER_TOKENS=8192
 export ENVIRONMENT=search

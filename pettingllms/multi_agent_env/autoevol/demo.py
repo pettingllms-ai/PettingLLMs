@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -61,6 +62,15 @@ def _format_demo_question(question: str) -> str:
     return "Question: " + text
 
 
+def _patch_subprocess_python(code: str) -> str:
+    """Use the current interpreter for generated execute_code helpers."""
+    return re.sub(
+        r"(\[\s*)[\"']python3?[\"']",
+        r"\1sys.executable",
+        code,
+    )
+
+
 def _request_design(
     server_address: str,
     model_name: str,
@@ -68,12 +78,18 @@ def _request_design(
     temperature: float,
     max_tokens: int,
     api_key: str,
+    enable_thinking: bool,
 ) -> str:
     client = OpenAI(api_key=api_key or "dummy", base_url=_openai_base_url(server_address))
     response = client.chat.completions.create(
         model=model_name,
         temperature=temperature,
         max_tokens=max_tokens,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": enable_thinking,
+            },
+        },
         messages=[
             {
                 "role": "system",
@@ -150,6 +166,7 @@ ai_client = AIClient(
         server_address=server_address,
         enable_thinking=enable_thinking,
     )
+    patched_code = _patch_subprocess_python(patched_code)
     return setup_code + "\n" + patched_code + "\n"
 
 
@@ -570,8 +587,20 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
     question = _format_demo_question(args.question or DEFAULT_QUESTION)
     generator = MASGenerator(task_type=args.task_type)
 
+    print(
+        (
+            f"[demo] start task={args.task_type} output_dir={output_dir} "
+            f"design_retries={args.design_retries} design_max_tokens={args.design_max_tokens} "
+            f"mas_max_tokens={args.max_response_length} enable_thinking={args.enable_thinking}"
+        ),
+        flush=True,
+    )
+    print(f"[demo] question={question[:300]}", flush=True)
+
     designer_response = ""
     for attempt in range(1, args.design_retries + 1):
+        started_at = time.monotonic()
+        print(f"[demo] design attempt {attempt}/{args.design_retries} started", flush=True)
         designer_response = _request_design(
             server_address=args.server_address,
             model_name=args.model_name,
@@ -579,12 +608,23 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
             temperature=args.temperature,
             max_tokens=args.design_max_tokens,
             api_key=args.api_key,
+            enable_thinking=args.enable_thinking,
         )
         (output_dir / f"designer_response_attempt_{attempt}.txt").write_text(
             designer_response,
             encoding="utf-8",
         )
         generator.update_from_model(designer_response)
+        elapsed = time.monotonic() - started_at
+        extracted = bool(generator.generated_code.strip())
+        print(
+            (
+                f"[demo] design attempt {attempt}/{args.design_retries} finished "
+                f"elapsed={elapsed:.1f}s response_chars={len(designer_response)} "
+                f"extracted_code={extracted}"
+            ),
+            flush=True,
+        )
         if generator.generated_code.strip():
             break
 
@@ -625,6 +665,7 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
         return result
 
     if not generator.generated_code.strip():
+        print("[demo] no executable MAS code extracted after all design attempts", flush=True)
         result["error"] = "The model response did not contain executable MAS code."
         ui_path = _write_demo_ui(
             output_dir=output_dir,
@@ -652,6 +693,8 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
     executable_path = output_dir / "mas.py"
     executable_path.write_text(executable_code, encoding="utf-8")
 
+    print(f"[demo] executing generated MAS: {executable_path}", flush=True)
+    execution_started_at = time.monotonic()
     completed = subprocess.run(
         [args.python_bin, str(executable_path)],
         cwd=str(_repo_root()),
@@ -661,8 +704,16 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
         timeout=args.execution_timeout,
         check=False,
     )
+    execution_elapsed = time.monotonic() - execution_started_at
     output_text = completed.stdout or ""
     (output_dir / "execution.log").write_text(output_text, encoding="utf-8")
+    print(
+        (
+            f"[demo] execution finished returncode={completed.returncode} "
+            f"elapsed={execution_elapsed:.1f}s output_chars={len(output_text)}"
+        ),
+        flush=True,
+    )
 
     result.update(
         {

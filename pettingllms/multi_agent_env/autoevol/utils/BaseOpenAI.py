@@ -30,7 +30,7 @@ class AIClient:
         self.server_address = server_address
         self.max_prompt_length = max_prompt_length or 2048
         self.max_response_length = max_response_length or 2048
-        self.enable_thinking = False
+        self.enable_thinking = bool(enable_thinking)
         self.workflow = workflow
 
         # Load tokenizer if path is provided
@@ -63,6 +63,11 @@ class AIClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens or self.max_answer_tokens,
+            "extra_body": {
+                "chat_template_kwargs": {
+                    "enable_thinking": self.enable_thinking,
+                },
+            },
         }
         if tools:
             kwargs["tools"] = tools

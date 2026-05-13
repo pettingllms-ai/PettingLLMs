@@ -200,6 +200,12 @@ INDEX_HTML = """<!doctype html>
           <input id="designRetries" type="number" min="1" max="10" value="3">
         </div>
         <div>
+          <label for="designMaxTokens">Design max tokens</label>
+          <input id="designMaxTokens" type="number" min="512" step="512" value="8192">
+        </div>
+      </div>
+      <div class="row">
+        <div>
           <label for="maxResponseLength">MAS max tokens</label>
           <input id="maxResponseLength" type="number" min="512" step="512" value="8192">
         </div>
@@ -284,6 +290,7 @@ INDEX_HTML = """<!doctype html>
         question: $("question").value,
         output_dir: $("outputDir").value,
         design_retries: Number($("designRetries").value || 3),
+        design_max_tokens: Number($("designMaxTokens").value || 8192),
         max_response_length: Number($("maxResponseLength").value || 8192)
       };
       try {
@@ -413,6 +420,16 @@ def _make_handler(config: argparse.Namespace):
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 output_root = Path(payload.get("output_dir") or config.output_dir)
                 output_dir = output_root / f"run_{timestamp}"
+                task_type = payload.get("task_type") or "math"
+                print(
+                    (
+                        f"[demo-ui] run start task={task_type} output_dir={output_dir} "
+                        f"design_retries={payload.get('design_retries', config.design_retries)} "
+                        f"design_max_tokens={payload.get('design_max_tokens', config.design_max_tokens)} "
+                        f"enable_thinking={bool(payload.get('enable_thinking', config.enable_thinking))}"
+                    ),
+                    flush=True,
+                )
                 demo_args = SimpleNamespace(
                     server_address=config.server_address,
                     model_name=config.model_name,
@@ -420,7 +437,7 @@ def _make_handler(config: argparse.Namespace):
                     tokenizer_path=config.tokenizer_path,
                     api_key=config.api_key,
                     question=payload.get("question") or DEFAULT_QUESTION,
-                    task_type=payload.get("task_type") or "math",
+                    task_type=task_type,
                     output_dir=str(output_dir),
                     python_bin=config.python_bin,
                     temperature=float(payload.get("temperature", config.temperature)),
@@ -433,8 +450,16 @@ def _make_handler(config: argparse.Namespace):
                     design_only=bool(payload.get("design_only", False)),
                 )
                 result = run_demo(demo_args)
+                print(
+                    (
+                        f"[demo-ui] run done output_dir={output_dir} "
+                        f"success={result.get('execution_success')} error={result.get('error', '')}"
+                    ),
+                    flush=True,
+                )
                 _json_response(self, 200, _result_payload(result))
             except Exception as exc:
+                print(f"[demo-ui] run error {type(exc).__name__}: {exc}", flush=True)
                 _json_response(self, 500, {"error": f"{type(exc).__name__}: {exc}"})
 
     return DemoHandler

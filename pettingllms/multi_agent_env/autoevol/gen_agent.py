@@ -61,6 +61,49 @@ def _detect_gibberish(text: str, ngram_size: int = 3, threshold: float = 0.4) ->
     return max(penalty, -0.5)
 from pettingllms.multi_agent_env.autoevol.data_utils import load_and_tokenize_jsonl
 
+
+def _extract_unwrapped_workflow_code(response: str) -> str:
+    """Recover MAS code when the model emits raw workflow Python without fences."""
+    start_positions = [
+        response.find(marker)
+        for marker in (
+            "from workflow import",
+            "from pettingllms.multi_agent_env.autoevol.workflow import",
+        )
+        if response.find(marker) >= 0
+    ]
+    if not start_positions:
+        return ""
+
+    start = min(start_positions)
+    candidate = response[start:].strip()
+    if "workflow = Workflow" not in candidate or "workflow.run" not in candidate:
+        return ""
+
+    run_index = candidate.find("workflow.run")
+    stop_markers = (
+        "\nWait,",
+        "\nBut ",
+        "\nHowever,",
+        "\nAlternatively,",
+        "\nSo ",
+        "\nThe workflow",
+        "\nThis workflow",
+    )
+    stop_positions = [
+        candidate.find(marker, run_index)
+        for marker in stop_markers
+        if candidate.find(marker, run_index) > run_index
+    ]
+    if stop_positions:
+        candidate = candidate[: min(stop_positions)].rstrip()
+
+    lines = candidate.splitlines()
+    while lines and lines[-1].strip() in {"```", "</code>"}:
+        lines.pop()
+    return "\n".join(lines).strip()
+
+
 class MASGenerator(Agent):
     """MAS Designer Agent - designs multi-agent systems"""
 
@@ -116,6 +159,10 @@ class MASGenerator(Agent):
             generic_matches = re.findall(r"```\s*(.*?)\s*```", response, re.DOTALL)
             if generic_matches:
                 code = generic_matches[-1].strip()
+
+        # Strategy 4: Fallback to raw workflow Python emitted without tags/fences.
+        if not code:
+            code = _extract_unwrapped_workflow_code(response)
 
         self.generated_code = code
         self.current_action = code
