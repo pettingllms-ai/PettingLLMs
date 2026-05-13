@@ -20,7 +20,7 @@ from pettingllms.utils.performance import create_timer
 import copy
 from pettingllms.trainer.async_generate import convert_prompt_to_dpr, llm_async_generate
 from pettingllms.utils.logger_config import get_multi_logger
-from pettingllms.multi_agent_env.code.code_worker import get_ray_docker_worker_cls
+from pettingllms.multi_agent_env.math.math_worker import get_ray_docker_worker_cls
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,7 @@ class MultiAgentsExecutionEngine:
         config,
         ppo_trainer_config_dict=None,
         tokenizer_dict=None,
+        tokenizer_path_dict=None,
         processor_dict=None,
         server_address_dict=None,
         agent_policy_mapping=None,
@@ -68,6 +69,7 @@ class MultiAgentsExecutionEngine:
         self.config = config
         self.ppo_trainer_config_dict = ppo_trainer_config_dict or {}
         self.tokenizer_dict = tokenizer_dict
+        self.tokenizer_path_dict = tokenizer_path_dict or {}
         self.processor_dict = processor_dict or {}
         self.agent_policy_mapping = agent_policy_mapping or {}
         self.env_args = env_args or {}

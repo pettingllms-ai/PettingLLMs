@@ -77,16 +77,17 @@ def init_agent_execution_engine(config: DictConfig, address: str):
     # Initialize basic dictionaries
     ppo_trainer_config_dict = {}
     tokenizer_dict = {}
+    tokenizer_path_dict = {}
     processor_dict = {}
     server_address_dict = {}
     agent_policy_mapping = {}
-    
+
     # Build agent_policy_mapping
     for agent_key, agent_config in config.agent_policy_configs.agent_configs.items():
         agent_name = agent_config.name
         policy_name = agent_config.policy_name
         agent_policy_mapping[agent_name] = policy_name
-    
+
     # Get address mapping
     address_map = getattr(config, 'address_map', {}) if hasattr(config, 'address_map') else {}
 
@@ -95,25 +96,26 @@ def init_agent_execution_engine(config: DictConfig, address: str):
         # Skip models without name or path (they may only have ppo_trainer_config)
         if not hasattr(model_config, 'name') or not hasattr(model_config, 'path'):
             continue
-            
+
         model_name = model_config.name
         model_path = model_config.path
-        
+
         if hasattr(model_config, 'ppo_trainer_config'):
             ppo_trainer_config = model_config.ppo_trainer_config
             ppo_trainer_config_dict[model_name] = ppo_trainer_config
             local_path = copy_local_path_from_hdfs(model_path)
-            
+
             trust_remote_code = getattr(model_config, 'trust_remote_code', False)
             if hasattr(config, 'resource') and hasattr(config.resource, 'trust_remote_code'):
                 trust_remote_code = config.resource.trust_remote_code
-            
+
             # Create tokenizer and processor
             tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
             processor = hf_processor(local_path, trust_remote_code=trust_remote_code)
             tokenizer_dict[model_name] = tokenizer
+            tokenizer_path_dict[model_name] = local_path  # Store tokenizer path directly
             processor_dict[model_name] = processor
-            
+
             policy_addr = address_map.get(model_name, address)
             server_address_dict[model_name] = [policy_addr]
     
@@ -183,6 +185,7 @@ def init_agent_execution_engine(config: DictConfig, address: str):
             config=config,
             ppo_trainer_config_dict=ppo_trainer_config_dict,
             tokenizer_dict=tokenizer_dict,
+            tokenizer_path_dict=tokenizer_path_dict,
             processor_dict=processor_dict,
             server_address_dict=server_address_dict,
             agent_policy_mapping=agent_policy_mapping,
@@ -197,6 +200,7 @@ def init_agent_execution_engine(config: DictConfig, address: str):
             config=config,
             ppo_trainer_config_dict=ppo_trainer_config_dict,
             tokenizer_dict=tokenizer_dict,
+            tokenizer_path_dict=tokenizer_path_dict,
             processor_dict=processor_dict,
             server_address_dict=server_address_dict,
             agent_policy_mapping=agent_policy_mapping,
@@ -211,6 +215,7 @@ def init_agent_execution_engine(config: DictConfig, address: str):
             config=config,
             ppo_trainer_config_dict=ppo_trainer_config_dict,
             tokenizer_dict=tokenizer_dict,
+            tokenizer_path_dict=tokenizer_path_dict,
             processor_dict=processor_dict,
             server_address_dict=server_address_dict,
             agent_policy_mapping=agent_policy_mapping,

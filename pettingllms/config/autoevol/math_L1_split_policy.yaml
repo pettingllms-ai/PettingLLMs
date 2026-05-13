@@ -1,0 +1,122 @@
+defaults:
+- ../ppo_trainer@models.model_0.ppo_trainer_config: eval
+- ../ppo_trainer@models.model_1.ppo_trainer_config: eval
+- _self_
+workflow_type: autoevol
+specialization: full
+task_type: math
+resource:
+  nnodes: 1
+  n_gpus_per_node: 8
+  trust_remote_code: true
+lora_rank: 0
+lora_alpha: 16
+env:
+  name: math_env
+  dataset: polaris
+  benchmark: AIME24
+  max_turns: 1
+  resolve: false
+  multi_modal: false
+  batched_init: true
+base_models:
+  policy_0:
+    path: Mercury7353/masrlnothink0128
+    name: designer_model
+  policy_1:
+    path: Qwen/Qwen3-8B
+    name: executor_model
+agent_policy_configs:
+  agent_configs:
+    agent_0:
+      name: Designer
+      policy_name: designer_model
+      train_llm_config:
+        enable_thinking: true
+        temperature: 0.6
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: true
+        temperature: 0
+        top_p: 1
+        top_k: -1
+        min_p: 0.0
+    agent_1:
+      name: Executor
+      policy_name: executor_model
+      train_llm_config:
+        enable_thinking: false
+        temperature: 0.6
+        top_p: 0.9
+        top_k: 20
+        min_p: 0.0
+      val_llm_config:
+        enable_thinking: false
+        temperature: 0
+        top_p: 1
+        top_k: -1
+        min_p: 0.0
+multi_agent_interaction:
+  turn_order:
+  - Designer
+  - Executor
+  parallel: false
+training:
+  device: cuda
+  total_training_steps: 400
+  project_name: pettingllms
+  experiment_name: autoeval_L1_split_policy
+  logger:
+  - console
+  - wandb
+  model_checkpoints_dir: checkpoints
+  ray_wait_register_center_timeout: 300
+  train_batch_size: 32
+  train_sample_num: 8
+  validate_sample_num: 3
+  sample_temperature: 1
+  val_freq: 10
+  max_prompt_length: 2048
+  max_response_length: 4096
+  lora_rank: ${lora_rank}
+  lora_alpha: ${lora_alpha}
+models:
+  model_0:
+    path: ${base_models.policy_0.path}
+    name: ${base_models.policy_0.name}
+    ppo_trainer_config:
+      data:
+        max_prompt_length: ${training.max_prompt_length}
+        max_response_length: ${training.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${base_models.policy_0.path}
+        rollout:
+          temperature: ${training.sample_temperature}
+          prompt_length: ${training.max_prompt_length}
+          response_length: ${training.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}
+  model_1:
+    path: ${base_models.policy_1.path}
+    name: ${base_models.policy_1.name}
+    ppo_trainer_config:
+      data:
+        max_prompt_length: ${training.max_prompt_length}
+        max_response_length: ${training.max_response_length}
+      actor_rollout_ref:
+        model:
+          path: ${base_models.policy_1.path}
+        rollout:
+          temperature: ${training.sample_temperature}
+          prompt_length: ${training.max_prompt_length}
+          response_length: ${training.max_response_length}
+          tensor_model_parallel_size: ${resource.n_gpus_per_node}
+        trainer:
+          n_gpus_per_node: ${resource.n_gpus_per_node}
+          n_training_gpus_per_node: ${resource.n_gpus_per_node}
+

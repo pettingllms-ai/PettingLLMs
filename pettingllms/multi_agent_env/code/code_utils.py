@@ -130,11 +130,12 @@ def _format_competition_problem(example: Dict, index: int, mode: str = "train") 
     try:
         question = example.get("question", "")
         test_input = example.get("test_input", "")
-        if len(test_input)>4:
-            test_input=test_input[:4]
         test_output = example.get("test_output", "")
-        if len(test_output)>4:
-            test_output=test_output[:4]
+        if mode == "train":
+            if len(test_input) > 4:
+                test_input = test_input[:4]
+            if len(test_output) > 4:
+                test_output = test_output[:4]
         if mode == "train":
             solution = example.get("solution", "")
         else:  # validation mode

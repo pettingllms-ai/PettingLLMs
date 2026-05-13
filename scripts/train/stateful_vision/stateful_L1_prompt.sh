@@ -28,7 +28,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python3 -m pettingllms.trainer.train --config-path ../config/stateful_vision --config-name stateful_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="/raid/lah003/Qwen2.5-VL-3B-Instruct"\
+    base_models.policy_0.path="${MODEL_PATH:-Qwen/Qwen2.5-VL-3B-Instruct}"\
     training.experiment_name=stateful_vision_L1_prompt\
     training.total_training_steps=200\
     training.train_batch_size=32\

@@ -73,9 +73,15 @@ def train_multi_agents(config):
     
     # Validation 2: Check specialization mode requirements
     if specialization == "prompt" or specialization == "lora":
-        if num_models != 1:
+        # Allow multiple models for split_policy scenario (multiple agents with different policies)
+        # Check if we have multiple agents with different policy names
+        policy_names = set(agent_config.policy_name for agent_config in config.agent_policy_configs.agent_configs.values())
+        is_split_policy = len(policy_names) > 1 and num_models > 1
+        
+        if num_models != 1 and not is_split_policy:
             raise ValueError(
-                f"For specialization={specialization}', expected exactly 1 model, but got {num_models}"
+                f"For specialization={specialization}', expected exactly 1 model, but got {num_models}. "
+                f"For split_policy (multiple agents with different policies), multiple models are allowed."
             )
     if specialization == "lora":
         # Validate LoRA configuration
@@ -121,34 +127,44 @@ def train_multi_agents(config):
     multi_modal = getattr(config, 'multi_modal', False)
     
     tokenizer_dict = {}
+    tokenizer_path_dict = {}
     processor_dict = {}
     ppo_trainer_config_dict = {}
     model_num = 0
-    
 
-        
+
+
     for model_key, model_config in config.models.items():
         model_num += 1
         model_path = model_config.path
         model_name = model_config.name
-        
+
         print(f"Processing model: {model_name} at path: {model_path}")
-        
+
         local_path = copy_local_path_from_hdfs(model_path)
-        
+
         trust_remote_code = getattr(model_config, 'trust_remote_code', False)
         if hasattr(config, 'resource') and hasattr(config.resource, 'trust_remote_code'):
             trust_remote_code = config.resource.trust_remote_code
-        
+
         tokenizer = hf_tokenizer(local_path, trust_remote_code=trust_remote_code)
         processor = hf_processor(local_path, trust_remote_code=trust_remote_code)
         tokenizer_dict[model_name] = tokenizer
+        tokenizer_path_dict[model_name] = local_path  # Store tokenizer path directly
         if multi_modal:
             processor_dict[model_name] = processor
         ppo_trainer_config_dict[model_name] = model_config.ppo_trainer_config
 
     n_gpus_per_model = n_gpus_per_node // model_num
     print(f"n_gpus_per_model: {n_gpus_per_model}")
+    
+    # Validation: Ensure each model gets at least 1 GPU
+    if n_gpus_per_model < 1:
+        raise ValueError(
+            f"Insufficient GPUs: n_gpus_per_node={n_gpus_per_node}, num_models={model_num}. "
+            f"Each model needs at least 1 GPU, but n_gpus_per_model={n_gpus_per_model}. "
+            f"Please increase n_gpus_per_node to at least {model_num}."
+        )
     
     role_worker_mapping = {
         Role.ActorRollout: ray.remote(max_concurrency=2048)(AsyncActorRolloutRefWorker),
@@ -172,6 +188,7 @@ def train_multi_agents(config):
     trainer = MultiAgentsPPOTrainer(
         config=config,
         tokenizer_dict=tokenizer_dict,
+        tokenizer_path_dict=tokenizer_path_dict,
         processor_dict=processor_dict,
         role_worker_mapping=role_worker_mapping,
         resource_pool_manager=managers,

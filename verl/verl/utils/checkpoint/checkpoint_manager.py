@@ -139,15 +139,13 @@ def is_valid_checkpoint(ckpt_path):
     Adjust the checks below to match your own project requirements.
     """
 
-    # 1) Check for required top-level files
-    required_pt_files = [
-        'data.pt'
-    ]
-    for fname in required_pt_files:
+    # 1) Check for optional top-level files (data.pt may not exist in MASRL mode
+    #    where data is regenerated each step)
+    optional_pt_files = ['data.pt']
+    for fname in optional_pt_files:
         full_file = os.path.join(ckpt_path, fname)
         if not os.path.exists(full_file):
-            print(f"Checkpoint {ckpt_path} is missing required file: {fname}")
-            return False
+            print(f"Checkpoint {ckpt_path} is missing optional file: {fname} (will skip dataloader restore)")
 
     # 2) Check for 'actor' folder
     actor_dir = os.path.join(ckpt_path, "actor")
@@ -155,18 +153,7 @@ def is_valid_checkpoint(ckpt_path):
         print(f"Checkpoint {ckpt_path} is missing the 'actor' folder.")
         return False
 
-    # 3) Check for subfolders in 'actor'
-    checkpoint_dir = os.path.join(actor_dir, "checkpoint")
-    if not os.path.isdir(checkpoint_dir):
-        print(f"Checkpoint {ckpt_path} is missing the 'checkpoint' directory inside 'actor'.")
-        return False
-
-    # hf_dir = os.path.join(actor_dir, "huggingface")
-    # if not os.path.isdir(hf_dir):
-    #     print(f"Checkpoint {ckpt_path} is missing the 'huggingface' directory inside 'actor'.")
-    #     return False
-
-    # 4) Check for .pt files in 'actor' that start with specific prefixes
+    # 3) Check for .pt files in 'actor' that start with specific prefixes
     required_prefixes = [
         "model_world_size",
         "optim_world_size",

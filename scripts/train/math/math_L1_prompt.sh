@@ -28,7 +28,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python3 -m pettingllms.trainer.train --config-path ../config/math --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="your base model path"\
+    base_models.policy_0.path="${MODEL_PATH:-Mercury7353/MetaAgent-X}"\
     training.experiment_name=math_1.7B_prompt\
     training.total_training_steps=200\
     training.train_batch_size=32\
@@ -37,6 +37,6 @@ python3 -m pettingllms.trainer.train --config-path ../config/math --config-name 
     training.max_prompt_length=2048\
     training.max_response_length=4096\
     training.val_freq=10\
-    training.resample_freq=3\
+    +training.resample_freq=3\
     env.dataset=polaris\
     env.benchmark=AIME24\

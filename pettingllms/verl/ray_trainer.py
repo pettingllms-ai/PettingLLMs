@@ -798,19 +798,28 @@ class RayPPOTrainer:
         
 
     def _save_checkpoint(self, save_base=True):
-        # path: checkpoints/{experiment_name}/{model_name}/global_step_{global_steps}/actor
-        date_time_str = datetime.now().strftime("%Y%m%d")
+        # path: checkpoints/{experiment_name}/global_step_{global_steps}/[{policy_name}/]actor
+        # In split-policy / multi-agent mode, multi_agents_ppo_trainer sets
+        # `policy_name` on each ppo_trainer so each policy saves to its own
+        # subdir. Without policy_name (single-policy / shared-policy), keep the
+        # legacy path for backward compat.
         experiment_name = getattr(self.config.trainer, 'experiment_name', 'default_experiment')
         checkpoint_base = getattr(self.config, 'checkpoint_dir', 'checkpoints')
-        experiment_folder = os.path.join(checkpoint_base, date_time_str, experiment_name)
-        
+        experiment_folder = os.path.join(checkpoint_base, experiment_name)
+
         local_global_step_folder = os.path.join(experiment_folder, f'global_step_{self.global_steps}')
+        policy_name = getattr(self, 'policy_name', None)
+        if policy_name:
+            local_global_step_folder = os.path.join(local_global_step_folder, policy_name)
         # Make dirs from this absolute path
         os.makedirs(local_global_step_folder, exist_ok=True)
         print(f'local_global_step_folder: {local_global_step_folder}')
         actor_local_path = os.path.join(local_global_step_folder, 'actor')
 
-        actor_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(self.config.trainer.default_hdfs_dir, experiment_name, f"global_step_{self.global_steps}", "actor")
+        _remote_step_dir = f"global_step_{self.global_steps}"
+        if policy_name:
+            _remote_step_dir = os.path.join(_remote_step_dir, policy_name)
+        actor_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(self.config.trainer.default_hdfs_dir, experiment_name, _remote_step_dir, "actor")
 
         remove_previous_ckpt_in_save = self.config.trainer.get("remove_previous_ckpt_in_save", False)
         if remove_previous_ckpt_in_save:
@@ -835,7 +844,7 @@ class RayPPOTrainer:
 
         if self.use_critic:
             critic_local_path = os.path.join(local_global_step_folder, "critic")
-            critic_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(self.config.trainer.default_hdfs_dir, experiment_name, f"global_step_{self.global_steps}", "critic")
+            critic_remote_path = None if self.config.trainer.default_hdfs_dir is None else os.path.join(self.config.trainer.default_hdfs_dir, experiment_name, _remote_step_dir, "critic")
             self.critic_wg.save_checkpoint(critic_local_path, critic_remote_path, self.global_steps, max_ckpt_to_keep=max_critic_ckpt_to_keep)
 
         # save dataloader
@@ -857,7 +866,8 @@ class RayPPOTrainer:
             raise NotImplementedError("load from hdfs is not implemented yet")
         else:
             experiment_name = getattr(self.config.trainer, 'experiment_name', 'default_experiment')
-            checkpoint_folder = os.path.join('checkpoints', experiment_name)  # TODO: check path
+            checkpoint_base = getattr(self.config, 'checkpoint_dir', 'checkpoints')
+            checkpoint_folder = os.path.join(checkpoint_base, experiment_name)
             if not os.path.isabs(checkpoint_folder):
                 working_dir = os.getcwd()
                 checkpoint_folder = os.path.join(working_dir, checkpoint_folder)
@@ -878,7 +888,18 @@ class RayPPOTrainer:
                     global_step_folder = os.path.join(working_dir, global_step_folder)
         print(f"Load from checkpoint folder: {global_step_folder}")
         # set global step
-        self.global_steps = int(global_step_folder.split("global_step_")[-1])
+        self.global_steps = int(global_step_folder.rstrip('/').split("global_step_")[-1].split('/')[0])
+
+        # Per-policy subdir (new save layout). Fall back to legacy flat path
+        # if the subdir doesn't exist — lets us resume runs created before the
+        # multi-policy save fix.
+        policy_name = getattr(self, 'policy_name', None)
+        if policy_name and os.path.isdir(os.path.join(global_step_folder, policy_name)):
+            global_step_folder = os.path.join(global_step_folder, policy_name)
+            print(f"Resuming policy '{policy_name}' from per-policy subdir: {global_step_folder}")
+        elif policy_name:
+            print(f"[WARN] No per-policy subdir for '{policy_name}' under {global_step_folder}; "
+                  f"loading from legacy flat path (likely overwritten by another policy in pre-fix runs)")
 
         print(f"Setting global step to {self.global_steps}")
         print(f"Resuming from {global_step_folder}")

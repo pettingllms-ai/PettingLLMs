@@ -82,6 +82,11 @@ class DataParallelPPOActor(BasePPOActor):
             entropy: # (bs, response_len)
             log_probs: # (bs, response_len)
         """
+        import sys
+        import time
+        import torch.distributed as dist
+        rank = dist.get_rank() if dist.is_initialized() else 0
+
         response_length = micro_batch["responses"].size(-1)
         multi_modal_inputs = {}
         if "multi_modal_inputs" in micro_batch.keys():
@@ -93,6 +98,10 @@ class DataParallelPPOActor(BasePPOActor):
             batch_size, seqlen = input_ids.shape
             attention_mask = micro_batch["attention_mask"]
             position_ids = micro_batch["position_ids"]
+
+            print(f"[DEBUG _forward rank={rank}] batch_size={batch_size}, seqlen={seqlen}", flush=True)
+            sys.stdout.flush()
+
             entropy = None
             if position_ids.dim() == 3:  # qwen2vl mrope
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
@@ -139,6 +148,10 @@ class DataParallelPPOActor(BasePPOActor):
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
 
+                print(f"[DEBUG _forward rank={rank}] >>> Calling actor_module.forward (FSDP all-gather here)...", flush=True)
+                sys.stdout.flush()
+                forward_start = time.time()
+
                 output = self.actor_module(
                     input_ids=input_ids_rmpad,
                     attention_mask=None,
@@ -147,6 +160,12 @@ class DataParallelPPOActor(BasePPOActor):
                     use_cache=False,
                     **extra_args,
                 )  # prevent model thinks we are generating
+
+                # Force CUDA synchronization to catch actual completion
+                torch.cuda.synchronize()
+                forward_time = time.time() - forward_start
+                print(f"[DEBUG _forward rank={rank}] <<< actor_module.forward DONE ({forward_time:.2f}s)", flush=True)
+                sys.stdout.flush()
 
                 if self.use_fused_kernels:
                     log_probs = output.log_probs.squeeze(0)  # (total_nnz,)
@@ -210,6 +229,11 @@ class DataParallelPPOActor(BasePPOActor):
                 extra_args = {}
                 if self.use_fused_kernels:
                     extra_args["temperature"] = temperature
+
+                print(f"[DEBUG _forward rank={rank}] >>> Calling actor_module.forward (no rmpad, FSDP all-gather here)...", flush=True)
+                sys.stdout.flush()
+                forward_start = time.time()
+
                 output = self.actor_module(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
@@ -218,6 +242,11 @@ class DataParallelPPOActor(BasePPOActor):
                     use_cache=False,
                     **extra_args,
                 )  # prevent model thinks we are generating
+
+                torch.cuda.synchronize()
+                forward_time = time.time() - forward_start
+                print(f"[DEBUG _forward rank={rank}] <<< actor_module.forward DONE (no rmpad) ({forward_time:.2f}s)", flush=True)
+                sys.stdout.flush()
 
                 if self.use_fused_kernels:
                     log_probs = output.log_probs[:, -response_length - 1 : -1]
@@ -271,12 +300,24 @@ class DataParallelPPOActor(BasePPOActor):
         Returns:
             torch.Tensor: the log_prob tensor
         """
+        import sys
+        import time
+        import torch.distributed as dist
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+
+        print(f"[DEBUG dp_actor rank={rank}/{world_size}] ===== ENTERING compute_log_prob =====", flush=True)
+        print(f"[DEBUG dp_actor rank={rank}] data batch size: {len(data)}", flush=True)
+        sys.stdout.flush()
+
         # set to eval
         self.actor_module.eval()
 
         micro_batch_size = data.meta_info["micro_batch_size"]
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid silent error
         use_dynamic_bsz = data.meta_info["use_dynamic_bsz"]
+
+        print(f"[DEBUG dp_actor rank={rank}] micro_batch_size={micro_batch_size}, use_dynamic_bsz={use_dynamic_bsz}", flush=True)
 
         select_keys = ["responses", "input_ids", "attention_mask", "position_ids"]
         batch = data.select(batch_keys=select_keys).batch
@@ -293,16 +334,42 @@ class DataParallelPPOActor(BasePPOActor):
         else:
             micro_batches = batch.split(micro_batch_size)
 
+        num_micro_batches = len(micro_batches)
+        print(f"[DEBUG dp_actor rank={rank}] num_micro_batches={num_micro_batches}", flush=True)
+        sys.stdout.flush()
+
+        # Sync barrier before forward pass - detect which rank is slow
+        if dist.is_initialized():
+            print(f"[DEBUG dp_actor rank={rank}] Entering pre-forward barrier...", flush=True)
+            sys.stdout.flush()
+            start_barrier = time.time()
+            dist.barrier()
+            barrier_time = time.time() - start_barrier
+            print(f"[DEBUG dp_actor rank={rank}] Pre-forward barrier done (waited {barrier_time:.2f}s)", flush=True)
+            sys.stdout.flush()
+
         log_probs_lst = []
         entropy_lst = []
-        for micro_batch in micro_batches:
+        for i, micro_batch in enumerate(micro_batches):
+            print(f"[DEBUG dp_actor rank={rank}] Processing micro_batch {i+1}/{num_micro_batches}...", flush=True)
+            sys.stdout.flush()
+
             if isinstance(micro_batch, DataProto):
                 micro_batch = {**micro_batch.batch, **micro_batch.non_tensor_batch}
+
+            start_forward = time.time()
             with torch.no_grad():
                 entropy, log_probs = self._forward_micro_batch(micro_batch, temperature=temperature, calculate_entropy=calculate_entropy)
+            forward_time = time.time() - start_forward
+            print(f"[DEBUG dp_actor rank={rank}] micro_batch {i+1}/{num_micro_batches} done ({forward_time:.2f}s)", flush=True)
+            sys.stdout.flush()
+
             log_probs_lst.append(log_probs)
             if calculate_entropy:
                 entropy_lst.append(entropy)
+
+        print(f"[DEBUG dp_actor rank={rank}] All micro batches done, concatenating results...", flush=True)
+        sys.stdout.flush()
 
         log_probs = torch.concat(log_probs_lst, dim=0)
         entropys = None
@@ -313,6 +380,19 @@ class DataParallelPPOActor(BasePPOActor):
             assert len(indices) == log_probs.size(0), f"{len(indices)} vs. {log_probs.size()}"
             revert_indices = torch.tensor(get_reverse_idx(indices), dtype=torch.long)
             log_probs = log_probs[revert_indices]
+
+        # Final barrier to detect if any rank is stuck
+        if dist.is_initialized():
+            print(f"[DEBUG dp_actor rank={rank}] Entering post-forward barrier...", flush=True)
+            sys.stdout.flush()
+            start_barrier = time.time()
+            dist.barrier()
+            barrier_time = time.time() - start_barrier
+            print(f"[DEBUG dp_actor rank={rank}] Post-forward barrier done (waited {barrier_time:.2f}s)", flush=True)
+            sys.stdout.flush()
+
+        print(f"[DEBUG dp_actor rank={rank}] ===== compute_log_prob COMPLETED =====", flush=True)
+        sys.stdout.flush()
 
         return log_probs, entropys
 
@@ -364,7 +444,7 @@ class DataParallelPPOActor(BasePPOActor):
             self.actor_module.set_adapter(adapter_name)
         elif not multi_lora and hasattr(self.actor_module, 'set_adapter'):
             # In single LoRA mode, use "default"
-            if "default" in self.actor_module.peft_config:
+            if hasattr(self.actor_module, 'peft_config') and "default" in self.actor_module.peft_config:
                 self.actor_module.set_adapter("default")
 
         temperature = data.meta_info["temperature"]
@@ -447,7 +527,9 @@ class DataParallelPPOActor(BasePPOActor):
                     loss_agg_mode = self.config.loss_agg_mode
 
                     # all return: (bsz, response_length)
-                    calculate_entropy = True
+                    # Skip entropy computation when entropy_coeff is 0 to save GPU memory
+                    # (entropy_from_logits materializes a full vocab-sized tensor)
+                    calculate_entropy = entropy_coeff != 0
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature, calculate_entropy=calculate_entropy)
 
                     pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
@@ -461,16 +543,20 @@ class DataParallelPPOActor(BasePPOActor):
                         clip_ratio_c=clip_ratio_c,
                         loss_agg_mode=loss_agg_mode,
                     )
-                    if entropy_coeff == 0:
-                        loss_agg_mode_entropy = 'token-mean'
+                    if entropy is not None:
+                        if entropy_coeff == 0:
+                            loss_agg_mode_entropy = 'token-mean'
+                        else:
+                            loss_agg_mode_entropy = loss_agg_mode
+                        entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode_entropy)
+                        with torch.no_grad():
+                            entropy_token_mean_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode='token-mean')
                     else:
-                        loss_agg_mode_entropy = loss_agg_mode
-                    entropy_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode=loss_agg_mode_entropy)
-                    with torch.no_grad():
-                        entropy_token_mean_loss = agg_loss(loss_mat=entropy, loss_mask=response_mask, loss_agg_mode='token-mean')
+                        entropy_loss = torch.tensor(0.0, device=pg_loss.device)
+                        entropy_token_mean_loss = torch.tensor(0.0, device=pg_loss.device)
 
                     # compute policy loss
-                    if entropy_coeff != 0:
+                    if entropy_coeff != 0 and entropy is not None:
                         policy_loss = pg_loss - entropy_loss * entropy_coeff
                     else:
                         policy_loss = pg_loss

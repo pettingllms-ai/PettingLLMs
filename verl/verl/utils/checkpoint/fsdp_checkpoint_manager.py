@@ -94,12 +94,10 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         remote_optim_path = os.path.join(local_path, f'optim_world_size_{self.world_size}_rank_{self.rank}.pt')
         remote_extra_state_path = os.path.join(local_path,
                                                f'extra_state_world_size_{self.world_size}_rank_{self.rank}.pt')
-        checkpoint_model_path = os.path.join(local_path, f'checkpoint')
         print(
             f'[rank-{self.rank}]: Loading from {remote_model_path} and {remote_optim_path} and {remote_extra_state_path}'
         )
         local_model_path = copy_to_local(remote_model_path)
-        checkpoint_model_path = copy_to_local(checkpoint_model_path)
         local_optim_path = copy_to_local(remote_optim_path)
         local_extra_state_path = copy_to_local(remote_extra_state_path)
 
@@ -166,7 +164,15 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             self.previous_saved_paths = self.previous_saved_paths[keep_start:]
 
         local_path = self.local_mkdir(local_path)
-        torch.distributed.barrier()
+        try:
+            torch.distributed.barrier()
+        except RuntimeError as e:
+            import warnings as _warnings
+            _warnings.warn(
+                f"torch.distributed.barrier() failed during checkpoint save (likely gloo TCP reset after vLLM validation): {e}. "
+                "Proceeding without barrier — each rank will save its own shard independently.",
+                RuntimeWarning,
+            )
 
         # every rank will save its own model and optim shard
         state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True if is_cuda_available else False)

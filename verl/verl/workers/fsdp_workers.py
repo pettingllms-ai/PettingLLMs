@@ -164,12 +164,29 @@ class ActorRolloutRefWorker(Worker):
             assert self.config.actor.ppo_mini_batch_size > 0, f"ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be larger than 0 after normalization"
             # micro bsz
             if self.config.actor.ppo_micro_batch_size is not None:
-                self.config.actor.ppo_micro_batch_size //= self.device_mesh.size() // self.ulysses_sequence_parallel_size
-                self.config.actor.ppo_micro_batch_size_per_gpu = self.config.actor.ppo_micro_batch_size
+                divisor = self.device_mesh.size() // self.ulysses_sequence_parallel_size
+                # Only normalize if ppo_micro_batch_size_per_gpu is not already set
+                # and if normalization would result in a value > 0
+                if self.config.actor.ppo_micro_batch_size_per_gpu is None:
+                    if self.config.actor.ppo_micro_batch_size >= divisor:
+                        self.config.actor.ppo_micro_batch_size //= divisor
+                        self.config.actor.ppo_micro_batch_size_per_gpu = self.config.actor.ppo_micro_batch_size
+                    else:
+                        # If ppo_micro_batch_size is too small, treat it as already per-GPU
+                        self.config.actor.ppo_micro_batch_size_per_gpu = self.config.actor.ppo_micro_batch_size
+                    assert self.config.actor.ppo_micro_batch_size_per_gpu > 0, f"ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu} should be larger than 0 after normalization"
+                # If ppo_micro_batch_size_per_gpu is already set, keep it and ignore ppo_micro_batch_size normalization
 
             if self.config.actor.ppo_micro_batch_size_per_gpu is not None:
-                assert self.config.actor.ppo_mini_batch_size % self.config.actor.ppo_micro_batch_size_per_gpu == 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be divisible by ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
-                assert self.config.actor.ppo_mini_batch_size // self.config.actor.ppo_micro_batch_size_per_gpu > 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be larger than ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
+                assert self.config.actor.ppo_micro_batch_size_per_gpu > 0, f"ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu} must be greater than 0"
+                # Only check sample-based divisibility if use_dynamic_bsz is False
+                # When use_dynamic_bsz is True, ppo_micro_batch_size_per_gpu represents tokens, not samples
+                use_dynamic_bsz = getattr(self.config.actor, 'use_dynamic_bsz', False)
+                # Also check if the value is clearly token-based (typically > 1000) vs sample-based (typically < 100)
+                is_token_based = self.config.actor.ppo_micro_batch_size_per_gpu > 1000
+                if not use_dynamic_bsz and not is_token_based:
+                    assert self.config.actor.ppo_mini_batch_size % self.config.actor.ppo_micro_batch_size_per_gpu == 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be divisible by ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
+                    assert self.config.actor.ppo_mini_batch_size // self.config.actor.ppo_micro_batch_size_per_gpu > 0, f"normalized ppo_mini_batch_size {self.config.actor.ppo_mini_batch_size} should be larger than ppo_micro_batch_size_per_gpu {self.config.actor.ppo_micro_batch_size_per_gpu}"
 
         # normalize rollout config
         if self._is_rollout and self.config.rollout.log_prob_micro_batch_size is not None:
@@ -716,9 +733,23 @@ class ActorRolloutRefWorker(Worker):
             if multi_lora:
                 data.meta_info["multi_lora"] = multi_lora
                 data.meta_info["lora_id"] = lora_id
+            # Override LR if requested (for separate designer/executor LRs)
+            override_lr = data.meta_info.get("override_lr", None)
+            original_lrs = None
+            if override_lr is not None:
+                original_lrs = [pg['lr'] for pg in self.actor_optimizer.param_groups]
+                for pg in self.actor_optimizer.param_groups:
+                    pg['lr'] = override_lr
+
             # perform training
             with Timer(name="update_policy", logger=None) as timer:
                 metrics = self.actor.update_policy(data=data)
+
+            # Restore original LR after update
+            if original_lrs is not None:
+                for pg, orig_lr in zip(self.actor_optimizer.param_groups, original_lrs):
+                    pg['lr'] = orig_lr
+
             delta_time = timer.last
             global_num_tokens = data.meta_info["global_token_num"]
             estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
@@ -727,9 +758,15 @@ class ActorRolloutRefWorker(Worker):
             metrics["perf/max_memory_reserved_gb"] = get_torch_device().max_memory_reserved() / (1024**3)
             metrics["perf/cpu_memory_used_gb"] = psutil.virtual_memory().used / (1024**3)
 
-            lr = self.actor_lr_scheduler.get_last_lr()[0]
-            metrics["actor/lr"] = lr
-            self.actor_lr_scheduler.step()
+            # Report the effective LR used for this update
+            if override_lr is not None:
+                metrics["actor/lr"] = override_lr
+            else:
+                metrics["actor/lr"] = self.actor_lr_scheduler.get_last_lr()[0]
+
+            # Only step LR scheduler if requested (default: True)
+            if data.meta_info.get("step_lr_scheduler", True):
+                self.actor_lr_scheduler.step()
 
             # TODO: here, we should return all metrics
             output = DataProto(meta_info={"metrics": metrics})
@@ -874,44 +911,71 @@ class ActorRolloutRefWorker(Worker):
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_log_prob(self, data: DataProto):
+        import sys
+        rank = getattr(self, '_rank', -1)
+        print(f"[DEBUG WORKER rank={rank}] ========== ENTERING compute_log_prob ==========", flush=True)
+        print(f"[DEBUG WORKER rank={rank}] data size: {len(data) if data is not None else 'None'}", flush=True)
+        sys.stdout.flush()
+
         # when is_lora is True, we use the actor without lora applied to calculate the log_prob
         # which is mostly used for ref log_prob calculation
         assert self._is_actor
         if self._is_offload_param:
+            print(f"[DEBUG WORKER rank={rank}] Loading FSDP model to GPU...", flush=True)
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
+            print(f"[DEBUG WORKER rank={rank}] FSDP model loaded to GPU", flush=True)
 
         # Support all hardwares
         from contextlib import nullcontext
         is_lora = data.meta_info.pop("is_lora", False)
         adapter_ctx = self.actor.actor_module.disable_adapter() if is_lora else nullcontext()
+        print(f"[DEBUG WORKER rank={rank}] Moving data to device...", flush=True)
         data = data.to(get_torch_device().current_device())
+        print(f"[DEBUG WORKER rank={rank}] Data moved to device", flush=True)
         # we should always recompute old_log_probs when it is HybridEngine
         data.meta_info["micro_batch_size"] = self.config.rollout.log_prob_micro_batch_size_per_gpu
         data.meta_info["max_token_len"] = self.config.rollout.log_prob_max_token_len_per_gpu
         data.meta_info["use_dynamic_bsz"] = self.config.rollout.log_prob_use_dynamic_bsz
         data.meta_info["temperature"] = self.config.rollout.temperature
         # perform recompute log_prob
+        print(f"[DEBUG WORKER rank={rank}] Entering ulysses_sharding_manager context...", flush=True)
+        sys.stdout.flush()
         with self.ulysses_sharding_manager:
+            print(f"[DEBUG WORKER rank={rank}] Preprocessing data...", flush=True)
             data = self.ulysses_sharding_manager.preprocess_data(data)
+            print(f"[DEBUG WORKER rank={rank}] Data preprocessed, calling actor.compute_log_prob...", flush=True)
+            sys.stdout.flush()
             with adapter_ctx:
                 output, entropys = self.actor.compute_log_prob(data=data, calculate_entropy=True)
+            print(f"[DEBUG WORKER rank={rank}] actor.compute_log_prob completed", flush=True)
             output = DataProto.from_dict(
                 tensors={"old_log_probs": output, "entropys": entropys},
                 meta_info={"temperature": self.config.rollout.temperature},
             )
+            print(f"[DEBUG WORKER rank={rank}] Postprocessing data...", flush=True)
             output = self.ulysses_sharding_manager.postprocess_data(output)
+            print(f"[DEBUG WORKER rank={rank}] Data postprocessed", flush=True)
 
+        print(f"[DEBUG WORKER rank={rank}] Moving output to CPU...", flush=True)
         output = output.to("cpu")
+        print(f"[DEBUG WORKER rank={rank}] Output moved to CPU", flush=True)
 
         # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
         # unshard the root FSDP module
         if self.world_size > 1 and fsdp_version(self.actor.actor_module) == 1:
+            print(f"[DEBUG WORKER rank={rank}] Resharding FSDP module...", flush=True)
             self.actor.actor_module._handle.reshard(True)
+            print(f"[DEBUG WORKER rank={rank}] FSDP resharded", flush=True)
 
         if self._is_offload_param:
+            print(f"[DEBUG WORKER rank={rank}] Offloading FSDP model to CPU...", flush=True)
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
             log_gpu_memory_usage("After offload actor model during compute_log_prob", logger=logger)
+            print(f"[DEBUG WORKER rank={rank}] FSDP model offloaded to CPU", flush=True)
 
+        print(f"[DEBUG WORKER rank={rank}] ========== compute_log_prob COMPLETED ==========", flush=True)
+        import sys
+        sys.stdout.flush()
         return output
 
     async def generate_async(self, prompts: DataProto = None, **kwargs):
@@ -1086,10 +1150,11 @@ class ActorRolloutRefWorker(Worker):
 
         # DEBUG: Print important flags
         if dist.get_rank() == 0:
+            lora_num = getattr(self, 'lora_num', 1)  # Default to 1 if not set (for full-parameter training)
             print(f"[rank-{self.rank}]: ===== CHECKPOINT SAVE DEBUG =====")
             print(f"[rank-{self.rank}]: _is_lora={self._is_lora}")
             print(f"[rank-{self.rank}]: isinstance(PeftModel)={isinstance(self.actor_module, PeftModel)}")
-            print(f"[rank-{self.rank}]: lora_num={self.lora_num}")
+            print(f"[rank-{self.rank}]: lora_num={lora_num}")
             print(f"[rank-{self.rank}]: agent_lora_mapping={agent_lora_mapping}")
 
         # For LoRA training, we do NOT save the base model checkpoint
@@ -1110,14 +1175,15 @@ class ActorRolloutRefWorker(Worker):
             dist.barrier()
 
         if self._is_lora and isinstance(self.actor_module, PeftModel):
+            lora_num = getattr(self, 'lora_num', 1)  # Default to 1 if not set
             if dist.get_rank() == 0:
                 print(f"[rank-{self.rank}]: DEBUG - Entering LoRA save block")
-                print(f"[rank-{self.rank}]: DEBUG - lora_num={self.lora_num}, agent_lora_mapping={agent_lora_mapping}")
+                print(f"[rank-{self.rank}]: DEBUG - lora_num={lora_num}, agent_lora_mapping={agent_lora_mapping}")
 
             # Multi-LoRA mode: save each agent's LoRA adapter separately
-            if self.lora_num > 1 and agent_lora_mapping is not None:
+            if lora_num > 1 and agent_lora_mapping is not None:
                 if dist.get_rank() == 0:
-                    print(f"[rank-{self.rank}]: Saving {self.lora_num} LoRA adapters for multi-agent training")
+                    print(f"[rank-{self.rank}]: Saving {lora_num} LoRA adapters for multi-agent training")
                 
                 peft_config = {}
                 if dist.get_rank() == 0:
@@ -1132,7 +1198,7 @@ class ActorRolloutRefWorker(Worker):
 
                         # Save each LoRA adapter separately (lora_1, lora_2, lora_3, ...)
                         # IMPORTANT: All ranks must participate in layered_summon_lora_params (FSDP collective operation)
-                        for i in range(1, self.lora_num + 1):
+                        for i in range(1, lora_num + 1):
                             adapter_name = f"lora_{i}"
 
                             # Set active adapter on all ranks
@@ -1200,15 +1266,14 @@ class ActorRolloutRefWorker(Worker):
                         import traceback
                         traceback.print_exc()
         else:
-            cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            with FSDP.state_dict_type(self.actor.actor_module, StateDictType.FULL_STATE_DICT, cfg):
-                state_dict = self.actor.actor_module.state_dict()
+            # Skip redundant FULL_STATE_DICT save for non-LoRA training.
+            # checkpoint_manager.save_checkpoint() already saved the model above.
+            # The FULL_STATE_DICT gather is expensive and can leave FSDP2 (with
+            # offload_policy) in an inconsistent state, causing CUDA errors on
+            # the next training step.
             if dist.get_rank() == 0:
-                full_checkpoint_local_path=f'{local_path}/checkpoint'
-                os.makedirs(full_checkpoint_local_path, exist_ok=True)
-                self.actor_module.save_pretrained(full_checkpoint_local_path, state_dict=state_dict)
-                self.tokenizer.save_pretrained(full_checkpoint_local_path)
-        
+                print(f"[rank-{self.rank}]: Skipping redundant HF save (checkpoint_manager already saved)")
+
         dist.barrier()
 
         if self._is_offload_param:
@@ -1224,12 +1289,13 @@ class ActorRolloutRefWorker(Worker):
         # Load LoRA adapters if applicable
         if self._is_lora and isinstance(self.actor_module, PeftModel):
             # Multi-LoRA mode: load each LoRA adapter separately
-            if self.lora_num > 1:
+            lora_num = getattr(self, 'lora_num', 1)  # Default to 1 if not set
+            if lora_num > 1:
                 if dist.get_rank() == 0:
-                    print(f"[rank-{self.rank}]: Loading {self.lora_num} LoRA adapters for multi-agent training")
+                    print(f"[rank-{self.rank}]: Loading {lora_num} LoRA adapters for multi-agent training")
                 
                 # Load each LoRA adapter (lora_1, lora_2, lora_3, ...)
-                for i in range(1, self.lora_num + 1):
+                for i in range(1, lora_num + 1):
                     adapter_name = f"lora_{i}"
                     lora_load_path = os.path.join(local_path, f"lora_adapter_{adapter_name}")
                     

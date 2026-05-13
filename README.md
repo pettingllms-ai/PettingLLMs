@@ -42,13 +42,32 @@ Across **six math and code benchmarks** and **two base models**, Metaagent-X out
 ## Quick Start (Metaagent-X)
 
 ```bash
-# Train an L1 (shared-policy) self-designing + self-executing MAS on math
-bash scripts/train/autoeval/train_L1.sh
+# Interactive browser demo.
+# This serves Mercury7353/MetaAgent-X with vLLM, opens a web UI, and lets users
+# enter math/code queries while inspecting MAS design and execution traces.
+bash scripts/evaluate/autoevol/serve_ui.sh
 
-# Smaller / debug configuration
-bash scripts/train/autoeval/train_L1_mini.sh
+# If the model is already served on this machine or another host, only start the UI:
+START_VLLM=false HOST=127.0.0.1 PORT=8300 bash scripts/evaluate/autoevol/serve_ui.sh
+
+# One-shot CLI demo that writes an HTML report instead of serving a UI:
+QUESTION="Find the value of x if 2x + 3 = 17. Answer with a single number." \
+bash scripts/evaluate/autoevol/serve_demo.sh
+
+# Eval-first benchmark run on the released model
+bash scripts/evaluate/autoevol/eval_first_open_model.sh
+
+# Training example: shared-policy co-training with hierarchical M*N rollouts
+# and stage-wise alternate learning rates.
+bash scripts/train/autoeval/example_cotrain_autoeval.sh
 ```
 
+The interactive UI is served at `http://127.0.0.1:8899` by default. Each run
+stores its artifacts under `outputs/autoeval_interactive/`, including
+`mas_design.py`, executable `mas.py`, `execution.log`, `index.html`, retry
+attempts, and the workflow visualization. The UI shows math/code examples, the
+model's MAS design, execution pipeline, AgentNode traces, full logs, and final
+result.
 The auto-MAS environment, designer/executor agents, and reward functions live under
 `pettingllms/multi_agent_env/autoevol/`, with configs in `pettingllms/config/autoevol/`.
 
@@ -140,8 +159,8 @@ Datasets are saved to `datasets/code/`, `datasets/math/`, and `datasets/sudoku_e
 ### 2) Training
 
 ```bash
-# Metaagent-X: self-designing + self-executing automatic MAS on math tasks
-bash scripts/train/autoeval/train_L1.sh
+# Metaagent-X: shared-policy co-training with M*N hierarchical rollouts
+bash scripts/train/autoeval/example_cotrain_autoeval.sh
 
 # AT-GRPO: fixed multi-agent system on math tasks
 bash scripts/train/math/math_L1_prompt.sh
@@ -165,6 +184,12 @@ Then run:
 
 ```bash
 bash scripts/evaluate/evaluate.sh
+```
+
+For MetaAgent-X, the eval-first entry point defaults to the released model:
+
+```bash
+bash scripts/evaluate/autoevol/eval_first_open_model.sh
 ```
 
 ## 📚 Citation

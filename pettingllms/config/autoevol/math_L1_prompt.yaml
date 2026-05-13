@@ -8,19 +8,26 @@ resource:
   nnodes: 1
   n_gpus_per_node: 8
   trust_remote_code: true
-lora_rank: 16
-lora_alpha: 32
+lora_rank: 0  # Set to 0 for full-parameter training, > 0 for LoRA training
+lora_alpha: 16
 env:
   name: math_env
-  dataset: polaris
+  dataset: dapo_math
   benchmark: AIME24
+  # mixed_env fields (used when env.name=mixed_env)
+  dataset_math: polaris
+  dataset_code: code_contests
+  benchmark_math: AIME24
+  benchmark_code: code_contests
+  math_ratio: 0.5
+  apps_ratio: 0.0
   max_turns: 1
   resolve: false
   multi_modal: false
   batched_init: true
 base_models:
   policy_0:
-    path: your base model path
+    path: Mercury7353/masrl0206_notool
     name: shared_model
 agent_policy_configs:
   agent_configs:
@@ -29,15 +36,16 @@ agent_policy_configs:
       policy_name: shared_model
       train_llm_config:
         enable_thinking: false
-        temperature: 0.6
+        temperature: 1.0
         top_p: 0.9
         top_k: 20
         min_p: 0.0
+        repetition_penalty: 1.10
       val_llm_config:
         enable_thinking: false
-        temperature: 0.2
-        top_p: 0.95
-        top_k: 20
+        temperature: 0
+        top_p: 1
+        top_k: -1
         min_p: 0.0
 multi_agent_interaction:
   turn_order:
@@ -55,12 +63,20 @@ training:
   ray_wait_register_center_timeout: 300
   train_batch_size: 32
   train_sample_num: 8
+  design_sample_num: null    # null = degrade to current behavior (=train_sample_num)
+  execute_sample_num: null   # null = degrade to current behavior (=1)
+  executor_group_mode: null  # null/auto = auto (question if M<=2, design if M>2), "question" = all executors per problem, "design" = executors per design
   validate_sample_num: 5
   sample_temperature: 1
-  val_freq: 10
+  val_freq: 20
+  save_freq: -1
+  train_data_mode: "all"  # Options: "all", "designer_only", "executor_only"
+  designer_lr: null   # null = use actor.optim.lr for all
+  executor_lr: null   # null = use actor.optim.lr for all
+  lr_alternate_steps: 0  # 0 = disabled, >0 = swap designer/executor LR every N steps
   max_prompt_length: 4096
-  max_response_length: 2048
-  lora_rank: ${lora_rank}
+  max_response_length: 4096
+  lora_rank: ${lora_rank}  # 0 for full-parameter training
   lora_alpha: ${lora_alpha}
 models:
   model_0:
@@ -81,3 +97,7 @@ models:
         trainer:
           n_gpus_per_node: ${resource.n_gpus_per_node}
           n_training_gpus_per_node: ${resource.n_gpus_per_node}
+          experiment_name: ${training.experiment_name}
+      actor:
+        ppo_micro_batch_size: null  # Set to null to use ppo_micro_batch_size_per_gpu directly
+        ppo_micro_batch_size_per_gpu: 4  # Set a reasonable value for full-parameter training

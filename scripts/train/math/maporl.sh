@@ -30,7 +30,7 @@ python3 -m pettingllms.trainer.train --config-path ../config/math --config-name 
     $model_0_resource \
     lora_rank=16\
     +rollout_mode=tree\
-    base_models.policy_0.path="/home/nvidia/data/models/Phi-3-mini-128k-instruct"\
+    base_models.policy_0.path="${MODEL_PATH:-microsoft/Phi-3-mini-128k-instruct}"\
     training.experiment_name=maporl_gsm8k\
     training.total_training_steps=200\
     +training.if_save=True\

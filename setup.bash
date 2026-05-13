@@ -67,7 +67,7 @@ check_prerequisites() {
     # Check if Python exists
     if [[ ! -x "${PYTHON_BIN}" ]]; then
         log_error "Python 3.12 not found at ${PYTHON_BIN}"
-        log_info "Please install Python 3.12: sudo apt install python3.12 python3.12-venv"
+        log_info "Please install Python 3.12: sudo apt-get install python3.12-dev"
         exit 1
     fi
     
@@ -172,6 +172,7 @@ print_completion() {
     echo "  python -c 'import torch; print(torch.__version__)'"
     echo ""
 }
+    echo "  source pettingllms_venv/bin/activate"
 
 # Error handler
 error_handler() {

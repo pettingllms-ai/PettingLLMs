@@ -48,6 +48,7 @@ async def _await_ray_object_ref(obj_ref, timeout_seconds: float = 10.0):
         
         elapsed = time.time() - start_time
         if elapsed > timeout_seconds:
+            print(f"Ray task timed out after {timeout_seconds}s")
             raise asyncio.TimeoutError(f"Ray task timed out after {timeout_seconds}s")
         
         await asyncio.sleep(0.01)
@@ -117,7 +118,8 @@ async def _worker_docker(
         Script output as string, or "timeout" if execution exceeds timeout
     """
     os.makedirs("tmp", exist_ok=True)
-    tmpdir = tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp")
+    # Make tmpdir absolute to avoid path resolution issues when cwd changes
+    tmpdir = os.path.abspath(tempfile.mkdtemp(prefix="pllm_exec_", dir="tmp"))
     script_path = os.path.join(tmpdir, "script.py")
     stdout_path = os.path.join(tmpdir, "stdout.txt")
     stderr_path = os.path.join(tmpdir, "stderr.txt")

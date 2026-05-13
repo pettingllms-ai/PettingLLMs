@@ -27,8 +27,14 @@ from vllm.entrypoints.openai.protocol import ChatCompletionRequest, ChatCompleti
 from vllm.entrypoints.openai.serving_chat import OpenAIServingChat
 from vllm.entrypoints.openai.serving_completion import OpenAIServingCompletion
 from vllm.entrypoints.openai.serving_models import BaseModelPath, OpenAIServingModels
-from vllm.v1.engine.async_llm import AsyncLLM
-from vllm.v1.executor.abstract import Executor
+import os
+VLLM_USE_V1 = os.environ.get("VLLM_USE_V1", "1") == "1"
+if VLLM_USE_V1:
+    from vllm.v1.engine.async_llm import AsyncLLM
+    from vllm.v1.executor.abstract import Executor
+else:
+    from vllm.engine.async_llm_engine import AsyncLLMEngine
+    from vllm.executor.ray_gpu_executor import RayGPUExecutor as Executor
 from vllm.worker.worker_base import WorkerWrapperBase
 from vllm.distributed.device_communicators.cuda_communicator import (
             CudaCommunicator)
@@ -141,6 +147,7 @@ class AsyncvLLMServer(AsyncServerBase):
         self.wg_prefix = wg_prefix
         self.engine: AsyncLLM = None
         self._last_lora_sync_count = 0  # Track number of LoRAs synced
+        self._is_sleeping = False  # Guard flag: True between sleep() start and wake_up() completion
 
     async def init_engine(self):
         """Init vLLM AsyncLLM engine."""
@@ -178,6 +185,17 @@ class AsyncvLLMServer(AsyncServerBase):
                 "max_lora_rank": config.get("max_lora_rank", 64),
             }
         
+        # Use piecewise CUDA graph mode if env var is set, to avoid illegal memory access on H200/B200
+        # See: https://github.com/vllm-project/vllm/issues/23724
+        cudagraph_mode = os.environ.get("VLLM_CUDAGRAPH_MODE", "")
+        compilation_kwargs = {}
+        if cudagraph_mode.lower() == "piecewise":
+            from vllm.config import CompilationConfig
+            compilation_kwargs["compilation_config"] = CompilationConfig(
+                cudagraph_capture_sizes=[1, 2, 4, 8, 16, 24, 32],
+            )
+            print(f"[vLLM] Using PIECEWISE CUDA graph mode to avoid H200 crash")
+
         engine_args = AsyncEngineArgs(
             model=local_path,
             enable_sleep_mode=True,
@@ -198,16 +216,23 @@ class AsyncvLLMServer(AsyncServerBase):
             enable_prefix_caching=True,
             trust_remote_code=trust_remote_code,
             seed=self.vllm_dp_rank,
-            max_num_seqs=256,
+            max_num_seqs=config.get("max_num_seqs", 128),
+            swap_space=0,  # Disable CPU swap to prevent system RAM OOM during KV preemption
             hf_overrides={"max_position_embeddings": max_model_len},
             **lora_kwargs,
+            **compilation_kwargs,
         )
 
         # init async llm engine
-        vllm_config = engine_args.create_engine_config()
-        namespace = ray.get_runtime_context().namespace
-        vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
-        self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        if VLLM_USE_V1:
+            vllm_config = engine_args.create_engine_config()
+            namespace = ray.get_runtime_context().namespace
+            vllm_config.instance_id = f"{namespace}:{self.wg_prefix}:{self.vllm_dp_size}:{self.vllm_dp_rank}"
+            self.engine = AsyncLLM.from_vllm_config(vllm_config)
+        else:
+            # V0 engine: use ray executor backend
+            engine_args.distributed_executor_backend = "ray"
+            self.engine = AsyncLLMEngine.from_engine_args(engine_args)
 
         # Pre-allocate LoRA adapter capacity if LoRA is enabled
         # This reserves memory capacity in vLLM's LoRA manager for dynamic loading
@@ -307,7 +332,7 @@ class AsyncvLLMServer(AsyncServerBase):
         generator = await self.openai_serving_chat.create_chat_completion(request, raw_request)
 
         if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
+            return JSONResponse(content=generator.model_dump(), status_code=generator.code)
         if request.stream:
             return StreamingResponse(content=generator, media_type="text/event-stream")
         else:
@@ -319,18 +344,23 @@ class AsyncvLLMServer(AsyncServerBase):
 
         API reference: https://platform.openai.com/docs/api-reference/completions/create
         """
+        if self._is_sleeping:
+            return JSONResponse(
+                content=ErrorResponse(message="Engine is sleeping, retry after wake_up", code=503).model_dump(),
+                status_code=503,
+            )
         request_json = await raw_request.json()
         request = CompletionRequest(**request_json)
         generator = await self.openai_serving_completion.create_completion(request, raw_request)
 
         if isinstance(generator, ErrorResponse):
-            return JSONResponse(content=generator.model_dump(), status_code=generator.error.code)
+            return JSONResponse(content=generator.model_dump(), status_code=generator.code)
         if request.stream:
             return StreamingResponse(content=generator, media_type="text/event-stream")
         else:
             assert isinstance(generator, CompletionResponse)
             if generator.choices and generator.choices[0].logprobs:
-                generator.choices[0].logprobs.token_logprobs = [] 
+                generator.choices[0].logprobs.token_logprobs = []
                 generator.choices[0].logprobs.top_logprobs = []
                 generator.choices[0].logprobs.text_offset = []
             return JSONResponse(content=generator.model_dump())
@@ -347,7 +377,7 @@ class AsyncvLLMServer(AsyncServerBase):
         generator = await self.openai_serving_chat.create_chat_completion(request)
         if isinstance(generator, ErrorResponse):
             data = generator.model_dump_json(exclude_unset=True)
-            yield generator.error.code, f"data: {data}\n\n"
+            yield generator.code, f"data: {data}\n\n"
 
         if request.stream:
             async for chunk in generator:
@@ -359,10 +389,78 @@ class AsyncvLLMServer(AsyncServerBase):
 
     async def wake_up(self, tags: Optional[list[str]] = None):
         await self.engine.wake_up(tags)
+        # Allow new completions requests now that the engine is live.
+        self._is_sleeping = False
 
     async def sleep(self):
         # TODO: https://github.com/vllm-project/vllm/issues/17103
-        await self.engine.reset_prefix_cache()
-        await self.engine.sleep()
+        import asyncio
+
+        # Gate new HTTP requests immediately so no completions sneak in during
+        # the abort→reset_prefix_cache→engine.sleep() window (TOCTOU race fix).
+        self._is_sleeping = True
+
+        # Step 1: Abort all in-flight requests so prefix cache blocks are freed.
+        # vLLM v1 abort() is async: sends ZMQ message to EngineCore subprocess,
+        # which processes it on its next scheduler iteration (after current CUDA step).
+        # A generation near max_response_length=8192 can take many seconds to reach
+        # a preemption point, so we wait up to 300s (matching the request timeout).
+        try:
+            if hasattr(self.engine, 'output_processor') and self.engine.output_processor.has_unfinished_requests():
+                unfinished = self.engine.output_processor.get_num_unfinished_requests()
+                logger.warning(f"[AsyncvLLMServer] {unfinished} unfinished requests before sleep, aborting them...")
+                parent_ids = list(self.engine.output_processor.parent_requests.keys())
+                for req_id in parent_ids:
+                    try:
+                        await self.engine.abort(req_id)
+                    except Exception:
+                        pass
+                # Poll until EngineCore confirms all aborts processed.
+                # 300s ceiling matches the generation request timeout in async_generate.py.
+                max_wait, poll_interval, elapsed = 300.0, 1.0, 0.0
+                while elapsed < max_wait:
+                    await asyncio.sleep(poll_interval)
+                    elapsed += poll_interval
+                    if not self.engine.output_processor.has_unfinished_requests():
+                        logger.warning(f"[AsyncvLLMServer] All requests drained after {elapsed:.0f}s.")
+                        break
+                remaining = self.engine.output_processor.get_num_unfinished_requests()
+                if remaining > 0:
+                    logger.warning(f"[AsyncvLLMServer] After abort: {remaining} requests still stuck after {max_wait}s — will force reset_prefix_cache.")
+        except Exception as e:
+            logger.warning(f"[AsyncvLLMServer] Request abort before sleep failed: {e}")
+
+        # Step 2: Reset prefix cache. After abort(), KV blocks are freed asynchronously;
+        # retry with backoff to let the EngineCore finish releasing them.
+        # CRITICAL: engine.sleep() frees physical GPU memory regardless of block state.
+        # If reset_prefix_cache fails (blocks still allocated), sleep() will free the
+        # pages those blocks reference → EngineCore holds dangling pointers → TMA crash.
+        # We MUST NOT call sleep() until reset_prefix_cache succeeds.
+        cache_reset_ok = False
+        for attempt in range(60):
+            try:
+                await self.engine.reset_prefix_cache()
+                logger.info(f"[AsyncvLLMServer] reset_prefix_cache succeeded on attempt {attempt+1}.")
+                cache_reset_ok = True
+                break
+            except Exception as e:
+                logger.warning(f"[AsyncvLLMServer] reset_prefix_cache attempt {attempt+1}/60 failed: {e}. Retrying in 5s...")
+                await asyncio.sleep(5)
+
+        if not cache_reset_ok:
+            # KV blocks still live after 5+ minutes — something is seriously wrong.
+            # Proceeding to sleep() would cause a TMA crash (confirmed from crash log).
+            # Raise so the caller sees the failure; the engine stays awake and dirty.
+            raise RuntimeError(
+                "[AsyncvLLMServer] reset_prefix_cache failed after 300s of retries. "
+                "Cannot safely call engine.sleep() — KV blocks still reference GPU memory. "
+                "Investigate stuck EngineCore request."
+            )
+
+        # Step 3: Sleep the engine (only reached when all KV blocks are freed)
+        try:
+            await self.engine.sleep()
+        except Exception as e:
+            logger.warning(f"[AsyncvLLMServer] engine.sleep() failed: {e}.")
 
    
