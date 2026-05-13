@@ -215,15 +215,23 @@ def run_demo(args: argparse.Namespace) -> Dict[str, object]:
     question = args.question or DEFAULT_QUESTION
     generator = MASGenerator(task_type=args.task_type)
 
-    designer_response = _request_design(
-        server_address=args.server_address,
-        model_name=args.model_name,
-        question=question,
-        temperature=args.temperature,
-        max_tokens=args.design_max_tokens,
-        api_key=args.api_key,
-    )
-    generator.update_from_model(designer_response)
+    designer_response = ""
+    for attempt in range(1, args.design_retries + 1):
+        designer_response = _request_design(
+            server_address=args.server_address,
+            model_name=args.model_name,
+            question=question,
+            temperature=args.temperature,
+            max_tokens=args.design_max_tokens,
+            api_key=args.api_key,
+        )
+        (output_dir / f"designer_response_attempt_{attempt}.txt").write_text(
+            designer_response,
+            encoding="utf-8",
+        )
+        generator.update_from_model(designer_response)
+        if generator.generated_code.strip():
+            break
 
     (output_dir / "question.txt").write_text(question + "\n", encoding="utf-8")
     (output_dir / "designer_response.txt").write_text(
@@ -303,8 +311,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python-bin", default=os.environ.get("PYTHON_BIN", "python3"))
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--design-max-tokens", type=int, default=8192)
+    parser.add_argument("--design-retries", type=int, default=3)
     parser.add_argument("--max-prompt-length", type=int, default=8192)
-    parser.add_argument("--max-response-length", type=int, default=4096)
+    parser.add_argument("--max-response-length", type=int, default=8192)
     parser.add_argument("--execution-timeout", type=float, default=600.0)
     parser.add_argument("--enable-thinking", action="store_true")
     parser.add_argument("--design-only", action="store_true")

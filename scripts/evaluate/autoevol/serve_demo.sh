@@ -22,6 +22,7 @@ TP_SIZE="${TP_SIZE:-1}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.80}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-600}"
+MAX_RESPONSE_LENGTH="${MAX_RESPONSE_LENGTH:-8192}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/autoeval_demo}"
 QUESTION="${QUESTION:-Find the value of x if 2x + 3 = 17. Answer with a single number.}"
 
@@ -80,4 +81,5 @@ fi
     --model-name "$SERVED_MODEL_NAME" \
     --model-path "$MODEL_PATH" \
     --question "$QUESTION" \
-    --output-dir "$OUTPUT_DIR"
+    --output-dir "$OUTPUT_DIR" \
+    --max-response-length "$MAX_RESPONSE_LENGTH"
