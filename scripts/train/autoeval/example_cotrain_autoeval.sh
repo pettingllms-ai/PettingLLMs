@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Merge-ready AutoEval co-training example.
 #
-# Based on train_design_tree_alt_lr_zero_10step_firstexe_8k.sh, but with
-# private paths and secrets removed. Important controls:
+# This script keeps the core co-training controls in one public example.
+# Important controls:
 #   DESIGN_SAMPLE_NUM / EXECUTE_SAMPLE_NUM: M designs and N executions.
 #   EXECUTOR_GROUP_MODE: question/design/null grouping for executor rewards.
 #   TRAIN_DATA_MODE: all/designer_only/executor_only.

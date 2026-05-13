@@ -30,7 +30,7 @@ model_0_resource="resource.n_gpus_per_node=$GPU_num  $model_0_config_path.traine
 
 python3 -m pettingllms.trainer.train --config-path ../config/autoevol --config-name math_L1_prompt \
     $model_0_resource \
-    base_models.policy_0.path="${MODEL_PATH:-Mercury7353/MetaAgent-X}"\
+    base_models.policy_0.path="/raid/lah003/mas_rl_cold_start"\
     lora_rank=16\
     lora_alpha=32\
     training.experiment_name=autoeval_L1_prompt\
