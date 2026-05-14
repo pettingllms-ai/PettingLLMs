@@ -23,6 +23,8 @@ PettingLLMs is an open-source framework for on-policy reinforcement learning wit
 [📄 Paper (arXiv:2511.00000)](https://arxiv.org/abs/2511.00000) *(temporary placeholder link — preprint coming soon)*
 
 [🪄 Model](https://huggingface.co/Mercury7353/MetaAgent-X)
+
+[🏆Project Page](https://mercury7353.github.io/MetaAgent-X-Page/)
 <div align="center">
   <img src="figs/metaagent.png" alt="From Partial Adaptation to End-to-End Trainable Automatic MAS" width="820">
   <p><em>A. Comparison of three automatic MAS paradigms. &nbsp; B. Overview of the Metaagent-X training framework.</em></p>
