@@ -13,7 +13,7 @@
 
 PettingLLMs is an open-source framework for on-policy reinforcement learning with multi-agent large language models. It currently powers two lines of work:
 
-- **🆕 Metaagent-X — *Breaking the Ceiling of Automatic Multi-Agent Systems via End-to-End Reinforcement Learning.* &nbsp;[📄 arXiv:2511.00000](https://arxiv.org/abs/2511.00000) (preprint link coming soon)** — an end-to-end framework that trains agentic models which can both **self-design** and **self-execute** their own MAS, jointly optimizing the meta-designer and the executor.
+- **🆕 Metaagent-X — *Breaking the Ceiling of Automatic Multi-Agent Systems via End-to-End Reinforcement Learning.* &nbsp;[📄 arXiv:2605.14212](https://arxiv.org/abs/2605.14212)** — an end-to-end framework that trains agentic models which can both **self-design** and **self-execute** their own MAS, jointly optimizing the meta-designer and the executor.
 - **Stronger-MAS — *On-Policy Reinforcement Learning for Collaborative LLMs.* &nbsp;[📄 arXiv:2510.11062](https://arxiv.org/pdf/2510.11062)** — Agent- and Turn-wise Group Relative Policy Optimization (AT-GRPO) for training collaborative LLM agents in a *fixed* multi-agent system (MAS), with fine-grained per-agent / per-turn credit assignment and role-specialized policies.
 
 ---
