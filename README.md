@@ -20,7 +20,7 @@ PettingLLMs is an open-source framework for on-policy reinforcement learning wit
 
 # 1. 🆕 Metaagent-X — End-to-End Trainable Automatic MAS
 
-[📄 Paper (arXiv:2511.00000)](https://arxiv.org/abs/2511.00000) *(temporary placeholder link — preprint coming soon)*
+[📄 Paper (arXiv:2605.14212)](https://arxiv.org/abs/2605.14212) 
 
 [🪄 Model](https://huggingface.co/Mercury7353/MetaAgent-X)
 
@@ -199,11 +199,14 @@ bash scripts/evaluate/autoevol/eval_first_open_model.sh
 If you find PettingLLMs useful for your research or projects, please cite the relevant paper:
 
 ```bibtex
-@article{metaagentx2026,
-  title={Breaking the Ceiling of Automatic Multi-Agent Systems via End-to-End Reinforcement Learning},
-  author={Yaolun, Zhang and others},
-  journal={arXiv preprint arXiv:2511.00000},
-  year={2026}
+@misc{zhang2026metaagentxbreakingceiling,
+      title={MetaAgent-X : Breaking the Ceiling of Automatic Multi-Agent Systems via End-to-End Reinforcement Learning}, 
+      author={Yaolun Zhang and Yujie Zhao and Nan Wang and Yiran Wu and Jiayu Chang and Yizhao Chen and Qingyun Wu and Jishen Zhao and Huazheng Wang},
+      year={2026},
+      eprint={2605.14212},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2605.14212}, 
 }
 
 @article{zhao2025stronger,
